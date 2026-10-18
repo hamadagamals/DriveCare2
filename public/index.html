@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DriveCare</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">سيارة</p>
+          <h1 id="vehicle-name">جاري التحميل...</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="secondary-btn" id="logout-btn">تسجيل خروج</button>
+          <button class="primary-btn">إنذار</button>
+        </div>
+      </header>
+
+      <section class="hero-card card">
+        <div class="hero-row">
+          <div>
+            <p class="label">حالة السيارة</p>
+            <h2 id="vehicle-status">جاري التحميل...</h2>
+          </div>
+          <div class="score-wrap">
+            <span class="score-label">Health Score</span>
+            <strong id="health-score">0</strong>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span>الوقود</span>
+            <strong id="fuel-level">0%</strong>
+          </div>
+          <div class="metric-card">
+            <span>البطارية</span>
+            <strong id="battery-level">0V</strong>
+          </div>
+          <div class="metric-card">
+            <span>حرارة المحرك</span>
+            <strong id="engine-temp">0°C</strong>
+          </div>
+          <div class="metric-card">
+            <span>السرعة</span>
+            <strong id="vehicle-speed">0 km/h</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="quick-grid">
+        <div class="card summary-card">
+          <p class="label">الرحلة اليوم</p>
+          <h3 id="trip-distance">0 كم</h3>
+        </div>
+        <div class="card summary-card">
+          <p class="label">استهلاك الوقود</p>
+          <h3 id="fuel-used">0 L</h3>
+        </div>
+        <div class="card summary-card">
+          <p class="label">الصيانة القادمة</p>
+          <h3 id="service-due">--</h3>
+        </div>
+      </section>
+
+      <section class="card panel-card insight-card">
+        <div class="panel-header">
+          <h3>ذكاء التخزين والصحة</h3>
+        </div>
+        <div class="retention-grid">
+          <div>
+            <p class="label">سياسة التخزين</p>
+            <strong id="retention-policy">جاري التحميل...</strong>
+          </div>
+          <div>
+            <p class="label">قيمة التغير</p>
+            <strong id="retention-trend">--</strong>
+          </div>
+          <div>
+            <p class="label">ملخصات محفوظة</p>
+            <strong id="retention-records">--</strong>
+          </div>
+        </div>
+        <div id="insight-list" class="insight-list"></div>
+      </section>
+
+      <section class="card panel-card vehicle-management">
+        <div class="panel-header">
+          <h3>إدارة السيارات</h3>
+        </div>
+        <div class="vehicle-form">
+          <input id="vehicle-name-input" type="text" placeholder="اسم السيارة" />
+          <input id="vehicle-make-input" type="text" placeholder="الماركة" />
+          <input id="vehicle-model-input" type="text" placeholder="الموديل" />
+          <input id="vehicle-year-input" type="number" placeholder="سنة الصنع" value="2024" />
+          <div class="action-row">
+            <button id="add-vehicle-btn" class="primary-btn">إضافة سيارة</button>
+            <button id="export-btn" class="secondary-btn">تصدير JSON</button>
+          </div>
+        </div>
+        <div id="vehicle-list" class="vehicle-list"></div>
+      </section>
+
+      <nav class="tabbar">
+        <button class="tab active" data-target="dashboard">Dashboard</button>
+        <button class="tab" data-target="trips">Trips</button>
+        <button class="tab" data-target="maintenance">Maintenance</button>
+        <button class="tab" data-target="diagnostics">Diagnostics</button>
+        <button class="tab" data-target="profile">Profile</button>
+        <button class="tab" data-target="settings">Settings</button>
+      </nav>
+
+      <main>
+        <section id="dashboard" class="panel active">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>مؤشرات السيارة</h3>
+            </div>
+            <div class="indicator-list" id="health-indicators"></div>
+          </div>
+
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>اتجاهات الصحة</h3>
+            </div>
+            <div class="trend-bars" id="trend-bars"></div>
+          </div>
+
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>تنبيهات</h3>
+            </div>
+            <ul class="list" id="alert-list"></ul>
+          </div>
+        </section>
+
+        <section id="trips" class="panel">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>السجلات</h3>
+            </div>
+            <div id="trip-list" class="stack-list"></div>
+          </div>
+        </section>
+
+        <section id="maintenance" class="panel">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>جدول الصيانة</h3>
+            </div>
+            <div id="maintenance-list" class="stack-list"></div>
+          </div>
+        </section>
+
+        <section id="diagnostics" class="panel">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>الأعطال</h3>
+            </div>
+            <div id="diagnostic-list" class="stack-list"></div>
+          </div>
+        </section>
+
+        <section id="profile" class="panel">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>ملف السيارة</h3>
+            </div>
+            <div id="profile-list" class="profile-grid"></div>
+          </div>
+        </section>
+
+        <section id="settings" class="panel">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>الإعدادات</h3>
+            </div>
+            <div id="settings-list" class="stack-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

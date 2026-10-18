@@ -1,0 +1,7 @@
+# Backend dependencies for an enhanced professional version
+# Current MVP uses Python stdlib only, but this file is kept for future upgrades.
+fastapi
+uvicorn
+pydantic
+sqlalchemy
+python-dotenv

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Garage Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell garage-app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Garage / Admin</p>
+          <h1>لوحة الورشة</h1>
+        </div>
+        <a class="primary-btn" href="/">Owner App</a>
+      </header>
+
+      <section class="quick-grid">
+        <div class="card summary-card">
+          <p class="label">إجمالي السيارات</p>
+          <h3 id="total-cars">0</h3>
+        </div>
+        <div class="card summary-card">
+          <p class="label">الحالات الحرجة</p>
+          <h3 id="critical-cars">0</h3>
+        </div>
+        <div class="card summary-card">
+          <p class="label">التقارير المفتوحة</p>
+          <h3 id="open-reports">0</h3>
+        </div>
+      </section>
+
+      <main>
+        <section class="panel active">
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>السيارات</h3>
+            </div>
+            <div id="garage-vehicles" class="stack-list"></div>
+          </div>
+
+          <div class="panel-card card">
+            <div class="panel-header">
+              <h3>تقارير المراجعة</h3>
+            </div>
+            <div id="garage-reports" class="stack-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="garage.js"></script>
+  </body>
+</html>

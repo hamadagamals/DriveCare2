@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DriveCare | نظام تشخيص وقراءة كمبيوتر السيارة OBD-II</title>
+    <meta name="theme-color" content="#081720" />
+    <link rel="manifest" href="/manifest.json" />
+    <style>
+      :root {
+        --bg: #081720;
+        --panel: #112334;
+        --card: #18334d;
+        --primary: #6ee7ff;
+        --green: #7ef29a;
+        --amber: #f8c74a;
+        --danger: #ff7a7a;
+        --muted: #9cc0d8;
+        --white: #edf8ff;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #081720 0%, #0d1d2d 100%);
+        color: var(--white);
+        font-family: "Segoe UI", Tahoma, sans-serif;
+      }
+
+      .phone-shell {
+        max-width: 440px;
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 20px 16px 110px;
+      }
+
+      .screen { display: none; }
+      .screen.active { display: block; }
+
+      .brand-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .brand {
+        font-size: 1.6rem;
+        font-weight: 800;
+        color: var(--white);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .card {
+        background: rgba(17, 35, 52, 0.92);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 20px;
+        padding: 16px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.25);
+        margin-bottom: 14px;
+      }
+
+      .form { display: grid; gap: 10px; }
+      input, select, textarea, button {
+        width: 100%;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 0.95rem;
+        font-family: inherit;
+      }
+
+      input, select, textarea {
+        background: rgba(255,255,255,0.05);
+        color: var(--white);
+        border: 1px solid rgba(255,255,255,0.1);
+      }
+
+      button {
+        background: linear-gradient(135deg, var(--primary), #8dd7ff);
+        color: #0b1d29;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+      }
+      button:active { transform: scale(0.98); }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+      .btn-outline {
+        background: rgba(255,255,255,0.06);
+        color: var(--white);
+        border: 1px solid rgba(255,255,255,0.15);
+      }
+      .btn-outline:hover { background: rgba(255,255,255,0.12); }
+
+      .muted { color: var(--muted); }
+      .small { font-size: 0.8rem; }
+      .inline-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .status-chip {
+        display: inline-block;
+        background: rgba(126, 242, 154, 0.15);
+        color: var(--green);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+      .chip-amber { background: rgba(248, 199, 74, 0.15); color: var(--amber); }
+      .chip-danger { background: rgba(255, 122, 122, 0.15); color: var(--danger); }
+
+      /* Role Selector Tabs */
+      .role-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        background: rgba(0,0,0,0.25);
+        padding: 4px;
+        border-radius: 14px;
+        margin-bottom: 14px;
+        border: 1px solid rgba(255,255,255,0.06);
+      }
+
+      .role-tab-btn {
+        background: transparent;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 8px 4px;
+        border-radius: 10px;
+        border: none;
+      }
+
+      .role-tab-btn.active {
+        background: var(--primary);
+        color: #081720;
+        box-shadow: 0 4px 12px rgba(110, 231, 255, 0.3);
+      }
+
+      /* Live OBD Telemetry Cockpit */
+      .obd-cockpit {
+        background: linear-gradient(135deg, rgba(17, 35, 52, 0.95), rgba(9, 23, 36, 0.95));
+        border: 1px solid rgba(110, 231, 255, 0.25);
+      }
+
+      .gauge-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .gauge-box {
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 14px;
+        padding: 10px 12px;
+        text-align: right;
+      }
+
+      .gauge-label {
+        font-size: 0.75rem;
+        color: var(--muted);
+        display: block;
+      }
+
+      .gauge-value {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: #ffffff;
+        margin-top: 2px;
+        display: block;
+      }
+
+      .val-speed { color: var(--primary); }
+      .val-rpm { color: var(--green); }
+      .val-temp { color: var(--amber); }
+      .val-battery { color: #8dd7ff; }
+
+      .dtc-banner {
+        background: rgba(0,0,0,0.35);
+        border-radius: 12px;
+        padding: 10px 12px;
+        margin-top: 10px;
+        border-right: 4px solid var(--green);
+        font-size: 0.82rem;
+      }
+
+      .dtc-warning {
+        border-right-color: var(--danger);
+        color: var(--danger);
+      }
+
+      /* Navigation Bar */
+      .nav {
+        position: fixed;
+        z-index: 100;
+        bottom: 0;
+        left: 50%;
+        width: min(100%, 440px);
+        transform: translateX(-50%);
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 4px;
+        background: rgba(8, 23, 32, 0.96);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 20px 20px 0 0;
+        padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+        box-shadow: 0 -10px 25px rgba(0,0,0,0.35);
+      }
+
+      .nav button {
+        background: transparent;
+        color: var(--muted);
+        border: none;
+        border-radius: 10px;
+        padding: 8px 2px;
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+
+      .nav button.active {
+        background: rgba(110, 231, 255, 0.18);
+        color: var(--primary);
+      }
+
+      .list-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        border-radius: 14px;
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.06);
+        margin-top: 8px;
+      }
+
+      .role-picker {
+        display: grid;
+        gap: 6px;
+        padding: 10px;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.03);
+      }
+
+      .role-picker label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+      }
+
+      .cost-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .cost-box-hero {
+        grid-column: span 2;
+        background: linear-gradient(135deg, rgba(110, 231, 255, 0.12), rgba(126, 242, 154, 0.12));
+        border: 1px solid rgba(126, 242, 154, 0.35);
+        border-radius: 14px;
+        padding: 12px 14px;
+        text-align: center;
+      }
+
+      .cost-box-hero .hero-value {
+        font-size: 2rem;
+        font-weight: 900;
+        color: var(--green);
+        display: block;
+      }
+
+      .context-card {
+        background: rgba(14, 30, 46, 0.95);
+        border: 1px solid rgba(110, 231, 255, 0.25);
+        border-radius: 16px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+      }
+
+      .eco-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(126, 242, 154, 0.15);
+        color: var(--green);
+        border-radius: 8px;
+        padding: 4px 8px;
+        font-size: 0.8rem;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="phone-shell">
+
+      <!-- ========================================== -->
+      <!-- AUTHENTICATION SCREEN                      -->
+      <!-- ========================================== -->
+      <section id="auth-screen" class="screen active">
+        <div class="brand" style="margin-bottom:20px;">DriveCare 🚗</div>
+        <div class="card">
+          <form class="form" id="auth-form">
+            <!-- 1-Tap Device Account Selection Button -->
+            <button id="btn-device-account-fill" type="button" class="btn-outline" style="background: rgba(110,231,255,0.1); border-color: rgba(110,231,255,0.3); color: var(--primary); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.88rem; padding: 10px;">
+              <span>📱</span>
+              <span>تسجيل سريع بإيميل الهاتف (Google / Apple ID)</span>
+            </button>
+            <div id="device-autofill-hint" class="small muted" style="text-align:center; display:none;">✨ تم استدعاء إيميل الجهاز، حدد كلمة المرور وسيتم حفظها تلقائياً بالهاتف.</div>
+
+            <input id="name" type="text" placeholder="الاسم الكامل" autocomplete="name" />
+            <input id="phone" type="tel" placeholder="رقم الموبايل" autocomplete="tel" />
+            <input id="email" type="email" placeholder="البريد الالكتروني (مسجل على الهاتف)" autocomplete="username email" />
+            <input id="password" type="password" placeholder="كلمة المرور" autocomplete="new-password" />
+            <div id="role-picker" class="role-picker">
+              <span class="small muted">اختر أدوارك (يمكنك الجمع بين أكثر من دور في نفس الحساب):</span>
+              <label><input type="checkbox" name="roles" value="owner" checked /> 👑 مالك سيارة (إدارة سياراتك واقتران مباشر دائم)</label>
+              <label><input type="checkbox" name="roles" value="driver" /> 🚗 سائق (قيادة سيارات مفوضة لك من ملاك آخرين)</label>
+              <label><input type="checkbox" name="roles" value="workshop" /> 🔧 صاحب ورشة (فحص وتشخيص أعطال السيارات)</label>
+            </div>
+            <div id="workshop-fields" class="role-picker" hidden>
+              <span class="small muted">بيانات الورشة</span>
+              <input id="workshop-name" type="text" placeholder="اسم الورشة" />
+              <input id="workshop-phone" type="tel" placeholder="رقم هاتف الورشة" />
+              <input id="workshop-services" type="text" placeholder="الخدمات (ميكانيكا، كهرباء، OBD)" />
+            </div>
+            <button id="auth-submit" type="submit">تسجيل / دخول وحفظ البيانات</button>
+            <button id="auth-toggle" type="button" class="small muted btn-outline" style="background:transparent; border:none;">لديك حساب؟ تسجيل الدخول</button>
+            <div class="small muted" id="auth-status" role="status" aria-live="polite"></div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ========================================== -->
+      <!-- MAIN DASHBOARD SCREEN                      -->
+      <!-- ========================================== -->
+      <section id="dashboard-screen" class="screen">
+        
+        <!-- Header & Quick Role Switcher -->
+        <div class="brand-header">
+          <div class="brand">DriveCare <span>🚗</span></div>
+          <span class="status-chip" id="active-role-label">وضع المالك</span>
+        </div>
+
+        <!-- Active Vehicle & Context Switcher -->
+        <div class="context-card" id="context-switcher-card">
+          <div class="inline-row" style="margin-bottom:6px;">
+            <span class="small muted">🚗 تبديل السيارة وسياق الاستخدام:</span>
+            <span class="status-chip" id="context-role-badge">أنت المالك 👑</span>
+          </div>
+          <select id="active-vehicle-context" style="background:rgba(0,0,0,0.4); border:1px solid rgba(255,255,255,0.15); font-weight:700;">
+            <option value="owner-corolla" selected>👑 سيارتي الخاصة: Toyota Corolla 2021 (مالك - اقتران OBD مباشر ودائم)</option>
+            <option value="driver-elantra">🚗 سيارة العمل المفوضة: Hyundai Elantra 2023 (سائق - تصريح ساري 5 أيام)</option>
+            <option value="workshop-sportage">🔧 سيارة عميل بالورشة: Kia Sportage 2022 (ورشة - فحص وتكلفة صيانة)</option>
+          </select>
+          <div class="small muted" id="context-desc" style="margin-top:6px; font-size:0.76rem;">
+            ✅ بصفتك المالك: تقترن بجهاز الـ OBD مباشرة وتتابع السرعة والاستهلاك والتكلفة دون الحاجة لتسجيل كسائق.
+          </div>
+        </div>
+
+        <!-- 3 Role Tabs Switcher -->
+        <div class="role-tabs" id="role-tabs-bar">
+          <button type="button" class="role-tab-btn active" data-role-select="owner">👑 المالك</button>
+          <button type="button" class="role-tab-btn" data-role-select="driver">🚗 السائق</button>
+          <button type="button" class="role-tab-btn" data-role-select="workshop">🔧 الورشة</button>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- LIVE OBD-II TELEMETRY COCKPIT (ALL MODES)  -->
+        <!-- ========================================== -->
+        <div class="card obd-cockpit" data-panel="home">
+          <div class="inline-row">
+            <div>
+              <span class="small muted">قراءة كمبيوتر السيارة OBD-II المباشر</span>
+              <strong style="display:block; font-size:1.05rem;" id="vehicle-name">Toyota Corolla 2021</strong>
+            </div>
+            <span class="status-chip" id="obd-live-status">غير متصل</span>
+          </div>
+
+          <!-- Gauges Grid -->
+          <div class="gauge-grid">
+            <div class="gauge-box">
+              <span class="gauge-label">السرعة الحالية</span>
+              <span class="gauge-value val-speed" id="live-speed">0 km/h</span>
+            </div>
+            <div class="gauge-box">
+              <span class="gauge-label">سرعة المحرك (RPM)</span>
+              <span class="gauge-value val-rpm" id="live-rpm">0 RPM</span>
+            </div>
+            <div class="gauge-box">
+              <span class="gauge-label">حرارة مياه التبريد</span>
+              <span class="gauge-value val-temp" id="live-temp">88 °C</span>
+            </div>
+            <div class="gauge-box">
+              <span class="gauge-label">شحن البطارية</span>
+              <span class="gauge-value val-battery" id="live-battery">13.8 V</span>
+            </div>
+            <div class="gauge-box">
+              <span class="gauge-label">مستوى خزان الوقود</span>
+              <span class="gauge-value" id="live-fuel">72 %</span>
+            </div>
+            <div class="gauge-box">
+              <span class="gauge-label">كود الشاسيه (VIN)</span>
+              <span class="gauge-value small" id="live-vin" style="font-size:0.85rem; padding-top:6px;">JTDBR32E12345678</span>
+            </div>
+          </div>
+
+          <!-- DTC Trouble Code Banner -->
+          <div class="dtc-banner" id="live-dtc-banner">
+            <strong>فحص لمبة الأعطال (Check Engine):</strong>
+            <span id="live-dtc-text">لا توجد أعطال مسجلة (النظام سليم 100%)</span>
+          </div>
+
+          <!-- Live Simulator & Bluetooth Action Buttons -->
+          <div style="display:flex; gap:8px; margin-top:12px;">
+            <button id="toggle-sim-btn" type="button" class="btn-outline" style="flex:1; font-size:0.82rem;">
+              ⚡ تشغيل المحاكي الحي
+            </button>
+            <button id="quick-obd-btn" type="button" style="flex:1.2; font-size:0.82rem;">
+              🔍 بحث وتوصيل OBD
+            </button>
+          </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- ROLE 1: OWNER VIEW TOOLS (👑 وضع المالك)   -->
+        <!-- ========================================== -->
+        <div id="owner-view-section" class="role-section">
+          <!-- Owner Live Fuel Consumption & Trip Cost Economics Card -->
+          <div class="card" data-panel="home" style="border: 1px solid rgba(126, 242, 154, 0.35); background: linear-gradient(135deg, rgba(17, 35, 52, 0.95), rgba(10, 28, 42, 0.95));">
+            <div class="inline-row">
+              <div>
+                <strong style="color:var(--green); font-size:1.05rem;">⛽ استهلاك الوقود وحساب التكلفة الحية</strong>
+                <span class="small muted" style="display:block;">قراءة كمبيوتر السيارة اللحظية مع حساب تكلفة الرحلة</span>
+              </div>
+              <span class="status-chip" id="owner-cost-badge">حساب فوري 💰</span>
+            </div>
+
+            <!-- Cost Hero Banner -->
+            <div class="cost-grid">
+              <div class="cost-box-hero">
+                <span class="small muted">التكلفة المالية المقدرة للرحلة الحالية:</span>
+                <span class="hero-value" id="owner-live-trip-cost">0.00 ج.م</span>
+                <span class="small muted" id="owner-cost-currency-note">
+                  معدل التكلفة: <strong id="owner-live-cost-per-km" style="color:var(--white);">0.00</strong> ج.م لكل كيلومتر
+                </span>
+              </div>
+
+              <div class="gauge-box">
+                <span class="gauge-label">معدل الاستهلاك اللحظي</span>
+                <span class="gauge-value val-rpm" id="owner-live-fuel-rate">0.0 L/100km</span>
+              </div>
+
+              <div class="gauge-box">
+                <span class="gauge-label">الوقود المستهلك باللتر</span>
+                <span class="gauge-value val-speed" id="owner-live-liters-used">0.00 لتر</span>
+              </div>
+
+              <div class="gauge-box">
+                <span class="gauge-label">مسافة الرحلة الحالية</span>
+                <span class="gauge-value" id="owner-live-trip-dist">0.0 كم</span>
+              </div>
+
+              <div class="gauge-box">
+                <span class="gauge-label">سرعة السيارة الحالية</span>
+                <span class="gauge-value val-battery" id="owner-live-speed-mirror">0 km/h</span>
+              </div>
+            </div>
+
+            <!-- Fuel Price Config & Eco Index -->
+            <div style="margin-top:12px; background:rgba(0,0,0,0.3); border-radius:12px; padding:10px; border:1px solid rgba(255,255,255,0.06);">
+              <div class="inline-row" style="margin-bottom:8px;">
+                <label for="owner-fuel-price-input" class="small muted">سعر لتر الوقود (ج.م / ر.س):</label>
+                <input id="owner-fuel-price-input" type="number" step="0.25" value="14.50" style="width:100px; text-align:center; padding:6px; font-weight:700; color:var(--green); background:rgba(0,0,0,0.4);" />
+              </div>
+              <div class="inline-row">
+                <span class="small muted">مؤشر أسلوب القيادة:</span>
+                <span class="eco-tag" id="owner-eco-badge">🌿 قيادة اقتصادية (وفرت ~14%)</span>
+              </div>
+            </div>
+
+            <!-- Quick Action Buttons -->
+            <div style="display:flex; gap:8px; margin-top:10px;">
+              <button id="btn-reset-trip-cost" type="button" class="btn-outline" style="flex:1; font-size:0.8rem;">
+                🔄 تصفير عداد الرحلة
+              </button>
+              <button id="btn-save-trip-log" type="button" class="btn-outline" style="flex:1; font-size:0.8rem;">
+                💾 حفظ الرحلة بالسجل
+              </button>
+            </div>
+          </div>
+
+          <!-- Vehicle Management & VIN -->
+          <div class="card" data-panel="home">
+            <div class="inline-row">
+              <strong>بيانات المركبة والـ VIN</strong>
+              <span class="small muted">صلاحية المالك</span>
+            </div>
+            <p class="muted small" style="margin:8px 0;">يمكنك تعديل بيانات سيارتك وتأكيد كود الـ VIN لربطه تلقائياً مع جهاز الفحص.</p>
+            <div class="form">
+              <input id="owner-veh-name" type="text" placeholder="اسم السيارة (Toyota Corolla)" value="Toyota Corolla 2021" />
+              <input id="owner-veh-vin" type="text" placeholder="رقم الشاسيه VIN" value="JTDBR32E12345678" />
+              <button type="button" id="btn-save-owner-veh" class="btn-outline">حفظ بيانات المركبة</button>
+            </div>
+          </div>
+
+          <!-- Driver Delegation & OBD Access Duration -->
+          <div class="card" data-panel="home">
+            <div class="inline-row">
+              <strong>تفويض السائقين وصلاحية الـ OBD</strong>
+              <span class="status-chip chip-amber">تحكم المالك</span>
+            </div>
+            <p class="muted small" style="margin:8px 0;">أنت المالك الوحيد؛ يمكنك إضافة سائق ومنحه صلاحية اقتران بجهاز الـ OBD لعدد أيام محدد مع إمكانية الإلغاء الفوري.</p>
+            <div class="form">
+              <input id="driver-email" type="tel" placeholder="رقم موبايل السائق لإضافته" />
+              <button id="add-driver-btn" type="button">إضافة سائق مرخص</button>
+            </div>
+            <div id="driver-list" class="list"></div>
+            <div id="driver-status" class="small muted" role="status" style="margin-top:6px;"></div>
+
+            <!-- Grant Access Days -->
+            <div class="form" style="margin-top:12px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:10px;">
+              <label class="small muted" for="custom-access-days">منح السائق صلاحية اقتران الـ OBD بالأيام:</label>
+              <div class="inline-row">
+                <input id="custom-access-days" type="number" min="1" max="365" placeholder="عدد الأيام (1، 7، 30)" value="7" style="flex:1;" />
+                <input id="device-access-driver-id" type="text" placeholder="معرّف السائق" style="flex:1;" />
+              </div>
+              <button id="grant-device-access-btn" type="button" class="btn-outline">منح صلاحية الاقتران المحددة</button>
+            </div>
+            <div id="device-access-list" class="list"></div>
+            <div id="device-access-status" class="small muted" role="status"></div>
+          </div>
+
+          <!-- Workshop Access Requests & Permission Guard -->
+          <div class="card" data-panel="home">
+            <div class="inline-row">
+              <strong>طلبات وصول الورش</strong>
+              <span class="status-chip">حماية الخصوصية</span>
+            </div>
+            <p class="muted small" style="margin:8px 0;">لن تظهر أي بيانات للورشة قبل موافقتك الصريحة وتحديد الصلاحيات:</p>
+            <div class="role-picker">
+              <label><input type="checkbox" name="workshop-permissions" value="health" checked /> تقرير صحة المحرك العام</label>
+              <label><input type="checkbox" name="workshop-permissions" value="diagnostics" checked /> كشف الأعطال والـ DTC</label>
+              <label><input type="checkbox" name="workshop-permissions" value="maintenance" checked /> سجل وتكاليف الصيانة</label>
+            </div>
+            <div id="workshop-access-requests" class="list" style="margin-top:10px;"></div>
+          </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- ROLE 2: DRIVER COCKPIT (🚗 وضع السائق)    -->
+        <!-- ========================================== -->
+        <div id="driver-view-section" class="role-section" hidden>
+          <div class="card">
+            <div class="inline-row">
+              <strong>وضع القيادة المباشر (Driver Mode)</strong>
+              <span class="status-chip" id="driver-obd-permit">صلاحية OBD سارية (باقي 7 أيام)</span>
+            </div>
+            <p class="muted small" style="margin:8px 0;">تظهر أمامك مؤشرات السرعة والحرارة. سيصدر تنبيه صوتي فوري في حال تخطي حرارة المحرك 105 مئوية لتفادي أي ضرر.</p>
+            <div class="list">
+              <button id="test-voice-btn" type="button" class="btn-outline">🔊 تجربة التنبيه الصوتي لحرارة المحرك</button>
+            </div>
+            <div id="voice-status" class="small muted" style="margin-top:6px;">التنبيه الصوتي: جاهز</div>
+          </div>
+
+          <div class="card">
+            <div class="inline-row">
+              <strong>سجل الرحلة الحالية واستهلاك الوقود</strong>
+              <span class="small muted">الرحلة النشطة</span>
+            </div>
+            <div class="inline-row" style="margin-top:10px;">
+              <div>المسافة: <strong id="driver-trip-dist">42.5 كم</strong></div>
+              <div>المعدل: <strong id="driver-trip-rate">6.8 لتر/100كم</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- ROLE 3: WORKSHOP DIAGNOSTICS (🔧 وضع الورشة) -->
+        <!-- ========================================== -->
+        <div id="workshop-view-section" class="role-section" hidden>
+          <div class="card">
+            <div class="inline-row">
+              <strong>منظومة فحص الورشة (Workshop Diagnostics)</strong>
+              <span class="status-chip chip-amber">فني معتمد</span>
+            </div>
+            <p class="muted small" style="margin:8px 0;">ابحث عن سيارة العميل برقم الهاتف المسجل لطلب إذن الفحص وقراءة كمبيوتر السيارة:</p>
+            <div class="form">
+              <input id="workshop-target-phone" type="tel" placeholder="رقم هاتف مالك السيارة المسجل" />
+              <input id="workshop-vehicle-id" type="text" placeholder="معرّف السيارة (اختياري)" />
+              <button type="button" id="request-vehicle-access-btn">إرسال طلب فحص للمالك</button>
+            </div>
+            <div id="workshop-request-status" class="small muted" role="status" style="margin-top:6px;"></div>
+          </div>
+
+          <!-- Workshop Diagnostic Report Card -->
+          <div class="card" id="workshop-report-card">
+            <div class="inline-row">
+              <strong>تقرير فحص الأعطال (DTC Report)</strong>
+              <span class="status-chip" id="ws-perm-badge">مصرح بالتشخيص والصيانة</span>
+            </div>
+            <div class="list" style="margin-top:10px;">
+              <div class="list-item">
+                <div>
+                  <strong>كود العطل: P0300</strong>
+                  <div class="small muted">Random/Multiple Cylinder Misfire Detected (خلل إشعال)</div>
+                </div>
+                <span class="status-chip chip-amber">يحتاج فحص البوجيهات</span>
+              </div>
+              <div class="list-item">
+                <div>
+                  <strong>كود العطل: P0171</strong>
+                  <div class="small muted">System Too Lean Bank 1 (خليط وقود فقير)</div>
+                </div>
+                <span class="status-chip chip-amber">فحص حساس الأكسجين</span>
+              </div>
+            </div>
+
+            <!-- Maintenance Entry -->
+            <div class="form" style="margin-top:14px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:12px;">
+              <label class="small muted">تسجيل ملاحظات الصيانة وقطع الغيار:</label>
+              <textarea id="ws-maint-notes" placeholder="ملاحظات الصيانة: تم تغيير البوجيهات وفلتر الهواء..." rows="2"></textarea>
+              <input id="ws-maint-cost" type="number" placeholder="التكلفة الإجمالية (ج.م)" />
+              <button type="button" id="btn-save-ws-report" class="btn-outline">حفظ تقرير الصيانة وتحديث السجل</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- OBD SCANNER & CONNECTION CARD              -->
+        <!-- ========================================== -->
+        <div class="card" data-panel="home">
+          <div class="inline-row">
+            <strong>اتصال جهاز الـ OBD2</strong>
+            <span class="status-chip" id="connection-status">غير متصل</span>
+          </div>
+          <p class="muted small" style="margin:8px 0;">اختر وسيلة الاتصال المناسبة لقطعة الفحص (تم حل مشكلة تكرار البحث):</p>
+          <div class="list">
+            <button id="ble-connect-btn">اتصال BLE (بلوتوث منخفض الطاقة)</button>
+            <button id="classic-connect-btn" class="btn-outline">Bluetooth Classic (RFCOMM)</button>
+            <button id="wifi-connect-btn" class="btn-outline">اتصال Wi-Fi OBD (192.168.0.10)</button>
+          </div>
+          <div id="connection-help" class="small muted" role="status" style="margin-top:8px;"></div>
+        </div>
+
+        <!-- TRIPS PANEL -->
+        <div class="card mobile-panel" data-panel="trips" style="margin-top:14px;" hidden>
+          <div class="inline-row">
+            <strong>سجل الرحلات</strong>
+            <span class="muted small">تاريخ قيادة السيارة</span>
+          </div>
+          <div id="all-trips-list" class="list"></div>
+        </div>
+
+        <!-- ALERTS PANEL -->
+        <div class="card mobile-panel" data-panel="alerts" style="margin-top:14px;" hidden>
+          <div class="inline-row">
+            <strong>التنبيهات والأعطال</strong>
+            <span class="muted small" id="alert-count">0</span>
+          </div>
+          <div id="all-alert-list" class="list"></div>
+        </div>
+
+        <!-- MAINTENANCE PANEL -->
+        <div class="card mobile-panel" data-panel="maintenance" style="margin-top:14px;" hidden>
+          <div class="inline-row">
+            <strong>جدول الصيانة الدورية</strong>
+            <span class="muted small">المواعيد القادمة</span>
+          </div>
+          <div id="all-maint-list" class="list"></div>
+        </div>
+
+        <!-- ACCOUNT & SECURITY PANEL -->
+        <div class="card mobile-panel" data-panel="account" style="margin-top:14px;" hidden>
+          <div class="inline-row">
+            <strong>تأمين الحساب والسيارة</strong>
+            <button id="logout-btn" type="button" class="btn-outline" style="width:auto; padding:6px 12px; color:var(--danger);">تسجيل الخروج</button>
+          </div>
+          <form id="change-password-form" class="form" style="margin-top:12px;">
+            <input id="current-password" type="password" placeholder="كلمة المرور الحالية" required />
+            <input id="new-password" type="password" placeholder="كلمة المرور الجديدة (12 حرفًا فأكثر)" minlength="12" required />
+            <input id="confirm-password" type="password" placeholder="تأكيد كلمة المرور" minlength="12" required />
+            <button type="submit" class="btn-outline">تحديث كلمة المرور</button>
+          </form>
+          <div id="password-change-status" class="small muted" role="status" style="margin-top:6px;"></div>
+        </div>
+
+        <!-- Bottom Navigation Bar -->
+        <div class="nav" aria-label="التنقل الرئيسي">
+          <button class="active" data-panel-target="home" type="button">عداد OBD</button>
+          <button data-panel-target="trips" type="button">رحلات</button>
+          <button data-panel-target="alerts" type="button">تحذيرات</button>
+          <button data-panel-target="maintenance" type="button">صيانة</button>
+          <button data-panel-target="account" type="button">الحساب</button>
+        </div>
+
+      </section>
+    </div>
+
+    <script src="mobile.js?v=15"></script>
+  </body>
+</html>

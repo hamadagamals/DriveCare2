@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.env
+car_health.db
+car_health.db-*
+exports/
+backups/
+android-native/local.properties
+android-native/.gradle/
+android-native/app/build/
