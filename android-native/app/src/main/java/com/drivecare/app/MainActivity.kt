@@ -1392,6 +1392,35 @@ class MainActivity : Activity() {
             addView(statusText)
             addView(selectedText)
 
+            addView(button("🔄 إعادة تهيئة البلوتوث وإلغاء أي تعليق") {
+                disconnectObd()
+                try {
+                    bluetoothAdapter?.let { adapter ->
+                        if (adapter.isDiscovering) adapter.cancelDiscovery()
+                        adapter.bluetoothLeScanner?.stopScan(bleCallback)
+                    }
+                } catch (_: SecurityException) {}
+                addBondedDevices()
+                renderCandidates()
+                statusText.text = "تم تنظيف قنوات الاتصال وإعادة تهيئة البلوتوث بنجاح."
+                Toast.makeText(this@MainActivity, "تمت إعادة تهيئة البلوتوث بنجاح 🟢", Toast.LENGTH_SHORT).show()
+            }.apply {
+                setBackgroundColor(Color.rgb(24, 55, 80))
+                setTextColor(Color.rgb(110, 231, 255))
+            })
+
+            val adviceCard = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(18, 38, 56))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+                addView(text("💡 في حال ظهور خطأ في الاتصال (Bluetooth Socket failure):", 12, Color.rgb(255, 200, 70), true))
+                addView(text("1. تأكد من فتح كونتاكت السيارة (المفتاح على وضع ON لتصل الكهرباء لفيشة الـ OBD).\n2. إذا كنت قد حاولت عدة مرات، انزع قطعة الـ OBD من فيشة السيارة وانتظر 5 ثوانٍ ثم أعد تركيبها (لإلغاء تعليق معالج القطعة).\n3. اضغط على 'إعادة تهيئة البلوتوث' أعلاه ثم اختر قطعتك.", 11, Color.rgb(180, 215, 240), false))
+            }
+            addView(adviceCard)
+
             if (telemetry.isConnected) {
                 addView(button("⏹ قطع الاتصال بـ OBD") {
                     disconnectObd()
@@ -3188,7 +3217,10 @@ class MainActivity : Activity() {
             return
         }
 
-        candidates.values.forEach { cand ->
+        val sortedList = candidates.values.sortedByDescending { cand ->
+            cand.title.contains("OBD", ignoreCase = true) || cand.title.contains("ELM", ignoreCase = true) || cand.title.contains("LINK", ignoreCase = true) || cand.title.contains("CAR", ignoreCase = true)
+        }
+        sortedList.forEach { cand ->
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundColor(Color.rgb(17, 35, 52))
@@ -3257,33 +3289,89 @@ class MainActivity : Activity() {
     }
 
     private fun connectBluetoothObd(macAddress: String, devName: String) {
-        val adapter = bluetoothAdapter ?: throw IllegalStateException("البلوتوث غير متوفر")
-        if (!adapter.isEnabled) throw IllegalStateException("البلوتوث مغلق")
+        val adapter = bluetoothAdapter ?: throw IllegalStateException("البلوتوث غير متوفر في هاتفك")
+        if (!adapter.isEnabled) throw IllegalStateException("يرجى تشغيل البلوتوث أولاً")
+
+        // 1. Force stop any background discovery to prevent RFCOMM handshake timeout
+        try {
+            if (adapter.isDiscovering) {
+                adapter.cancelDiscovery()
+            }
+            adapter.bluetoothLeScanner?.stopScan(bleCallback)
+        } catch (_: SecurityException) {}
+
+        disconnectObd()
+        Thread.sleep(250)
 
         val device = adapter.getRemoteDevice(macAddress)
         runOnUiThread {
-            statusText.text = "جاري فتح قناة RFCOMM التسلسلية مع $devName..."
+            statusText.text = "جاري فتح قناة RFCOMM مع $devName..."
         }
 
         var socket: BluetoothSocket? = null
+        var lastEx: Exception? = null
+
+        // Strategy 1: Insecure RFCOMM SPP (Top priority for 95% of ELM327 OBD clones)
         try {
-            socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+            runOnUiThread { statusText.text = "محاولة فتح قناة تسلسلية مباشرة (Insecure SPP)..." }
+            socket = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
             socket.connect()
-        } catch (_: Exception) {
+        } catch (e1: Exception) {
+            lastEx = e1
+            try { socket?.close() } catch (_: Exception) {}
+            socket = null
+            Thread.sleep(350)
+        }
+
+        // Strategy 2: Standard Secure RFCOMM SPP (For genuine / high-end adapters)
+        if (socket == null || !socket.isConnected) {
             try {
-                socket?.close()
+                runOnUiThread { statusText.text = "محاولة القناة القياسية (Secure SPP)..." }
+                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                socket.connect()
+            } catch (e2: Exception) {
+                lastEx = e2
+                try { socket?.close() } catch (_: Exception) {}
+                socket = null
+                Thread.sleep(350)
+            }
+        }
+
+        // Strategy 3: Direct RFCOMM Channel 1 Reflection (For older/stubborn ELM327 hardware)
+        if (socket == null || !socket.isConnected) {
+            try {
+                runOnUiThread { statusText.text = "محاولة القناة المباشرة 1 (RFCOMM Port 1)..." }
                 val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
                 socket = m.invoke(device, 1) as BluetoothSocket
                 socket.connect()
-            } catch (_: Exception) {
-                try {
-                    socket?.close()
-                    socket = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
-                    socket.connect()
-                } catch (e3: Exception) {
-                    throw Exception("تعذر الاتصال بالقطعة. تأكد من إتمام الاقتران وفتح كونتاكت السيارة: ${e3.localizedMessage}")
-                }
+            } catch (e3: Exception) {
+                lastEx = e3
+                try { socket?.close() } catch (_: Exception) {}
+                socket = null
+                Thread.sleep(350)
             }
+        }
+
+        // Strategy 4: Insecure RFCOMM Channel 1 Reflection
+        if (socket == null || !socket.isConnected) {
+            try {
+                runOnUiThread { statusText.text = "محاولة القناة البديلة المفتوحة (Insecure Port 1)..." }
+                val m = device.javaClass.getMethod("createInsecureRfcommSocket", Int::class.javaPrimitiveType)
+                socket = m.invoke(device, 1) as BluetoothSocket
+                socket.connect()
+            } catch (e4: Exception) {
+                lastEx = e4
+                try { socket?.close() } catch (_: Exception) {}
+                socket = null
+            }
+        }
+
+        if (socket == null || !socket.isConnected) {
+            val errDetail = lastEx?.localizedMessage ?: "A Bluetooth Socket failure occurred"
+            throw Exception("تعذر الاتصال بقطعة $devName.\n" +
+                    "• تأكد أن مفتاح كونتاكت السيارة على وضع التشغيل (ON).\n" +
+                    "• إذا تكرر الخطأ: انزع قطعة الـ OBD من السيارة وانتظر 5 ثوانٍ ثم أعد تركيبها (لإلغاء تعليقها).\n" +
+                    "• تفاصيل الخطأ: $errDetail")
         }
 
         activeSocket = socket
