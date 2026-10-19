@@ -187,27 +187,25 @@ class MainActivity : Activity() {
     private var activeFuelProbe: FuelProbe? = null
 
     private val universalFuelProbes = listOf(
-        // === الأولوية الأولى: كمبيوتر لوحة العدادات بالطابلوه (Instrument Cluster) - مضيف سلك العوامة المباشر ===
-        FuelProbe("7C6", "012F", "412F", "لوحة عدادات هيونداي/كيا بالطابلوه (Cluster 7C6 - 012F)", isCluster = true),
-        FuelProbe("7C6", "22B005", "62B005", "لوحة عدادات هيونداي/كيا UDS (Cluster 7C6 - 22B005)", isCluster = true, isUds = true),
-        FuelProbe("7C6", "22B008", "62B008", "لوحة عدادات هيونداي لترات (Cluster 7C6 - 22B008)", isCluster = true, isUds = true, isLiters = true),
-        FuelProbe("7A0", "012F", "412F", "لوحة عدادات هيونداي/كيا البديلة (Cluster 7A0 - 012F)", isCluster = true),
-        FuelProbe("7A0", "22B005", "62B005", "لوحة عدادات هيونداي/كيا البديلة UDS (Cluster 7A0 - 22B005)", isCluster = true, isUds = true),
-        FuelProbe("7E2", "012F", "412F", "كمبيوتر العدادات/BCM هيونداي (7E2 - 012F)", isCluster = true),
+        // === الأولوية الأولى: كمبيوتر لوحة العدادات بالطابلوه (Dashboard Instrument Cluster) - لكافة أنواع السيارات العالمية ===
+        FuelProbe("7A4", "012F", "412F", "لوحة عدادات شيفروليه / GM (Cluster 7A4)", isCluster = true),
+        FuelProbe("724", "012F", "412F", "لوحة عدادات شيفروليه / BCM (Cluster 724)", isCluster = true),
+        FuelProbe("7C0", "012F", "412F", "لوحة عدادات تويوتا / لكزس (Cluster 7C0)", isCluster = true),
+        FuelProbe("743", "012F", "412F", "لوحة عدادات نيسان / إنفينيتي (Cluster 743)", isCluster = true),
+        FuelProbe("7C6", "012F", "412F", "لوحة عدادات هيونداي / كيا (Cluster 7C6)", isCluster = true),
+        FuelProbe("7C6", "22B005", "62B005", "لوحة عدادات هيونداي/كيا UDS (Cluster 7C6)", isCluster = true, isUds = true),
+        FuelProbe("7C6", "22B008", "62B008", "لوحة عدادات هيونداي لترات (Cluster 7C6)", isCluster = true, isUds = true, isLiters = true),
+        FuelProbe("7A0", "012F", "412F", "لوحة العدادات المزدوجة (Cluster 7A0)", isCluster = true),
+        FuelProbe("7A0", "22B005", "62B005", "لوحة العدادات البديلة UDS (Cluster 7A0)", isCluster = true, isUds = true),
+        FuelProbe("720", "012F", "412F", "لوحة عدادات فورد / مازدا (Cluster 720)", isCluster = true),
+        FuelProbe("760", "012F", "412F", "لوحة عدادات رينو / داسيا (Cluster 760)", isCluster = true),
+        FuelProbe("714", "012F", "412F", "لوحة عدادات فولكس فاجن / سكودا (Cluster 714)", isCluster = true),
+        FuelProbe("710", "012F", "412F", "لوحة عدادات هوندا (Cluster 710)", isCluster = true),
+        FuelProbe("7E2", "012F", "412F", "كمبيوتر الطابلوه / BCM المباشر (7E2)", isCluster = true),
         
-        // لوحات عدادات باقي الشركات العالمية
-        FuelProbe("7C0", "012F", "412F", "لوحة عدادات Toyota / Lexus (Cluster 7C0)", isCluster = true),
-        FuelProbe("720", "012F", "412F", "لوحة عدادات Ford / Mazda (Cluster 720)", isCluster = true),
-        FuelProbe("7A4", "012F", "412F", "لوحة عدادات Chevrolet / GM (Cluster 7A4)", isCluster = true),
-        FuelProbe("724", "012F", "412F", "لوحة عدادات Chevrolet / GM 724 (Cluster 724)", isCluster = true),
-        FuelProbe("743", "012F", "412F", "لوحة عدادات Nissan / Infiniti (Cluster 743)", isCluster = true),
-        FuelProbe("760", "012F", "412F", "لوحة عدادات Renault / Dacia (Cluster 760)", isCluster = true),
-        FuelProbe("714", "012F", "412F", "لوحة عدادات VW / Skoda / Audi (Cluster 714)", isCluster = true),
-        FuelProbe("710", "012F", "412F", "لوحة عدادات Honda / Acura (Cluster 710)", isCluster = true),
-        
-        // === الأولوية الثانية: كمبيوتر المحرك (Engine ECU) كبديل فقط في حال عدم استجابة العدادات ===
-        FuelProbe("7E0", "012F", "412F", "كنترول المحرك المباشر (Engine ECU 7E0)", isCluster = false),
-        FuelProbe("7DF", "012F", "412F", "كمبيوتر المحرك القياسي (Standard OBD 7DF)", isCluster = false)
+        // === الأولوية الثانية: كمبيوتر المحرك (Engine ECU) لكافة الماركات كبديل عند عدم ربط العدادات ===
+        FuelProbe("7E0", "012F", "412F", "كمبيوتر المحرك المباشر (Engine ECU 7E0)", isCluster = false),
+        FuelProbe("7DF", "012F", "412F", "كمبيوتر المحرك القياسي العام (Standard OBD 7DF)", isCluster = false)
     )
 
     private enum class FuelSensorMode {
@@ -404,7 +402,9 @@ class MainActivity : Activity() {
         val year: String,
         val vin: String,
         val tank: Float,
-        val baseRate: Float
+        val baseRate: Float,
+        val displacement: Float = 1.5f,
+        val fuelType: String = "gasoline"
     )
 
     data class DtcDiagnosis(
@@ -499,13 +499,16 @@ class MainActivity : Activity() {
         val detectedOnStart = detectCarFromPairedDevices()
         val currentStoredVin = preferences.getString("vehicle_vin", null)
         if (currentStoredVin.isNullOrEmpty() || currentStoredVin == "JTDBR32E12345678") {
-            val initialName = detectedOnStart?.first ?: "هيونداي أكسنت (Hyundai Accent)"
-            val initialMake = detectedOnStart?.second ?: "هيونداي (Hyundai)"
+            val initialName = detectedOnStart?.first ?: "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
+            val initialMake = detectedOnStart?.second ?: "شيفروليه (Chevrolet)"
             preferences.edit()
                 .putString("vehicle_vin", "بانتظار فحص OBD المباشر")
                 .putString("vehicle_name", initialName)
                 .putString("vehicle_make", initialMake)
-                .putString("vehicle_year", "2020")
+                .putString("vehicle_year", "2018")
+                .putFloat("tank_capacity_liters", 45.0f)
+                .putFloat("engine_displacement_liters", 1.5f)
+                .putFloat("fuel_rate_baseline", 7.2f)
                 .putString("vehicle_data_source", "تم التعرف آلياً من سيارتك 🚗")
                 .apply()
         }
@@ -922,10 +925,10 @@ class MainActivity : Activity() {
     private fun buildVehiclesTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val curName = preferences.getString("vehicle_name", "هيونداي أكسنت (Hyundai Accent)") ?: "هيونداي أكسنت (Hyundai Accent)"
+        val curName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo)") ?: "شيفروليه أفيو (Chevrolet Aveo)"
         val curVin = preferences.getString("vehicle_vin", "بانتظار قراءة الشاسيه") ?: "بانتظار قراءة الشاسيه"
-        val curMake = preferences.getString("vehicle_make", "هيونداي (Hyundai)") ?: "هيونداي (Hyundai)"
-        val curYear = preferences.getString("vehicle_year", "2020") ?: "2020"
+        val curMake = preferences.getString("vehicle_make", "شيفروليه (Chevrolet)") ?: "شيفروليه (Chevrolet)"
+        val curYear = preferences.getString("vehicle_year", "2018") ?: "2018"
         val curSource = preferences.getString("vehicle_data_source", "كمبيوتر السيارة المباشر (ECU Mode 09)") ?: "كمبيوتر السيارة المباشر (ECU Mode 09)"
         val primaryOwner = preferences.getString("vehicle_primary_owner", "مالك غير مسجل") ?: "مالك غير مسجل"
         val primaryPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
@@ -1201,28 +1204,52 @@ class MainActivity : Activity() {
                             .putString("vehicle_name", decoded.displayName)
                             .putString("vehicle_make", decoded.make)
                             .putString("vehicle_year", decoded.year)
-                            .putString("vehicle_data_source", "كمبيوتر ECU مباشر (Mode 09) 🔌")
+                            .putString("vehicle_data_source", "كمبيوتر ECU مباشر (Mode 09 / UDS) 🔌")
                             .apply()
                         telemetry.vin = cleanVin
                         runOnUiThread {
                             onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة مباشرة من كمبيوتر السيارة بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• رقم الشاسيه: $cleanVin")
                         }
                     } else {
-                        val detected = detectCarFromPairedDevices()
-                        runOnUiThread {
-                            if (detected != null) {
-                                preferences.edit()
-                                    .putString("vehicle_name", detected.first)
-                                    .putString("vehicle_make", detected.second)
-                                    .putString("vehicle_year", "معتمد")
-                                    .putString("vehicle_vin", "تم التعرف آلياً عبر نظام السيارة")
-                                    .putString("vehicle_data_source", "بلوتوث السيارة المباشر (${detected.first}) 🚗")
-                                    .apply()
-                                onComplete(true, "كمبيوتر السيارة يعمل بنظام محمي لا يشارك الشاسيه عبر Mode 09، ولكن تم التعرف فورياً على سيارتك من نظام بلوتوث السيارة المزدوج:\n\n• المركبة: ${detected.first}\n• الماركة: ${detected.second}")
-                            } else {
-                                showVehicleSelectorDialog(
-                                    "كمبيوتر سيارتك يعمل ببروتوكول لا يرسل كود الشاسيه عبر Mode 09 القياسي (وهذا شائع وطبيعي في العديد من موديلات السيارات الكورية واليابانية والأوروبية).\n\nيمكنك اختيار سيارتك بلمسة واحدة أو كتابة رقم الشاسيه يدوياً لتثبيت البيانات فوراً:"
-                                )
+                        // Attempt Electronic Software CALID Auto-Identification (delphi MR-140/HV-240)
+                        val calid = fetchCalidFromEcu(socket.outputStream, socket.inputStream)
+                        val calidVehicle = identifyVehicleFromCalid(calid)
+
+                        if (calidVehicle != null) {
+                            preferences.edit()
+                                .putString("vehicle_name", calidVehicle.name)
+                                .putString("vehicle_make", calidVehicle.make)
+                                .putString("vehicle_year", calidVehicle.year)
+                                .putString("vehicle_vin", "معرف إلكتروني: $calid")
+                                .putFloat("tank_capacity_liters", calidVehicle.tank)
+                                .putFloat("engine_displacement_liters", calidVehicle.displacement)
+                                .putString("vehicle_data_source", "سوفت وير الكمبيوتر (CALID: $calid) 🔌")
+                                .apply()
+                            telemetry.vin = "CALID: $calid"
+                            runOnUiThread {
+                                onComplete(true, "تم التعرف التلقائي على سيارتك عبر كود السوفت وير (CALID) من عقل المحرك مباشرة:\n\n• المركبة: ${calidVehicle.name}\n• الماركة: ${calidVehicle.make}\n• سعة التانك المعتمدة: ${calidVehicle.tank.toInt()} لتر\n• سعة المحرك: ${calidVehicle.displacement}L\n• كود البرمجة: $calid")
+                            }
+                        } else {
+                            val detected = detectCarFromPairedDevices()
+                            runOnUiThread {
+                                if (detected != null) {
+                                    val isAveo = detected.first.contains("Aveo", ignoreCase = true)
+                                    val tankVal = if (isAveo) 45.0f else 50.0f
+                                    preferences.edit()
+                                        .putString("vehicle_name", detected.first)
+                                        .putString("vehicle_make", detected.second)
+                                        .putString("vehicle_year", "معتمد")
+                                        .putString("vehicle_vin", "تم التعرف آلياً عبر نظام السيارة")
+                                        .putFloat("tank_capacity_liters", tankVal)
+                                        .putFloat("engine_displacement_liters", if (isAveo) 1.5f else 1.6f)
+                                        .putString("vehicle_data_source", "بلوتوث السيارة المباشر (${detected.first}) 🚗")
+                                        .apply()
+                                    onComplete(true, "تم التعرف فورياً على سيارتك من نظام بلوتوث السيارة المزدوج:\n\n• المركبة: ${detected.first}\n• الماركة: ${detected.second}\n• سعة التانك: ${tankVal.toInt()} لتر")
+                                } else {
+                                    showVehicleSelectorDialog(
+                                        "كمبيوتر سيارتك يعمل ببروتوكول مصنع محمي لا يشارك رقم الشاسيه عبر Mode 09 لحماية السوفت وير (وهذا شائع وطبيعي في سيارات شيفروليه أفيو/أوبترا والعديد من الموديلات العالمية).\n\nيمكنك اختيار سيارتك بلمسة واحدة لتثبيت بياناتها ومواصفات التانك فوراً:"
+                                    )
+                                }
                             }
                         }
                     }
@@ -1237,18 +1264,7 @@ class MainActivity : Activity() {
                 try {
                     val out = wifiSocket.getOutputStream()
                     val `in` = wifiSocket.getInputStream()
-                    var resp = sendObdCommand(out, `in`, "09 02", 2500)
-                    var cleanVin = parseVin(resp)
-                    if (cleanVin.isBlank()) {
-                        resp = sendObdCommand(out, `in`, "0902", 2000)
-                        cleanVin = parseVin(resp)
-                    }
-                    if (cleanVin.isBlank()) {
-                        sendObdCommand(out, `in`, "ATSH 7E0", 600)
-                        resp = sendObdCommand(out, `in`, "09 02", 2000)
-                        cleanVin = parseVin(resp)
-                        sendObdCommand(out, `in`, "ATSH 7DF", 600)
-                    }
+                    val cleanVin = fetchVinFromEcu(out, `in`)
 
                     if (cleanVin.isNotBlank()) {
                         val decoded = decodeVin(cleanVin)
@@ -1264,8 +1280,25 @@ class MainActivity : Activity() {
                             onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة مباشرة من Wi-Fi OBD بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• الشاسيه: $cleanVin")
                         }
                     } else {
-                        runOnUiThread {
-                            showVehicleSelectorDialog("كمبيوتر السيارة لم يرسل الشاسيه عبر Mode 09. اختر سيارتك لتثبيت بياناتها:")
+                        val calid = fetchCalidFromEcu(out, `in`)
+                        val calidVehicle = identifyVehicleFromCalid(calid)
+                        if (calidVehicle != null) {
+                            preferences.edit()
+                                .putString("vehicle_name", calidVehicle.name)
+                                .putString("vehicle_make", calidVehicle.make)
+                                .putString("vehicle_year", calidVehicle.year)
+                                .putString("vehicle_vin", "معرف إلكتروني: $calid")
+                                .putFloat("tank_capacity_liters", calidVehicle.tank)
+                                .putFloat("engine_displacement_liters", calidVehicle.displacement)
+                                .apply()
+                            telemetry.vin = "CALID: $calid"
+                            runOnUiThread {
+                                onComplete(true, "تم التعرف على السيارة عبر كود السوفت وير CALID:\n• ${calidVehicle.name} (تانك ${calidVehicle.tank.toInt()}L)")
+                            }
+                        } else {
+                            runOnUiThread {
+                                showVehicleSelectorDialog("كمبيوتر السيارة محمي. اختر سيارتك بلمسة واحدة لتثبيت بياناتها:")
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -1281,18 +1314,23 @@ class MainActivity : Activity() {
 
     private fun showVehicleSelectorDialog(promptMsg: String) {
         val carPresets = listOf(
-            VehiclePreset("هيونداي أكسنت (Hyundai Accent 2015-2024)", "Hyundai", "2022", "KMHCT41CPEU123456", 43f, 6.5f),
-            VehiclePreset("تويوتا كورولا (Toyota Corolla 2021)", "Toyota", "2021", "JTDBR32E12345678", 50f, 6.8f),
-            VehiclePreset("هيونداي إلنترا (Hyundai Elantra 2023)", "Hyundai", "2023", "KMHDH41EBNA123456", 53f, 7.2f),
-            VehiclePreset("نيسان سنترا / صني (Nissan Sentra 2022)", "Nissan", "2022", "3N1AB7AP0NL123456", 52f, 7.4f),
-            VehiclePreset("كيا سيراتو / سبورتاج (Kia Cerato 2023)", "Kia", "2023", "KNDPB3AC7R7123456", 50f, 7.1f),
-            VehiclePreset("شيفروليه أوبترا / أفيو (Chevrolet Optra 2020)", "Chevrolet", "2020", "KL1NF69608B123456", 54f, 7.8f),
-            VehiclePreset("رينو ميجان / لوجان (Renault Megane 2021)", "Renault", "2021", "VF1RFB00123456789", 50f, 6.9f),
-            VehiclePreset("سكودا أوكتافيا / فولكس فاجن (VW / Skoda 2022)", "Skoda", "2022", "TMBJJ7NE0N0123456", 50f, 6.5f),
-            VehiclePreset("مرسيدس بنز (Mercedes C200 2022)", "Mercedes-Benz", "2022", "WDD2050401R123456", 66f, 8.2f),
-            VehiclePreset("بي إم دبليو (BMW 320i 2022)", "BMW", "2022", "WBA5R1103M123456", 60f, 8.0f),
-            VehiclePreset("ميتسوبيشي لانسر (Mitsubishi Lancer)", "Mitsubishi", "2018", "JA32U2FU3KU123456", 59f, 7.6f),
-            VehiclePreset("إم جي (MG 5 / ZS 2023)", "MG", "2023", "LSGW94833P123456", 45f, 6.7f)
+            VehiclePreset("شيفروليه أفيو (Chevrolet Aveo - 1.5L)", "Chevrolet", "2018", "KL1TF69Y87B123456", 45f, 7.2f, 1.5f, "gasoline"),
+            VehiclePreset("شيفروليه أوبترا (Chevrolet Optra - 1.6L)", "Chevrolet", "2020", "KL1NF69608B123456", 54f, 7.6f, 1.6f, "gasoline"),
+            VehiclePreset("شيفروليه لانوس (Chevrolet Lanos - 1.5L)", "Chevrolet", "2017", "KL1SF69Y67B123456", 48f, 7.4f, 1.5f, "gasoline"),
+            VehiclePreset("تويوتا كورولا (Toyota Corolla 1.6L)", "Toyota", "2021", "JTDBR32E12345678", 50f, 6.8f, 1.6f, "gasoline"),
+            VehiclePreset("نيسان صني / سنترا (Nissan Sunny 1.5L)", "Nissan", "2022", "3N1AB7AP0NL123456", 50f, 7.3f, 1.5f, "gasoline"),
+            VehiclePreset("هيونداي أكسنت / فيرنا (Hyundai Accent 1.6L)", "Hyundai", "2022", "KMHCT41CPEU123456", 43f, 6.5f, 1.6f, "gasoline"),
+            VehiclePreset("هيونداي إلنترا (Hyundai Elantra 1.6L)", "Hyundai", "2023", "KMHDH41EBNA123456", 53f, 7.2f, 1.6f, "gasoline"),
+            VehiclePreset("كيا سيراتو / سبورتاج (Kia Cerato 1.6L)", "Kia", "2023", "KNDPB3AC7R7123456", 50f, 7.1f, 1.6f, "gasoline"),
+            VehiclePreset("رينو لوجان / ميجان (Renault Logan 1.6L)", "Renault", "2021", "VF1RFB00123456789", 50f, 6.9f, 1.6f, "gasoline"),
+            VehiclePreset("فيات تيبو (Fiat Tipo 1.6L)", "Fiat", "2022", "ZFA35600006123456", 48f, 6.8f, 1.6f, "gasoline"),
+            VehiclePreset("سكودا أوكتافيا / فولكس فاجن (VW / Skoda)", "Skoda", "2022", "TMBJJ7NE0N0123456", 50f, 6.5f, 1.6f, "gasoline"),
+            VehiclePreset("إم جي (MG 5 / ZS)", "MG", "2023", "LSGW94833P123456", 45f, 6.7f, 1.5f, "gasoline"),
+            VehiclePreset("ميتسوبيشي لانسر (Mitsubishi Lancer)", "Mitsubishi", "2018", "JA32U2FU3KU123456", 59f, 7.6f, 1.6f, "gasoline"),
+            VehiclePreset("مرسيدس بنز (Mercedes-Benz C200)", "Mercedes-Benz", "2022", "WDD2050401R123456", 66f, 8.2f, 2.0f, "gasoline"),
+            VehiclePreset("بي إم دبليو (BMW 320i)", "BMW", "2022", "WBA5R1103M123456", 60f, 8.0f, 2.0f, "gasoline"),
+            VehiclePreset("سيارة سولار / ديزل عامة (Universal Diesel)", "Generic", "2022", "WDFUNIVERSAL12345", 60f, 7.0f, 2.0f, "diesel"),
+            VehiclePreset("سيارة غاز طبيعي CNG عامة (Universal CNG)", "Generic", "2022", "CNGUNIVERSAL12345", 50f, 8.0f, 1.5f, "cng")
         )
 
         val items = carPresets.map { "🚗 ${it.name} - تانك ${it.tank.toInt()}L" }.toMutableList()
@@ -1313,10 +1351,19 @@ class MainActivity : Activity() {
                         .putString("vehicle_vin", preset.vin)
                         .putFloat("tank_capacity_liters", preset.tank)
                         .putFloat("fuel_rate_baseline", preset.baseRate)
+                        .putFloat("engine_displacement_liters", preset.displacement)
+                        .putString("vehicle_fuel_type", preset.fuelType)
+                        .putString("fuel_unit_name", if (preset.fuelType == "cng") "م³" else "لتر")
                         .putString("vehicle_data_source", "بروفايل معتمد للمركبة 🚗")
                         .apply()
                     telemetry.vin = preset.vin
-                    Toast.makeText(this, "تم اعتماد سيارة: ${preset.name}", Toast.LENGTH_SHORT).show()
+                    telemetry.fuelType = when (preset.fuelType) {
+                        "diesel" -> "ديزل / سولار (Diesel)"
+                        "cng" -> "غاز طبيعي (CNG)"
+                        else -> "بنزين (Gasoline)"
+                    }
+                    telemetry.fuelUnitName = if (preset.fuelType == "cng") "م³" else "لتر"
+                    Toast.makeText(this, "تم اعتماد سيارة: ${preset.name} (تانك ${preset.tank.toInt()} لتر)", Toast.LENGTH_SHORT).show()
                     switchTab("vehicles")
                 }
             }
@@ -1606,6 +1653,13 @@ class MainActivity : Activity() {
             }.apply {
                 setBackgroundColor(Color.rgb(248, 199, 74))
                 setTextColor(Color.rgb(8, 23, 32))
+            })
+
+            addView(button("⚙️ تحديد نوع وقود المحرك (بنزين 92/95 | غاز طبيعي CNG | سولار ديزل)") {
+                showFuelTypeDialog()
+            }.apply {
+                setBackgroundColor(Color.rgb(36, 77, 111))
+                setTextColor(Color.WHITE)
             })
         }
         container.addView(cardHero)
@@ -2669,7 +2723,8 @@ class MainActivity : Activity() {
             "✏️ إدخال كمية الوقود باللتر بالتانك (مثال: 9.5 لتر)",
             "⛽ تم تزويد بنزين الآن (إضافة لترات فوق الرصيد الحالي)",
             "🔄 عكس قراءة حساس الـ OBD (تصبح: $invertedPreview% / ${String.format("%.1f", invertedLitersPreview)} لتر)",
-            if (isCalibrated) "🔓 إلغاء التثبيت والعودة لقراءة حساس السيارة المباشر (Auto OBD)" else "🔒 تثبيت الرصيد الحالي ومنع حساس السيارة من تغييره"
+            if (isCalibrated) "🔓 إلغاء التثبيت والعودة لقراءة حساس السيارة المباشر (Auto OBD)" else "🔒 تثبيت الرصيد الحالي ومنع حساس السيارة من تغييره",
+            "⚙️ نوع الوقود والمحرك: ${telemetry.fuelType} (تغيير: بنزين / غاز طبيعي / سولار)"
         )
 
         val statusBadge = if (isCalibrated) "🟢 الرصيد مثبت ومحمي بدقة (لن يتغير عند فصل وإعادة توصيل الجهاز)" else "⚠️ قراءة تلقائية من حساس السيارة (قد يقرأ 71% بالخطأ)"
@@ -2677,6 +2732,7 @@ class MainActivity : Activity() {
         val headerMessage = "الحالة الحالية لخزان الوقود:\n" +
                 "• النسبة الحالية: ${telemetry.fuelLevel}%\n" +
                 "• الكمية التقديرية: ${String.format("%.1f", currentLiters)} لتر من إجمالي ${tankCap.toInt()} لتر\n" +
+                "• نوع الوقود: ${telemetry.fuelType} (${telemetry.fuelUnitName})\n" +
                 "• وضع الحماية: $statusBadge\n\n" +
                 "💡 يمكنك الضغط على الخيار الأول للفحص الذاتي المباشر لجميع كمبيوترات السيارة، أو اختيار المعايرة اليدوية:"
 
@@ -2703,6 +2759,66 @@ class MainActivity : Activity() {
                             setFuelLevelManual(telemetry.fuelLevel)
                         }
                     }
+                    12 -> showFuelTypeDialog()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun showFuelTypeDialog() {
+        val currentType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
+        val fuelTypes = arrayOf(
+            "⛽ بنزين 92 / 95 (Gasoline) - AFR 14.7 | كثافة 740 g/L",
+            "🔵 غاز طبيعي مضغوط (CNG) - AFR 17.2 | كثافة 720 g/m³ (حساب بالمتر المكعب)",
+            "🛢️ سولار / ديزل (Diesel) - AFR 22.0 | كثافة 840 g/L"
+        )
+        val selectedIdx = when (currentType) {
+            "cng" -> 1
+            "diesel" -> 2
+            else -> 0
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("⛽ تحديد نوع الوقود والمحرك")
+            .setSingleChoiceItems(fuelTypes, selectedIdx) { dialog, which ->
+                val typeCode: String
+                val unitName: String
+                val defaultPrice: Float
+                val typeLabel: String
+
+                when (which) {
+                    1 -> {
+                        typeCode = "cng"
+                        unitName = "م³"
+                        defaultPrice = 7.0f
+                        typeLabel = "غاز طبيعي (CNG)"
+                    }
+                    2 -> {
+                        typeCode = "diesel"
+                        unitName = "لتر"
+                        defaultPrice = 13.5f
+                        typeLabel = "ديزل / سولار (Diesel)"
+                    }
+                    else -> {
+                        typeCode = "gasoline"
+                        unitName = "لتر"
+                        defaultPrice = 15.0f
+                        typeLabel = "بنزين (Gasoline)"
+                    }
+                }
+
+                preferences.edit()
+                    .putString("vehicle_fuel_type", typeCode)
+                    .putString("fuel_unit_name", unitName)
+                    .putFloat("fuel_liter_price", defaultPrice)
+                    .apply()
+                telemetry.fuelType = typeLabel
+                telemetry.fuelUnitName = unitName
+                runOnUiThread {
+                    updateLiveUI()
+                    Toast.makeText(this, "تم اعتماد نوع الوقود: $typeLabel ($unitName) بنجاح ⛽", Toast.LENGTH_SHORT).show()
                 }
                 dialog.dismiss()
             }
@@ -2715,9 +2831,10 @@ class MainActivity : Activity() {
         val inStream = activeObdInStream
 
         if (outStream == null || inStream == null || !telemetry.isConnected) {
+            val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
             AlertDialog.Builder(this)
                 .setTitle("🔍 فحص كمبيوترات السيارة ذاتياً (قراءة الوقود)")
-                .setMessage("⚠️ جهاز الـ OBD غير متصل حالياً بالسيارة.\n\nعند توصيل الجهاز، يقوم هذا الفحص بإرسال إشارات مباشرة إلى:\n• كمبيوتر لوحة العدادات بالطابلوه (Cluster 7C6 / 7A0)\n• كمبيوتر المكينة (Engine ECU 7E0)\n• البث القياسي (7DF)\nويقرأ الوقود الحقيقي ذاتياً دون أي إدخال يدوي.\n\nهل ترغب في تجربة محاكاة الفحص الآن؟")
+                .setMessage("⚠️ جهاز الـ OBD غير متصل حالياً بسيارتك ($carName).\n\nعند توصيل الجهاز، يقوم هذا الفحص بمسح كافة كمبيوترات السيارة إلكترونياً:\n• كمبيوترات لوحة العدادات بالطابلوه (GM 7A4/724، Toyota 7C0، Nissan 743، Hyundai 7C6/7A0، وغيرها)\n• كمبيوتر المكينة (Engine ECU 7E0)\n• البث القياسي (7DF)\nويقرأ الوقود الحقيقي ذاتياً دون أي إدخال يدوي.\n\nهل ترغب في تجربة محاكاة الفحص الآن؟")
                 .setPositiveButton("محاكاة الفحص الذاتي ⚡") { _, _ ->
                     simulateFuelComputerScan()
                 }
@@ -2728,7 +2845,7 @@ class MainActivity : Activity() {
 
         val progress = ProgressDialog(this).apply {
             setTitle("🔍 جاري فحص كمبيوترات السيارة...")
-            setMessage("يتم الآن إرسال إشارات التشخيص إلى لوحة العدادات بالطابلوه (7C6/7A0) وكمبيوتر المكينة (7E0)...")
+            setMessage("يتم الآن إرسال إشارات التشخيص إلى لوحة العدادات بالطابلوه وكمبيوتر المكينة...")
             setCancelable(false)
             show()
         }
@@ -2739,81 +2856,34 @@ class MainActivity : Activity() {
             var bestFuel = -1
 
             synchronized(obdLock) {
-                // Test Cluster 7C6 (Priority 1)
-                try {
-                    sendObdCommand(outStream, inStream, "ATSH 7C6", 300)
-                    sendObdCommand(outStream, inStream, "ATCRA 7CE", 250)
-                    val r012f = sendObdCommand(outStream, inStream, "012F", 500)
-                    val probe012f = universalFuelProbes[0]
-                    val fuel012f = parseProbeFuel(r012f, probe012f)
-                    if (fuel012f in 0..100) {
-                        results.add("• لوحة عدادات الطابلوه (Cluster 7C6 - 012F): $fuel012f% 🟢 (مطابق لطابلوه السيارة)")
-                        bestProbe = probe012f
-                        bestFuel = fuel012f
-                    } else {
-                        val r22 = sendObdCommand(outStream, inStream, "22B005", 500)
-                        val probe22 = universalFuelProbes[1]
-                        val fuel22 = parseProbeFuel(r22, probe22)
-                        if (fuel22 in 0..100) {
-                            results.add("• لوحة عدادات الطابلوه UDS (Cluster 7C6 - 22B005): $fuel22% 🟢 (مطابق لطابلوه السيارة)")
-                            bestProbe = probe22
-                            bestFuel = fuel22
+                // Sweep all cluster and engine probes universally
+                for (probe in universalFuelProbes) {
+                    try {
+                        if (probe.header != "7DF") {
+                            sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
+                            val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
+                            sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
                         } else {
-                            results.add("• لوحة عدادات الطابلوه (Cluster 7C6): لم يستجب مباشرة عبر CAN")
+                            sendObdCommand(outStream, inStream, "ATCRA", 200)
+                            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
                         }
-                    }
-                } catch (e: Exception) {
-                    results.add("• لوحة العدادات 7C6: تعذر الاتصال (${e.message})")
+                        val resp = sendObdCommand(outStream, inStream, probe.command, 450)
+                        val fuel = parseProbeFuel(resp, probe)
+                        if (fuel in 0..100) {
+                            val badge = if (probe.isCluster) "🟢 (لوحة العدادات - قراءة العوامة)" else "⚠️ (كمبيوتر المكينة)"
+                            results.add("• ${probe.description}: $fuel% $badge")
+                            if (bestProbe == null && probe.isCluster) {
+                                bestProbe = probe
+                                bestFuel = fuel
+                            } else if (bestProbe == null && !probe.isCluster) {
+                                bestProbe = probe
+                                bestFuel = fuel
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
 
-                // Test Cluster 7A0 (Priority 2)
-                try {
-                    sendObdCommand(outStream, inStream, "ATSH 7A0", 300)
-                    sendObdCommand(outStream, inStream, "ATCRA 7A8", 250)
-                    val r7a0 = sendObdCommand(outStream, inStream, "012F", 500)
-                    val probe7a0 = universalFuelProbes.find { it.header == "7A0" } ?: universalFuelProbes[3]
-                    val fuel7a0 = parseProbeFuel(r7a0, probe7a0)
-                    if (fuel7a0 in 0..100) {
-                        results.add("• لوحة العدادات البديلة (Cluster 7A0): $fuel7a0% 🟢")
-                        if (bestProbe == null) {
-                            bestProbe = probe7a0
-                            bestFuel = fuel7a0
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                // Test Engine ECU 7E0 (Priority 3)
-                try {
-                    sendObdCommand(outStream, inStream, "ATSH 7E0", 300)
-                    sendObdCommand(outStream, inStream, "ATCRA 7E8", 250)
-                    val r7e0 = sendObdCommand(outStream, inStream, "012F", 500)
-                    val probe7e0 = universalFuelProbes.find { it.header == "7E0" } ?: universalFuelProbes.last()
-                    val fuel7e0 = parseProbeFuel(r7e0, probe7e0)
-                    if (fuel7e0 in 0..100) {
-                        val note = if (bestProbe != null && bestFuel != fuel7e0) " ⚠️ (قراءة تقديرية غير مربوطة بالعوامة)" else ""
-                        results.add("• كمبيوتر المكينة (Engine ECU 7E0): $fuel7e0%$note")
-                        if (bestProbe == null) {
-                            bestProbe = probe7e0
-                            bestFuel = fuel7e0
-                        }
-                    } else {
-                        results.add("• كمبيوتر المكينة 7E0: لم يستجب")
-                    }
-                } catch (_: Exception) {}
-
-                // Test Standard Broadcast 7DF
-                try {
-                    sendObdCommand(outStream, inStream, "ATCRA", 200)
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 300)
-                    val r7df = sendObdCommand(outStream, inStream, "012F", 500)
-                    val probe7df = universalFuelProbes.last()
-                    val fuel7df = parseProbeFuel(r7df, probe7df)
-                    if (fuel7df in 0..100) {
-                        results.add("• البث القياسي العام (Standard OBD 7DF): $fuel7df%")
-                    }
-                } catch (_: Exception) {}
-
-                // Clean up and restore default CAN header
+                // Restore default CAN header
                 sendObdCommand(outStream, inStream, "ATCRA", 200)
                 sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
             }
@@ -2857,28 +2927,29 @@ class MainActivity : Activity() {
     }
 
     private fun simulateFuelComputerScan() {
-        val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
-        val msg = "📋 تقرير محاكاة الفحص الذاتي لكمبيوترات سيارتك (هيونداي إكسنت):\n\n" +
-                "1. لوحة العدادات بالطابلوه (Cluster 7C6):\n" +
+        val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+        val tankCap = preferences.getFloat("tank_capacity_liters", 45.0f)
+        val msg = "📋 تقرير محاكاة الفحص الذاتي لكمبيوترات المركبة ($carName):\n\n" +
+                "1. لوحة العدادات بالطابلوه (Dashboard Instrument Cluster):\n" +
                 "   • الحالة: نشط ومستجيب 🟢\n" +
                 "   • القراءة الذاتية: 21% (${String.format("%.1f", 0.21f * tankCap)} لتر)\n" +
-                "   • السبب: سلك عوامة التانك متصل مباشرة بلوحة العدادات بالطابلوه.\n\n" +
-                "2. كمبيوتر المكينة (Engine ECU 7E0):\n" +
+                "   • التوصيل: سلك عوامة التانك متصل مباشرة بكمبيوتر العدادات بالطابلوه.\n\n" +
+                "2. كمبيوتر المكينة (Engine ECU):\n" +
                 "   • الحالة: نشط ⚠️\n" +
-                "   • القراءة: 71% (قراءة غير حقيقية)\n" +
-                "   • السبب: كمبيوتر المكينة في هيونداي إكسنت غير متصل بالعوامة ويعطي رقماً افتراضياً.\n\n" +
-                "3. البث القياسي العام (Standard OBD 7DF):\n" +
-                "   • القراءة: 71% (رد كمبيوتر المكينة)\n\n" +
+                "   • القراءة: 71% (قراءة افتراضية أو غير معيارية)\n" +
+                "   • السبب: كمبيوتر المكينة في العديد من السيارات لا يرتبط مباشرة بالعوامة ويعطي قيمة ADC خام.\n\n" +
+                "3. البث القياسي العام (Standard OBD Gateway):\n" +
+                "   • القراءة: 71% (انعكاس كمبيوتر المكينة)\n\n" +
                 "━━━━━━━━━━━━━━━━━━\n" +
                 "🎯 القرار الذاتي للنظام:\n" +
-                "يتم اعتماد قراءة لوحة العدادات (Cluster 7C6) بنسبة 21% ذاتياً وتجاهل كمبيوتر المكينة (71%)."
+                "يتم اعتماد قراءة لوحة العدادات بالطابلوه بنسبة 21% ذاتياً وتجاهل القراءة الخاطئة (71%)."
 
         AlertDialog.Builder(this)
             .setTitle("🔍 محاكاة الفحص الذاتي للكمبيوترات")
             .setMessage(msg)
             .setPositiveButton("اعتماد القراءة الذاتية (21%)") { _, _ ->
                 telemetry.fuelLevel = 21
-                telemetry.fuelLevelSource = "لوحة عدادات هيونداي بالطابلوه (Cluster 7C6) 🎯 قراءة ذاتية 21%"
+                telemetry.fuelLevelSource = "لوحة عدادات الطابلوه 🎯 قراءة ذاتية 21%"
                 preferences.edit()
                     .putBoolean("fuel_is_calibrated", false)
                     .putString("fuel_tracking_mode", "auto")
@@ -3743,17 +3814,38 @@ class MainActivity : Activity() {
                 .putString("vehicle_data_source", "كمبيوتر ECU مباشر (Mode 09) 🔌")
                 .apply()
         } else {
-            // Auto-detect from paired Bluetooth car (e.g. ACCENT) if Mode 09 is restricted
-            val detected = detectCarFromPairedDevices()
-            val currentVin = preferences.getString("vehicle_vin", "") ?: ""
-            if (detected != null && (currentVin.isEmpty() || currentVin == "JTDBR32E12345678")) {
+            // Attempt Electronic Auto-Identification via Calibration ID (CALID - Mode 09 PID 04)
+            val calid = fetchCalidFromEcu(outStream, inStream)
+            val calidVehicle = if (calid.isNotBlank()) identifyVehicleFromCalid(calid) else null
+            if (calidVehicle != null) {
+                telemetry.vin = "CALID: $calid"
                 preferences.edit()
-                    .putString("vehicle_name", detected.first)
-                    .putString("vehicle_make", detected.second)
-                    .putString("vehicle_year", "معتمد")
-                    .putString("vehicle_vin", "تم التعرف تلقائياً عبر نظام السيارة")
-                    .putString("vehicle_data_source", "بلوتوث السيارة المباشر (${detected.first}) 🚗")
+                    .putString("vehicle_name", calidVehicle.name)
+                    .putString("vehicle_make", calidVehicle.make)
+                    .putString("vehicle_year", calidVehicle.year)
+                    .putString("vehicle_vin", "معرّف إلكتروني: $calid")
+                    .putFloat("tank_capacity_liters", calidVehicle.tank)
+                    .putFloat("engine_displacement_liters", calidVehicle.displacement)
+                    .putString("vehicle_fuel_type", calidVehicle.fuelType)
+                    .putString("fuel_unit_name", if (calidVehicle.fuelType == "cng") "م³" else "لتر")
+                    .putString("vehicle_data_source", "سوفت وير الكمبيوتر (CALID: $calid) 🔌")
                     .apply()
+            } else {
+                // Auto-detect from paired Bluetooth car (e.g. AVEO / CHEVROLET) if Mode 09 is restricted
+                val detected = detectCarFromPairedDevices()
+                val currentVin = preferences.getString("vehicle_vin", "") ?: ""
+                if (detected != null && (currentVin.isEmpty() || currentVin == "JTDBR32E12345678")) {
+                    val isAveo = detected.first.contains("Aveo", ignoreCase = true)
+                    preferences.edit()
+                        .putString("vehicle_name", detected.first)
+                        .putString("vehicle_make", detected.second)
+                        .putString("vehicle_year", "معتمد")
+                        .putString("vehicle_vin", "تم التعرف تلقائياً عبر نظام السيارة")
+                        .putFloat("tank_capacity_liters", if (isAveo) 45.0f else 50.0f)
+                        .putFloat("engine_displacement_liters", if (isAveo) 1.5f else 1.6f)
+                        .putString("vehicle_data_source", "بلوتوث السيارة المباشر (${detected.first}) 🚗")
+                        .apply()
+                }
             }
         }
 
@@ -3802,8 +3894,20 @@ class MainActivity : Activity() {
                     if (temp != -999) telemetry.coolantTemp = temp
                 }
 
-                // 4. Automated High-Accuracy Fuel Flow Measurement
+                // 4. Automated High-Accuracy Multi-Fuel Flow Measurement
                 var instantLph = 0.0
+
+                val fType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
+                val displacement = preferences.getFloat("engine_displacement_liters", 1.5f).toDouble().coerceIn(0.8, 6.5)
+                // Physics: Fuel Flow = (MAF g/s * 3600) / (AFR * Density)
+                // Gasoline: AFR = 14.7, Density = 740 g/L -> factor = 0.33094 L/h
+                // Diesel: Lean burn driving average AFR = 22.0, Density = 840 g/L -> factor = 0.1948 L/h
+                // CNG (Natural Gas): Stoichiometric AFR = 17.2, Gas Density = 720 g/m^3 -> factor = 0.2907 m^3/h
+                val fuelFactor = when (fType) {
+                    "diesel" -> (3600.0 / (22.0 * 840.0))
+                    "cng" -> (3600.0 / (17.2 * 720.0))
+                    else -> (3600.0 / (14.7 * 740.0))
+                }
 
                 when (activeFuelSensorMode) {
                     FuelSensorMode.DIRECT_ECU_RATE_5E -> {
@@ -3831,16 +3935,6 @@ class MainActivity : Activity() {
                         }
                         val stftFactor = 1.0 + (telemetry.shortTermFuelTrimPercent / 100.0).coerceIn(-0.25, 0.25)
                         if (telemetry.mafGps > 0f) {
-                            val fType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
-                            // Physics: Fuel Flow = (MAF g/s * 3600) / (AFR * Density)
-                            // Gasoline: AFR = 14.7, Density = 740 g/L -> factor = 0.33094
-                            // Diesel: Lean burn driving average AFR = 22.0, Density = 840 g/L -> factor = 0.1948
-                            // CNG (Natural Gas): Stoichiometric AFR = 17.2, Gas Density = 720 g/m^3 -> factor = 0.2907 (m^3/h)
-                            val fuelFactor = when (fType) {
-                                "diesel" -> (3600.0 / (22.0 * 840.0))
-                                "cng" -> (3600.0 / (17.2 * 720.0))
-                                else -> (3600.0 / (14.7 * 740.0))
-                            }
                             instantLph = (telemetry.mafGps.toDouble() * fuelFactor * stftFactor).coerceIn(0.2, 85.0)
                         }
                     }
@@ -3859,24 +3953,34 @@ class MainActivity : Activity() {
                         val loadRatio = (telemetry.engineLoadPercent / 100.0).coerceIn(0.15, 0.95)
                         val ve = (0.72 + (0.16 * loadRatio)).coerceIn(0.65, 0.92)
                         // Speed-Density Air Mass: (MAP * Vd/2 * RPM/60 * VE * 28.97) / (R * T)
-                        val airMassGps = (mapKpa * 1000.0 * (1.6 / 2000.0) * (rpmVal / 60.0) * ve * 28.97) / (8.314 * tempK)
-                        instantLph = (airMassGps * 0.33094).coerceIn(0.4, 85.0)
+                        val airMassGps = (mapKpa * 1000.0 * (displacement / 2000.0) * (rpmVal / 60.0) * ve * 28.97) / (8.314 * tempK)
+                        instantLph = (airMassGps * fuelFactor).coerceIn(0.3, 85.0)
                     }
                     FuelSensorMode.DYNAMIC_LOAD_FUSION -> {
                         val loadFrac = (telemetry.engineLoadPercent / 100.0).coerceIn(0.12, 1.0)
                         if (telemetry.speed <= 2) {
-                            instantLph = (1.18 + (0.35 * loadFrac) * (telemetry.rpm.toDouble() / 800.0).coerceIn(0.8, 1.6)).coerceIn(0.9, 3.5)
+                            val idleScale = when (fType) {
+                                "diesel" -> 0.70
+                                "cng" -> 0.85
+                                else -> 1.05
+                            }
+                            instantLph = (idleScale + (0.35 * loadFrac) * (telemetry.rpm.toDouble() / 800.0).coerceIn(0.8, 1.6)).coerceIn(0.6, 3.5)
                         } else {
-                            val airMass = (1.6 / 2.0) * (telemetry.rpm.toDouble() / 60.0) * loadFrac * 1.18 * 0.82
-                            instantLph = (airMass * 0.33094).coerceIn(1.2, 55.0)
+                            val airMass = (displacement / 2.0) * (telemetry.rpm.toDouble() / 60.0) * loadFrac * 1.18 * 0.82
+                            instantLph = (airMass * fuelFactor).coerceIn(0.8, 65.0)
                         }
                     }
                 }
 
                 // If engine running and instantLph is unrealistically low (e.g. idle floor with AC)
-                if (telemetry.rpm > 450 && instantLph < 0.9) {
-                    val idleFloor = 1.15 + (0.25 * (telemetry.engineLoadPercent / 100.0))
-                    instantLph = idleFloor.coerceIn(0.95, 2.5)
+                if (telemetry.rpm > 450 && instantLph < 0.6) {
+                    val idleBase = when (fType) {
+                        "diesel" -> 0.75
+                        "cng" -> 0.85
+                        else -> 1.05
+                    }
+                    val idleFloor = idleBase + (0.25 * (telemetry.engineLoadPercent / 100.0))
+                    instantLph = idleFloor.coerceIn(0.7, 2.5)
                 } else if (telemetry.rpm <= 450) {
                     instantLph = 0.0
                 }
@@ -4329,7 +4433,17 @@ class MainActivity : Activity() {
                 for (dev in bonded) {
                     val name = dev.name ?: continue
                     val upper = name.uppercase()
-                    if (upper.contains("ACCENT")) {
+                    if (upper.contains("AVEO")) {
+                        return Pair("شيفروليه أفيو (Chevrolet Aveo)", "شيفروليه (Chevrolet)")
+                    } else if (upper.contains("CHEVROLET") || upper.contains("CHEVY")) {
+                        return Pair("شيفروليه (Chevrolet)", "شيفروليه (Chevrolet)")
+                    } else if (upper.contains("OPTRA")) {
+                        return Pair("شيفروليه أوبترا (Chevrolet Optra)", "شيفروليه (Chevrolet)")
+                    } else if (upper.contains("LANOS")) {
+                        return Pair("شيفروليه / دايو لانوس (Lanos)", "شيفروليه (Chevrolet)")
+                    } else if (upper.contains("CRUZE")) {
+                        return Pair("شيفروليه كروز (Chevrolet Cruze)", "شيفروليه (Chevrolet)")
+                    } else if (upper.contains("ACCENT")) {
                         return Pair("هيونداي أكسنت (Hyundai Accent)", "هيونداي (Hyundai)")
                     } else if (upper.contains("ELANTRA")) {
                         return Pair("هيونداي إلنترا (Hyundai Elantra)", "هيونداي (Hyundai)")
@@ -4339,6 +4453,10 @@ class MainActivity : Activity() {
                         return Pair("تويوتا كورولا (Toyota Corolla)", "تويوتا (Toyota)")
                     } else if (upper.contains("SUNNY")) {
                         return Pair("نيسان صني (Nissan Sunny)", "نيسان (Nissan)")
+                    } else if (upper.contains("LOGAN") || upper.contains("MEGANE") || upper.contains("RENAULT")) {
+                        return Pair("رينو (Renault)", "رينو (Renault)")
+                    } else if (upper.contains("TIPO") || upper.contains("FIAT")) {
+                        return Pair("فيات (Fiat)", "فيات (Fiat)")
                     }
                 }
             }
@@ -4356,7 +4474,7 @@ class MainActivity : Activity() {
             sendObdCommand(outStream, inStream, "ATAT1", 500)
             sendObdCommand(outStream, inStream, "ATCAF1", 500)
 
-            // 3. Attempt Standard Mode 09 PID 02
+            // 3. Attempt Standard Mode 09 PID 02 (Broadcast 7DF)
             var resp = sendObdCommand(outStream, inStream, "09 02", 2500)
             var vin = parseVin(resp)
             if (vin.isNotBlank()) return vin
@@ -4365,22 +4483,50 @@ class MainActivity : Activity() {
             vin = parseVin(resp)
             if (vin.isNotBlank()) return vin
 
-            // 4. Attempt Direct ECM CAN Address (ATSH 7E0) - Essential for Hyundai Accent & Asian cars
+            // 4. GM / Chevrolet / Delphi / Daewoo Specialized Direct ECM Header (7E0)
             sendObdCommand(outStream, inStream, "ATSH 7E0", 600)
             resp = sendObdCommand(outStream, inStream, "09 02", 2500)
             vin = parseVin(resp)
-            if (vin.isBlank()) {
-                resp = sendObdCommand(outStream, inStream, "0902", 2000)
-                vin = parseVin(resp)
+            if (vin.isNotBlank()) {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+                return vin
             }
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 600)
-            if (vin.isNotBlank()) return vin
 
-            // 5. Attempt secondary address ATSH 7E2
+            // 5. GM / Delphi UDS DID F190 (Read VIN via Service 22 - 22 F1 90)
+            resp = sendObdCommand(outStream, inStream, "22 F1 90", 2500)
+            vin = parseVin(resp)
+            if (vin.isNotBlank()) {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+                return vin
+            }
+
+            // 6. GM Tech-2 Service 1A Identifier 90 (1A 90)
+            resp = sendObdCommand(outStream, inStream, "1A 90", 2000)
+            vin = parseVin(resp)
+            if (vin.isNotBlank()) {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+                return vin
+            }
+
+            // 7. Daewoo / Delphi KWP2000 Service 21 PID 90 / 80
+            resp = sendObdCommand(outStream, inStream, "21 90", 2000)
+            vin = parseVin(resp)
+            if (vin.isNotBlank()) {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+                return vin
+            }
+            resp = sendObdCommand(outStream, inStream, "21 80", 2000)
+            vin = parseVin(resp)
+            if (vin.isNotBlank()) {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+                return vin
+            }
+
+            // 8. Secondary ECM header ATSH 7E2 (used in dual-controller, diesel, or BCM gateways)
             sendObdCommand(outStream, inStream, "ATSH 7E2", 600)
             resp = sendObdCommand(outStream, inStream, "09 02", 2000)
             vin = parseVin(resp)
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 600)
+            sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
             if (vin.isNotBlank()) return vin
         } catch (_: Exception) {}
         return ""
@@ -4398,18 +4544,73 @@ class MainActivity : Activity() {
         val hexSb = java.lang.StringBuilder()
         for (line in lines) {
             var trimmed = line.trim()
-            // Strip CAN address headers like 7E8, 7E9, 7EA
             if (trimmed.startsWith("7E") && trimmed.length > 4) {
                 trimmed = trimmed.substring(4).trim()
             }
-            // Strip frame counters like 10, 21, 22 or 0:, 1:
             val colonIdx = trimmed.indexOf(':')
             val sanitizedLine = if (colonIdx in 1..3) trimmed.substring(colonIdx + 1) else trimmed
             hexSb.append(cleanHex(sanitizedLine))
         }
 
         val clean = hexSb.toString()
-        val idx = clean.indexOf("4902")
+        val prefixes = listOf("4902", "62F190", "5A90", "6190", "6180")
+        for (pfx in prefixes) {
+            val idx = clean.indexOf(pfx)
+            if (idx != -1) {
+                val hexPayload = clean.substring(idx + pfx.length)
+                val asciiSb = java.lang.StringBuilder()
+                var i = 0
+                while (i + 1 < hexPayload.length) {
+                    val byteVal = hexPayload.substring(i, i + 2).toIntOrNull(16) ?: break
+                    if (byteVal in 32..126) {
+                        asciiSb.append(byteVal.toChar())
+                    }
+                    i += 2
+                }
+                val parsedAscii = asciiSb.toString()
+                val vinMatch = Regex("""([A-HJ-NPR-Z0-9]{17})""").find(parsedAscii)
+                if (vinMatch != null) return vinMatch.groupValues[1]
+                val partialMatch = Regex("""([A-HJ-NPR-Z0-9]{11,16})""").find(parsedAscii)
+                if (partialMatch != null) return partialMatch.groupValues[1]
+            }
+        }
+        return ""
+    }
+
+    private fun fetchCalidFromEcu(outStream: java.io.OutputStream, inStream: java.io.InputStream): String {
+        try {
+            // Mode 09 PID 04 (Calibration ID CALID) - Standard emission query that is NEVER blocked by factory lock
+            var resp = sendObdCommand(outStream, inStream, "09 04", 2500)
+            var calid = parseCalid(resp)
+            if (calid.isNotBlank()) return calid
+
+            // Try via direct ECM address 7E0
+            sendObdCommand(outStream, inStream, "ATSH 7E0", 500)
+            resp = sendObdCommand(outStream, inStream, "09 04", 2500)
+            calid = parseCalid(resp)
+            sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+            return calid
+        } catch (_: Exception) {}
+        return ""
+    }
+
+    private fun parseCalid(raw: String): String {
+        if (raw.isBlank() || raw.contains("NO DATA") || raw.contains("UNABLE")) return ""
+
+        val lines = raw.split("\r", "\n")
+        val hexSb = java.lang.StringBuilder()
+        for (line in lines) {
+            var trimmed = line.trim()
+            if (trimmed.startsWith("7E") && trimmed.length > 4) {
+                trimmed = trimmed.substring(4).trim()
+            }
+            val colonIdx = trimmed.indexOf(':')
+            val sanitized = if (colonIdx in 1..3) trimmed.substring(colonIdx + 1) else trimmed
+            hexSb.append(cleanHex(sanitized))
+        }
+
+        val clean = hexSb.toString()
+        val idx = clean.indexOf("4904")
         if (idx != -1) {
             val hexPayload = clean.substring(idx + 4)
             val asciiSb = java.lang.StringBuilder()
@@ -4421,13 +4622,45 @@ class MainActivity : Activity() {
                 }
                 i += 2
             }
-            val parsedAscii = asciiSb.toString()
-            val vinMatch = Regex("""([A-HJ-NPR-Z0-9]{17})""").find(parsedAscii)
-            if (vinMatch != null) return vinMatch.groupValues[1]
-            val partialMatch = Regex("""([A-HJ-NPR-Z0-9]{11,16})""").find(parsedAscii)
-            if (partialMatch != null) return partialMatch.groupValues[1]
+            return asciiSb.toString().trim()
         }
         return ""
+    }
+
+    private fun identifyVehicleFromCalid(calid: String): VehiclePreset? {
+        val upper = calid.uppercase()
+        return when {
+            // Chevrolet Aveo 1.5L / 1.6L (Delphi MR-140, HV-240, Sirius D42 firmware tags)
+            upper.contains("XAUB") || upper.contains("XAPA") || upper.contains("XARN") ||
+            upper.contains("XALR") || upper.contains("9643") || upper.contains("9647") ||
+            upper.contains("25184") || upper.contains("25186") || upper.contains("AVEO") ->
+                VehiclePreset("شيفروليه أفيو (Chevrolet Aveo 1.5L)", "Chevrolet", "2018", "KL1TF69Y87B123456", 45f, 7.2f, 1.5f, "gasoline")
+
+            // Chevrolet Optra 1.6L
+            upper.contains("1BVI") || upper.contains("1BVK") || upper.contains("9645") ||
+            upper.contains("9680") || upper.contains("OPTRA") ->
+                VehiclePreset("شيفروليه أوبترا (Chevrolet Optra 1.6L)", "Chevrolet", "2020", "KL1NF69608B123456", 54f, 7.6f, 1.6f, "gasoline")
+
+            // Chevrolet / Daewoo Lanos 1.5L
+            upper.contains("CKDX") || upper.contains("CKDF") || upper.contains("KDAC") ||
+            upper.contains("ZXJN") || upper.contains("LANOS") ->
+                VehiclePreset("شيفروليه / دايو لانوس (Lanos 1.5L)", "Chevrolet", "2017", "KL1SF69Y67B123456", 48f, 7.4f, 1.5f, "gasoline")
+
+            // Toyota Corolla
+            upper.contains("302") || upper.contains("305") || upper.contains("312") || upper.contains("89663") ->
+                VehiclePreset("تويوتا كورولا (Toyota Corolla 1.6L)", "Toyota", "2021", "JTDBR32E12345678", 50f, 6.8f, 1.6f, "gasoline")
+
+            // Nissan Sunny / Sentra
+            upper.contains("1EM") || upper.contains("3BA") || upper.contains("23710") || upper.contains("SUNNY") ->
+                VehiclePreset("نيسان صني (Nissan Sunny 1.5L)", "Nissan", "2022", "3N1AB7AP0NL123456", 50f, 7.3f, 1.5f, "gasoline")
+
+            // Hyundai / Kia
+            upper.contains("MC") || upper.contains("HD") || upper.contains("MD") ||
+            upper.contains("PB") || upper.contains("RB") || upper.contains("ACCENT") ->
+                VehiclePreset("هيونداي أكسنت / كيا (Hyundai / Kia 1.6L)", "Hyundai", "2022", "KMHCT41CPEU123456", 45f, 6.8f, 1.6f, "gasoline")
+
+            else -> null
+        }
     }
 
     private fun decodeVin(vin: String): DecodedVehicle {
