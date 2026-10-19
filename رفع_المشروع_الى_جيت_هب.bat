@@ -2,18 +2,28 @@
 chcp 65001 >nul
 title رفع مشروع DriveCare إلى GitHub
 echo ======================================================
-echo    جاري رفع مشروع DriveCare إلى GitHub...
+echo    جاري فحص وتحديث مشروع DriveCare إلى GitHub...
 echo ======================================================
-cd /d F:\projects\DriveCare
-git push -u origin main
+cd /d "%~dp0"
+
+echo 1. جاري إضافة التعديلات الجديدة...
+git add .
+
+echo 2. جاري حفظ التعديلات محلياً (Commit)...
+git commit -m "تحديث مستمر لتطبيق DriveCare" >nul 2>&1
+
+echo 3. جاري الرفع إلى المستودع السحابي GitHub (main)...
+git push origin main
+
 echo.
 if %errorlevel% equ 0 (
     echo ======================================================
-    echo    تم رفع المشروع بنجاح إلى GitHub!
+    echo    ✅ تم رفع وتحديث المشروع بنجاح إلى GitHub!
+    echo    https://github.com/hamadagamals/DriveCare2
     echo ======================================================
 ) else (
     echo ======================================================
-    echo    حدث خطأ أثناء الرفع.
+    echo    ❌ حدث خطأ أثناء الرفع، تأكد من الاتصال بالإنترنت وصلاحيات الحساب.
     echo ======================================================
 )
 pause

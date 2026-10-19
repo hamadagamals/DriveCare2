@@ -445,9 +445,16 @@ class MainActivity : Activity() {
         userName = preferences.getString("user_name", "") ?: ""
         userPhone = preferences.getString("user_phone", "") ?: ""
         currentRole = preferences.getString("active_role", "owner") ?: "owner"
+        val isCalibrated = preferences.getBoolean("fuel_is_calibrated", false)
         telemetry.fuelLevel = preferences.getInt("current_fuel_tank_percent", 50)
-        val initTrackingMode = preferences.getString("fuel_tracking_mode", "auto") ?: "auto"
-        telemetry.fuelLevelSource = if (initTrackingMode == "manual_dynamic") "معايرة دقيقة + حساب تدفق 🧮" else "حساب ديناميكي ذكي 🧮"
+        val initTrackingMode = preferences.getString("fuel_tracking_mode", if (isCalibrated) "manual_dynamic" else "auto") ?: "auto"
+        telemetry.fuelLevelSource = if (isCalibrated) {
+            "معايرة مثبتة (${telemetry.fuelLevel}%) + تتبع ديناميكي 🧮"
+        } else if (initTrackingMode == "manual_dynamic") {
+            "معايرة دقيقة + حساب تدفق 🧮"
+        } else {
+            "حساب ديناميكي ذكي 🧮"
+        }
         isAudioMuted = preferences.getBoolean("is_audio_alert_muted", false)
 
         // Restore Route & Payload Trip Settings
@@ -2617,8 +2624,7 @@ class MainActivity : Activity() {
     private fun showFuelCalibrationDialog() {
         val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
         val currentLiters = (telemetry.fuelLevel * tankCap / 100.0f)
-        val isInverted = preferences.getBoolean("fuel_sensor_inverted", false)
-        val trackingMode = preferences.getString("fuel_tracking_mode", "auto") ?: "auto"
+        val isCalibrated = preferences.getBoolean("fuel_is_calibrated", false)
 
         val invertedPreview = (100 - telemetry.fuelLevel).coerceIn(0, 100)
         val invertedLitersPreview = (invertedPreview * tankCap / 100.0f)
@@ -2630,17 +2636,20 @@ class MainActivity : Activity() {
             "🟠 ثلث التانك (33% / ${(tankCap * 0.33f).toInt()} لتر)",
             "🟠 ربع التانك - أقل من النصف (25% / ${(tankCap * 0.25f).toInt()} لتر)",
             "🔴 الاحتياطي / قرب النفاد (10% / ${(tankCap * 0.1f).toInt()} لتر)",
-            "✏️ إدخال كمية الوقود باللتر بالتانك (مثال: 15 لتر)",
-            "✏️ كتابة نسبة مئوية مخصصة يدوي (%...)",
+            "✏️ كتابة نسبة مئوية مخصصة يدوي (%...) (مثال: 21%)",
+            "✏️ إدخال كمية الوقود باللتر بالتانك (مثال: 9.5 لتر)",
+            "⛽ تم تزويد بنزين الآن (إضافة لترات فوق الرصيد الحالي)",
             "🔄 عكس قراءة حساس الـ OBD (تصبح: $invertedPreview% / ${String.format("%.1f", invertedLitersPreview)} لتر)",
-            if (trackingMode == "manual_dynamic") "🔌 إعادة محاولة قراءة الحساس التلقائي عبر OBD" else "🧮 تثبيت الحساب الديناميكي (منع تداخل حساس الـ OBD)"
+            if (isCalibrated) "🔓 إلغاء التثبيت والعودة لقراءة حساس السيارة المباشر (Auto OBD)" else "🔒 تثبيت الرصيد الحالي ومنع حساس السيارة من تغييره"
         )
 
-        val headerMessage = "الحالة الحالية للتانك:\n" +
+        val statusBadge = if (isCalibrated) "🟢 الرصيد مثبت ومحمي بدقة (لن يتغير عند فصل وإعادة توصيل الجهاز)" else "⚠️ قراءة تلقائية من حساس السيارة (قد يقرأ 71% بالخطأ)"
+
+        val headerMessage = "الحالة الحالية لخزان الوقود:\n" +
                 "• النسبة الحالية: ${telemetry.fuelLevel}%\n" +
                 "• الكمية التقديرية: ${String.format("%.1f", currentLiters)} لتر من إجمالي ${tankCap.toInt()} لتر\n" +
-                "• المصدر: ${telemetry.fuelLevelSource}\n\n" +
-                "💡 ملحوظة: إذا كان كمبيوتر سيارتك يقرأ 73% بينما التانك أقل من النصف، يمكنك إما عكس قراءة الحساس (لتصبح 27%) أو اختيار ربع التانك أو إدخال اللترات مباشرة:"
+                "• وضع الحماية: $statusBadge\n\n" +
+                "💡 لمعايرة التانك بدقة (خاصة سيارات هيونداي): اختر ربع التانك أو اكتب 21%، وسيتم تثبيتها تماماً مع خصم الاستهلاك الفعلي بدقة أثناء القيادة دون أي قفزات:"
 
         AlertDialog.Builder(this)
             .setTitle("⛽ معايرة وضبط كمية الوقود بالتانك")
@@ -2653,12 +2662,42 @@ class MainActivity : Activity() {
                     3 -> setFuelLevelManual(33)
                     4 -> setFuelLevelManual(25)
                     5 -> setFuelLevelManual(10)
-                    6 -> promptCustomFuelLitersDialog()
-                    7 -> promptCustomFuelDialog()
-                    8 -> toggleInvertFuelSensor()
-                    9 -> toggleFuelTrackingMode()
+                    6 -> promptCustomFuelDialog()
+                    7 -> promptCustomFuelLitersDialog()
+                    8 -> promptAddFuelDialog()
+                    9 -> toggleInvertFuelSensor()
+                    10 -> {
+                        if (isCalibrated) {
+                            resetFuelToAutoObd()
+                        } else {
+                            setFuelLevelManual(telemetry.fuelLevel)
+                        }
+                    }
                 }
                 dialog.dismiss()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun promptCustomFuelDialog() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "أدخل النسبة من 1 إلى 100 (مثال: 21)"
+            setTextColor(Color.BLACK)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("أدخل نسبة البنزين الحالية بالتانك (%)")
+            .setMessage("النسبة ستثبت تماماً ويتم خصم الاستهلاك منها لحظياً أثناء القيادة:")
+            .setView(input)
+            .setPositiveButton("حفظ وتثبيت") { _, _ ->
+                val txt = input.text.toString().trim()
+                val percent = txt.toIntOrNull()
+                if (percent != null && percent in 1..100) {
+                    setFuelLevelManual(percent)
+                } else {
+                    Toast.makeText(this, "يرجى إدخال نسبة صحيحة بين 1 و 100", Toast.LENGTH_SHORT).show()
+                }
             }
             .setNegativeButton("إلغاء", null)
             .show()
@@ -2668,14 +2707,14 @@ class MainActivity : Activity() {
         val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-            hint = "أدخل عدد اللترات الحالية (مثال: 15)"
+            hint = "أدخل عدد اللترات الحالية (مثال: 9.5)"
             setTextColor(Color.BLACK)
         }
         AlertDialog.Builder(this)
             .setTitle("أدخل كمية الوقود الحالية باللتر")
             .setMessage("سعة خزان الوقود الإجمالية المسجلة: ${tankCap.toInt()} لتر")
             .setView(input)
-            .setPositiveButton("حفظ وتأكيد") { _, _ ->
+            .setPositiveButton("حفظ وتثبيت") { _, _ ->
                 val txt = input.text.toString().trim()
                 val liters = txt.toFloatOrNull()
                 if (liters != null && liters in 0.5f..tankCap) {
@@ -2689,65 +2728,91 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun toggleInvertFuelSensor() {
-        val cur = preferences.getBoolean("fuel_sensor_inverted", false)
-        val newInvert = !cur
-        preferences.edit().putBoolean("fuel_sensor_inverted", newInvert).apply()
-        telemetry.fuelLevel = (100 - telemetry.fuelLevel).coerceIn(1, 100)
-        preferences.edit().putInt("current_fuel_tank_percent", telemetry.fuelLevel).apply()
-        telemetry.fuelLevelSource = if (newInvert) "عوامة التانك (قراءة معكوسة) 🔌" else "عوامة التانك (مباشر) 🔌"
-        runOnUiThread {
-            updateLiveUI()
-            val stateText = if (newInvert) "مفعلة (100% - القراءة)" else "معطلة (القراءة الطبيعية)"
-            Toast.makeText(this, "تم تغيير وضع عكس العوامة إلى: $stateText. النسبة الآن: ${telemetry.fuelLevel}%", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun toggleFuelTrackingMode() {
-        val curMode = preferences.getString("fuel_tracking_mode", "auto") ?: "auto"
-        val newMode = if (curMode == "manual_dynamic") "auto" else "manual_dynamic"
-        preferences.edit().putString("fuel_tracking_mode", newMode).apply()
-        if (newMode == "manual_dynamic") {
-            telemetry.fuelLevelSource = "حساب ديناميكي ذكي 🧮"
-            Toast.makeText(this, "تم تثبيت الحساب الديناميكي عبر استهلاك المحرك بالرحلة 🧮", Toast.LENGTH_SHORT).show()
-        } else {
-            telemetry.fuelLevelSource = "بحث تلقائي عبر OBD 🔌"
-            Toast.makeText(this, "تم تفعيل محاولة القراءة من حساس العوامة بالـ OBD 🔌", Toast.LENGTH_SHORT).show()
-        }
-        runOnUiThread { updateLiveUI() }
-    }
-
-    private fun promptCustomFuelDialog() {
+    private fun promptAddFuelDialog() {
+        val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
+        val currentLiters = (telemetry.fuelLevel * tankCap / 100.0f)
         val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            hint = "أدخل النسبة من 1 إلى 100 (مثال: 65)"
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = "أدخل اللترات التي تم تزويدها (مثال: 15)"
             setTextColor(Color.BLACK)
         }
         AlertDialog.Builder(this)
-            .setTitle("أدخل نسبة البنزين الحالية بالتانك (%)")
+            .setTitle("⛽ تموين وقود - إضافة لترات جديدة")
+            .setMessage("الرصيد الحالي قبل التموين: ${telemetry.fuelLevel}% (${String.format("%.1f", currentLiters)} لتر من إجمالي ${tankCap.toInt()} لتر)\n\nأدخل عدد اللترات التي قمت بتزويدها في محطة الوقود:")
             .setView(input)
-            .setPositiveButton("حفظ وتأكيد") { _, _ ->
+            .setPositiveButton("إضافة للرصيد وتثبيت") { _, _ ->
                 val txt = input.text.toString().trim()
-                val percent = txt.toIntOrNull()
-                if (percent != null && percent in 1..100) {
-                    setFuelLevelManual(percent)
+                val addedLiters = txt.toFloatOrNull()
+                if (addedLiters != null && addedLiters > 0f) {
+                    val newTotalLiters = (currentLiters + addedLiters).coerceAtMost(tankCap)
+                    val newPercent = ((newTotalLiters / tankCap) * 100.0f).toInt().coerceIn(1, 100)
+                    setFuelLevelManual(newPercent)
+                    Toast.makeText(this, "تمت إضافة ${String.format("%.1f", addedLiters)} لتر بنجاح ⛽ أصبح رصيد التانك: $newPercent%", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "يرجى كتابة عدد لترات صحيح", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
-    private fun setFuelLevelManual(level: Int, lockDynamic: Boolean = true) {
+    private fun toggleInvertFuelSensor() {
         val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
-        telemetry.fuelLevel = level.coerceIn(1, 100)
-        telemetry.fuelLevelSource = if (lockDynamic) "معايرة دقيقة + حساب تدفق 🧮" else "معايرة يدوية"
-        if (lockDynamic) {
-            preferences.edit().putString("fuel_tracking_mode", "manual_dynamic").apply()
-        }
-        preferences.edit().putInt("current_fuel_tank_percent", telemetry.fuelLevel).apply()
+        val cur = preferences.getBoolean("fuel_sensor_inverted", false)
+        val newInvert = !cur
+        val invertedLevel = (100 - telemetry.fuelLevel).coerceIn(1, 100)
+        telemetry.fuelLevel = invertedLevel
+        telemetry.fuelLevelSource = "معايرة مثبتة (عكس عوامة $invertedLevel%) 🧮"
+        preferences.edit()
+            .putBoolean("fuel_sensor_inverted", newInvert)
+            .putBoolean("fuel_is_calibrated", true)
+            .putString("fuel_tracking_mode", "manual_dynamic")
+            .putInt("current_fuel_tank_percent", invertedLevel)
+            .putLong("fuel_calibrated_time", System.currentTimeMillis())
+            .apply()
         runOnUiThread {
             updateLiveUI()
-            Toast.makeText(this, "تم ضبط رصيد التانك على ${telemetry.fuelLevel}% (${String.format("%.1f", telemetry.fuelLevel * tankCap / 100f)} لتر) بنجاح ⛽", Toast.LENGTH_SHORT).show()
+            val stateText = if (newInvert) "مفعلة (100% - القراءة)" else "معطلة (القراءة الطبيعية)"
+            Toast.makeText(this, "تم عكس قراءة الحساس وتثبيتها: $stateText.\nالنسبة الآن: ${telemetry.fuelLevel}% (${String.format("%.1f", invertedLevel * tankCap / 100f)} لتر)\n🔒 الرصيد مثبت ومحمي من الرجوع لـ 71% عند إعادة التوصيل.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun resetFuelToAutoObd() {
+        preferences.edit()
+            .putBoolean("fuel_is_calibrated", false)
+            .putString("fuel_tracking_mode", "auto")
+            .apply()
+        telemetry.fuelLevelSource = "بحث تلقائي عبر OBD 🔌"
+        Toast.makeText(this, "تم إلغاء التثبيت وتفعيل القراءة التلقائية المباشرة من حساس الـ OBD 🔌", Toast.LENGTH_SHORT).show()
+        runOnUiThread { updateLiveUI() }
+    }
+
+    private fun toggleFuelTrackingMode() {
+        val isCalibrated = preferences.getBoolean("fuel_is_calibrated", false)
+        if (isCalibrated) {
+            resetFuelToAutoObd()
+        } else {
+            setFuelLevelManual(telemetry.fuelLevel)
+        }
+    }
+
+    private fun setFuelLevelManual(level: Int, lockDynamic: Boolean = true) {
+        val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
+        val clampedLevel = level.coerceIn(1, 100)
+        telemetry.fuelLevel = clampedLevel
+        telemetry.fuelLevelSource = "معايرة مثبتة ($clampedLevel%) + تتبع ديناميكي 🧮"
+
+        preferences.edit()
+            .putBoolean("fuel_is_calibrated", true)
+            .putInt("current_fuel_tank_percent", clampedLevel)
+            .putString("fuel_tracking_mode", "manual_dynamic")
+            .putLong("fuel_calibrated_time", System.currentTimeMillis())
+            .apply()
+
+        runOnUiThread {
+            updateLiveUI()
+            val liters = clampedLevel * tankCap / 100f
+            Toast.makeText(this, "تم تثبيت رصيد التانك على $clampedLevel% (${String.format("%.1f", liters)} لتر) بنجاح ⛽\n🔒 محمي ولن يرجع أبداً لـ 71% عند فصل وإعادة التوصيل.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -3643,9 +3708,11 @@ class MainActivity : Activity() {
 
                 // 7. Universal Fuel Level Reading (ECU / Cluster) or High-Precision Dynamic Fuel Flow Tracking
                 var hwFuelDetected = false
-                val fuelTrackingMode = preferences.getString("fuel_tracking_mode", "auto") ?: "auto"
+                val isCalibrated = preferences.getBoolean("fuel_is_calibrated", false)
+                val fuelTrackingMode = preferences.getString("fuel_tracking_mode", if (isCalibrated) "manual_dynamic" else "auto") ?: "manual_dynamic"
 
-                if (fuelTrackingMode != "manual_dynamic" && loopCount % 6 == 0) {
+                // STRICT PROTECTION: If calibrated or in manual_dynamic, NEVER allow raw 012F to overwrite fuel level!
+                if (!isCalibrated && fuelTrackingMode == "auto" && loopCount % 6 == 0) {
                     val probe = activeFuelProbe
                     if (probe != null) {
                         if (probe.header != "7DF") {
@@ -3676,7 +3743,7 @@ class MainActivity : Activity() {
                     }
                 }
 
-                // Tank Level Deduction if Hardware Float Sensor is not reporting or if in Dynamic Mode
+                // Tank Level Deduction: Accurately subtracts burned fuel from the calibrated tank level!
                 if (!hwFuelDetected && consumedSliceLiters > 0) {
                     accumulatedFuelSlice += consumedSliceLiters
                     val literPerPercent = tankCap / 100.0
@@ -3684,9 +3751,7 @@ class MainActivity : Activity() {
                         val percentToDeduct = (accumulatedFuelSlice / literPerPercent).toInt()
                         accumulatedFuelSlice -= (percentToDeduct * literPerPercent)
                         telemetry.fuelLevel = (telemetry.fuelLevel - percentToDeduct).coerceAtLeast(1)
-                        if (!telemetry.fuelLevelSource.contains("🔌")) {
-                            telemetry.fuelLevelSource = if (fuelTrackingMode == "manual_dynamic") "معايرة دقيقة + حساب تدفق 🧮" else "حساب ديناميكي ذكي 🧮"
-                        }
+                        telemetry.fuelLevelSource = if (isCalibrated) "معايرة مثبتة (${telemetry.fuelLevel}%) + تتبع ديناميكي 🧮" else "حساب ديناميكي ذكي 🧮"
                         preferences.edit().putInt("current_fuel_tank_percent", telemetry.fuelLevel).apply()
                     }
                 }
@@ -3803,8 +3868,9 @@ class MainActivity : Activity() {
     }
 
     private fun discoverUniversalFuelProbe(inStream: InputStream, outStream: OutputStream): FuelProbe? {
-        val trackingMode = preferences.getString("fuel_tracking_mode", "auto")
-        if (trackingMode == "manual_dynamic") return null
+        val isCalibrated = preferences.getBoolean("fuel_is_calibrated", false)
+        val trackingMode = preferences.getString("fuel_tracking_mode", if (isCalibrated) "manual_dynamic" else "auto")
+        if (isCalibrated || trackingMode == "manual_dynamic") return null
 
         // 1. Standard Engine OBD Mode 01
         val stdResp = sendObdCommand(outStream, inStream, "012F", 600)
