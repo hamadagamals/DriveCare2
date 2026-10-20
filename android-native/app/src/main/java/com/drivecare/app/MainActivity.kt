@@ -328,9 +328,14 @@ class MainActivity : Activity() {
 
     // Telemetry & OBD Connection
     private val telemetry = LiveTelemetry()
-    private var activeSocket: BluetoothSocket? = null
-    private var activeWifiSocket: Socket? = null
-    private var isTelemetryLoopRunning = false
+    @Volatile private var activeSocket: BluetoothSocket? = null
+    @Volatile private var activeWifiSocket: Socket? = null
+    @Volatile private var isTelemetryLoopRunning = false
+    // Each OBD loop captures its own generation; a stale/zombie loop can never touch the newer one's state.
+    private val obdLoopGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var lastConnectCandidate: DeviceCandidate? = null
+    @Volatile private var obdReconnectAttempts = 0
+    @Volatile private var userRequestedDisconnect = false
     private var isSimulating = false
     private var toneGenerator: ToneGenerator? = null
     private var alertBanner: LinearLayout? = null
@@ -854,7 +859,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        uiUpdateHandler.removeCallbacks(uiUpdateRunnable)
+        userRequestedDisconnect = true
+        uiUpdateHandler.removeCallbacksAndMessages(null)
+        scanHandler.removeCallbacksAndMessages(null)
         stopDiscovery()
         disconnectObd()
         toneGenerator?.release()
@@ -5963,12 +5970,15 @@ class MainActivity : Activity() {
             .putString("device_transport", cand.transport)
             .apply()
 
+        obdReconnectAttempts = 0
         connectToDevice(cand)
     }
 
     private fun connectToDevice(cand: DeviceCandidate) {
         stopDiscovery()
-        disconnectObd()
+        lastConnectCandidate = cand
+        disconnectObd(userInitiated = false)
+        userRequestedDisconnect = false
 
         telemetry.isConnected = false
         statusText.text = "جاري إنشاء اتصال تسلسلي مع ${cand.title}..."
@@ -5986,6 +5996,7 @@ class MainActivity : Activity() {
                     connectBluetoothObd(cand.address, cand.title)
                 }
             } catch (e: Exception) {
+                val autoRetrying = obdReconnectAttempts > 0 && !userRequestedDisconnect
                 runOnUiThread {
                     statusText.text = "فشل الاتصال: ${e.localizedMessage ?: "تأكد من فتح كونتاكت السيارة وتشغيل القطعة"}"
                     telemetry.isConnected = false
@@ -5994,6 +6005,7 @@ class MainActivity : Activity() {
                         tvConnectionState.setTextColor(Color.rgb(255, 122, 122))
                     }
                 }
+                if (autoRetrying) handleObdLinkLost(obdLoopGeneration.get())
             }
         }
     }
@@ -6010,7 +6022,7 @@ class MainActivity : Activity() {
             adapter.bluetoothLeScanner?.stopScan(bleCallback)
         } catch (_: SecurityException) {}
 
-        disconnectObd()
+        disconnectObd(userInitiated = false)
         Thread.sleep(250)
 
         val device = adapter.getRemoteDevice(macAddress)
@@ -6136,6 +6148,9 @@ class MainActivity : Activity() {
     }
 
     private fun runObdCommunicationLoop(inStream: InputStream, outStream: OutputStream, devName: String) {
+        val myGen = obdLoopGeneration.incrementAndGet()
+        var linkLost = false
+        var consecutiveFailures = 0
         isTelemetryLoopRunning = true
         isSimulatingAlert = false
         activeObdOutStream = outStream
@@ -6155,6 +6170,7 @@ class MainActivity : Activity() {
         sendObdCommand(outStream, inStream, "ATSP0", 1500)
 
         runOnUiThread {
+            obdReconnectAttempts = 0
             telemetry.isConnected = true
             statusText.text = "متصل بنجاح بـ $devName! جاري قراءة الحساسات الحية 🟢"
             selectedText.text = "الجهاز المتصل: $devName (متصل حياً)"
@@ -6226,7 +6242,7 @@ class MainActivity : Activity() {
         var lastCalcTime = System.currentTimeMillis()
         var accumulatedFuelSlice = 0.0
 
-        while (isTelemetryLoopRunning) {
+        while (isTelemetryLoopRunning && myGen == obdLoopGeneration.get()) {
             loopCount++
             try {
                 // 1. RPM (PID 010C)
@@ -6458,16 +6474,66 @@ class MainActivity : Activity() {
                 }
 
                 runOnUiThread { updateLiveUI() }
+                consecutiveFailures = 0
 
                 Thread.sleep(120)
             } catch (_: Exception) {
-                if (!isTelemetryLoopRunning) break
+                // Stale loop (user disconnected / a newer connection replaced us): exit quietly.
+                if (!isTelemetryLoopRunning || myGen != obdLoopGeneration.get()) break
+                consecutiveFailures++
+                if (consecutiveFailures >= 5) {
+                    // Socket is dead (Bluetooth dropped, OBD unplugged, phone out of range).
+                    linkLost = true
+                    break
+                }
+                // Back off instead of spinning the CPU on a broken socket.
+                try { Thread.sleep(300) } catch (_: InterruptedException) { break }
             }
         }
         } finally {
-            activeObdOutStream = null
-            activeObdInStream = null
-            isTelemetryLoopRunning = false
+            // Only the current generation may reset shared state; a zombie loop must not kill the new one.
+            if (myGen == obdLoopGeneration.get()) {
+                activeObdOutStream = null
+                activeObdInStream = null
+                isTelemetryLoopRunning = false
+            }
+        }
+        if (linkLost && !userRequestedDisconnect) handleObdLinkLost(myGen)
+    }
+
+    /**
+     * Called when the OBD socket died unexpectedly. Marks the UI as disconnected (so stale numbers are not
+     * shown as live) and retries a bounded number of times with growing delay, never after a manual disconnect.
+     */
+    private fun handleObdLinkLost(gen: Int) {
+        if (gen != obdLoopGeneration.get()) return
+        disconnectObd(userInitiated = false)
+        val cand = lastConnectCandidate
+        val attempt = obdReconnectAttempts + 1
+        obdReconnectAttempts = attempt
+        val canRetry = cand != null && attempt <= 6
+        val delayMs = (3000L * attempt).coerceAtMost(15000L)
+        runOnUiThread {
+            if (isDestroyed || isFinishing) return@runOnUiThread
+            telemetry.isConnected = false
+            if (::statusText.isInitialized) {
+                statusText.text = if (canRetry) {
+                    "⚠️ انقطع الاتصال بقطعة OBD. إعادة المحاولة $attempt/6 خلال ${delayMs / 1000} ثوانٍ..."
+                } else {
+                    "🔴 انقطع الاتصال بقطعة OBD. تحقق من الكونتاكت والبلوتوث ثم اضغط اتصال يدوياً."
+                }
+            }
+            if (::tvConnectionState.isInitialized) {
+                tvConnectionState.text = if (canRetry) "إعادة الاتصال... 🟡" else "منقطع 🔴"
+                tvConnectionState.setTextColor(if (canRetry) Color.rgb(248, 199, 74) else Color.rgb(255, 122, 122))
+            }
+            if (canRetry) {
+                scanHandler.postDelayed({
+                    if (!isDestroyed && !isFinishing && !userRequestedDisconnect && !telemetry.isConnected) {
+                        connectToDevice(cand!!)
+                    }
+                }, delayMs)
+            }
         }
     }
 
@@ -7345,7 +7411,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun disconnectObd() {
+    private fun disconnectObd(userInitiated: Boolean = true) {
+        if (userInitiated) userRequestedDisconnect = true
+        obdLoopGeneration.incrementAndGet() // invalidates any running/zombie telemetry loop immediately
         isTelemetryLoopRunning = false
         try { activeSocket?.close() } catch (_: Exception) {}
         try { activeWifiSocket?.close() } catch (_: Exception) {}
