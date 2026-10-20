@@ -480,7 +480,14 @@ class MainActivity : Activity() {
         tripEndLng = preferences.getFloat("trip_end_lng", 29.9187f).toDouble()
         plannedRouteDistanceKm = preferences.getFloat("planned_route_distance", 218.0f)
         plannedCargoWeightKg = preferences.getFloat("planned_cargo_weight", 0.0f)
-        vehicleEmptyWeightKg = preferences.getFloat("vehicle_empty_weight", 1250.0f)
+        vehicleEmptyWeightKg = preferences.getFloat("vehicle_empty_weight", 1200.0f)
+
+        // Restore persistent trip metrics (persists even if phone or car disconnects)
+        telemetry.tripDistanceKm = preferences.getFloat("saved_trip_distance_km", 0.0f)
+        telemetry.actualTripFuelLiters = preferences.getFloat("saved_trip_fuel_liters", 0.0f)
+        if (telemetry.tripDistanceKm > 0.05f && telemetry.actualTripFuelLiters > 0f) {
+            telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
+        }
 
         title = "DriveCare"
 
@@ -1528,6 +1535,89 @@ class MainActivity : Activity() {
         return container
     }
 
+    private fun collapsibleSection(
+        title: String,
+        icon: String,
+        initiallyExpanded: Boolean = true,
+        contentBuilder: (LinearLayout) -> Unit
+    ): View {
+        val cardView = card()
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setBackgroundColor(Color.rgb(18, 38, 58))
+        }
+        val tvTitle = text("$icon $title", 15, Color.WHITE, true).apply {
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = lp
+        }
+        val tvArrow = text(if (initiallyExpanded) "▲" else "▼", 16, Color.rgb(126, 242, 154), true)
+        header.addView(tvTitle)
+        header.addView(tvArrow)
+        cardView.addView(header)
+
+        val contentLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(12))
+            visibility = if (initiallyExpanded) View.VISIBLE else View.GONE
+        }
+        contentBuilder(contentLayout)
+        cardView.addView(contentLayout)
+
+        header.setOnClickListener {
+            val isVisible = (contentLayout.visibility == View.VISIBLE)
+            contentLayout.visibility = if (isVisible) View.GONE else View.VISIBLE
+            tvArrow.text = if (isVisible) "▼" else "▲"
+        }
+
+        return cardView
+    }
+
+    private fun finalizeAndResetTrip() {
+        val fuelPrice = preferences.getFloat("fuel_liter_price", 15.0f)
+        val oilPrice = preferences.getFloat("oil_total_price", 1200.0f)
+        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
+        val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
+        val vehicleMarketValue = preferences.getFloat("vehicle_market_value", 400000.0f)
+        val depRatePer1000Km = preferences.getFloat("depreciation_percent_per_1000km", 0.20f)
+        val depCostPerKm = (vehicleMarketValue * (depRatePer1000Km / 100.0f)) / 1000.0f
+
+        val tripDist = telemetry.tripDistanceKm
+        val tripFuel = telemetry.actualTripFuelLiters
+        val tripFuelCost = tripFuel * fuelPrice
+        val tripOilCost = tripDist * oilCostPerKm
+        val tripDepPercent = (tripDist / 1000.0f) * depRatePer1000Km
+        val tripDepCost = tripDist * depCostPerKm
+        val totalTripCost = tripFuelCost + tripOilCost + tripDepCost
+
+        AlertDialog.Builder(this)
+            .setTitle("🏁 تقرير إنهاء الرحلة وتصفير العدادات")
+            .setMessage(
+                "ملخص بيانات الرحلة المنتهية:\n\n" +
+                "🛣️ المسافة المقطوعة: ${String.format("%.2f", tripDist)} كم\n" +
+                "⛽ الوقود المستهلك: ${String.format("%.2f", tripFuel)} ${telemetry.fuelUnitName} (${String.format("%.2f", tripFuelCost)} ج.م)\n" +
+                "🛢️ استهلاك الزيت: ${String.format("%.2f", tripOilCost)} ج.م\n" +
+                "🚗 استهلاك وإهلاك السيارة: ${String.format("%.2f", tripDepCost)} ج.م (${String.format("%.3f", tripDepPercent)}%)\n" +
+                "────────────────────────\n" +
+                "💰 إجمالي التكلفة الشاملة للرحلة: ${String.format("%.2f", totalTripCost)} ج.م\n\n" +
+                "هل تريد تصفير عداد الرحلة الآن لبدء رحلة جديدة؟"
+            )
+            .setPositiveButton("نعم، تصفير وبدء جديدة") { _, _ ->
+                telemetry.tripDistanceKm = 0.0f
+                telemetry.actualTripFuelLiters = 0.0f
+                telemetry.tripAverageFuelRate = preferences.getFloat("fuel_rate_baseline", 7.2f)
+                preferences.edit()
+                    .putFloat("saved_trip_distance_km", 0.0f)
+                    .putFloat("saved_trip_fuel_liters", 0.0f)
+                    .apply()
+                Toast.makeText(this, "تم تصفير الرحلة بنجاح. يبدأ الحساب الجديد تلقائياً! 🚀", Toast.LENGTH_SHORT).show()
+                switchTab("fuel")
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
     private fun buildFuelTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -1537,39 +1627,36 @@ class MainActivity : Activity() {
         val oilCurrentKm = preferences.getFloat("oil_current_km", 0.0f)
         val baselineFuelRate = preferences.getFloat("fuel_rate_baseline", 7.2f)
 
-        // Vehicle Market Value and Depreciation (0.20% per 1000 km = 100% of vehicle value over 500,000 km)
+        // Vehicle Market Value and Depreciation (0.20% per 1000 km = 100% over 500,000 km)
         val vehicleMarketValue = preferences.getFloat("vehicle_market_value", 400000.0f)
         val depRatePer1000Km = preferences.getFloat("depreciation_percent_per_1000km", 0.20f)
         val depCostPerKm = (vehicleMarketValue * (depRatePer1000Km / 100.0f)) / 1000.0f
 
         val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
         val remainingOilKm = (oilTargetKm - oilCurrentKm).coerceAtLeast(0f)
-        val oilHealthPercent = if (oilTargetKm > 0f) ((remainingOilKm / oilTargetKm) * 100).toInt().coerceIn(0, 100) else 0
 
-        // Vehicle Load & Payload Physics:
-        // Every 100 kg of cargo/passengers increases fuel consumption by ~5%
-        val weightPenaltyPercent = (plannedCargoWeightKg / 100.0f) * 5.0f
+        // Calibrated Vehicle Load & Payload Physics:
+        // Weight penalty is proportional to the ratio of cargo weight to the vehicle's curb weight:
+        // Penalty % = (plannedCargoWeightKg / vehicleEmptyWeightKg) * 60%
+        val vehicleEmptyWeight = preferences.getFloat("vehicle_empty_weight", 1200.0f)
+        val weightPenaltyPercent = if (vehicleEmptyWeight > 0f) {
+            (plannedCargoWeightKg / vehicleEmptyWeight) * 60.0f
+        } else {
+            (plannedCargoWeightKg / 100.0f) * 5.0f
+        }
         val loadedFuelRate = baselineFuelRate * (1.0f + (weightPenaltyPercent / 100.0f))
 
-        // 1) Empty Vehicle Trip Calculation (Fuel + Oil + Vehicle Depreciation):
+        // Calculations for Future Planned Trip:
         val emptyFuelCostPerKm = (baselineFuelRate / 100.0f) * fuelPrice
-        val emptyTripFuelCost = plannedRouteDistanceKm * emptyFuelCostPerKm
-        val emptyTripOilCost = plannedRouteDistanceKm * oilCostPerKm
-        val emptyTripDepCost = plannedRouteDistanceKm * depCostPerKm
-        val emptyTripTotalCost = emptyTripFuelCost + emptyTripOilCost + emptyTripDepCost
-        val emptyTripFuelLiters = plannedRouteDistanceKm * (baselineFuelRate / 100.0f)
-
-        // 2) Loaded Vehicle Trip Calculation (with plannedCargoWeightKg):
         val loadedFuelCostPerKm = (loadedFuelRate / 100.0f) * fuelPrice
         val loadedTripFuelCost = plannedRouteDistanceKm * loadedFuelCostPerKm
         val loadedTripOilCost = plannedRouteDistanceKm * oilCostPerKm
         val loadedTripDepCost = plannedRouteDistanceKm * depCostPerKm
         val loadedTripTotalCost = loadedTripFuelCost + loadedTripOilCost + loadedTripDepCost
         val loadedTripFuelLiters = plannedRouteDistanceKm * (loadedFuelRate / 100.0f)
-        val weightDeltaCost = loadedTripTotalCost - emptyTripTotalCost
-        val weightDeltaLiters = (loadedTripFuelLiters - emptyTripFuelLiters).coerceAtLeast(0f)
+        val tripDepPercent = (plannedRouteDistanceKm / 1000.0f) * depRatePer1000Km
 
-        // 3) Dynamic Real Calibration after driving first 1 km:
+        // Dynamic Real Calibration after driving first 1 km:
         val hasDrivenFirstKm = telemetry.tripDistanceKm >= 1.0f && telemetry.actualTripFuelLiters > 0.02f
         val realMeasuredTripRate = if (hasDrivenFirstKm) {
             (telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100.0f
@@ -1589,15 +1676,14 @@ class MainActivity : Activity() {
         val currentTripTotalCost = currentTripFuelCost + currentTripOilCost + currentTripDepCost
         val remainingProjectedCost = (remainingRouteKm * realCalibratedFuelCostPerKm) + (remainingRouteKm * oilCostPerKm) + (remainingRouteKm * depCostPerKm)
 
-        // --- Card 1: Hero KPI Card ---
+        // --- Card Hero: Overview KPI Summary Bar ---
         val cardHero = card().apply {
-            addView(text("⛽ حاسبة تكلفة التشغيل الشاملة (وقود + زيت + إهلاك السيارة)", 18, Color.rgb(126, 242, 154), true))
-            addView(text("حساب فوري شامل لتكلفة الكيلومتر والرحلات بالجنيه وفق الاستهلاك ومصاريف الإهلاك والصيانة:", 13, Color.rgb(167, 203, 226), false))
+            addView(text("⛽ حاسبة تكلفة التشغيل والرحلات (وقود + زيت + إهلاك)", 17, Color.rgb(126, 242, 154), true))
 
             val r1 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
+                lp.topMargin = dp(6)
                 layoutParams = lp
             }
             r1.addView(metricBox("تكلفة الوقود/كم (فارغة)", String.format("%.2f ج.م", emptyFuelCostPerKm), Color.rgb(110, 231, 255)).parent as View)
@@ -1607,7 +1693,7 @@ class MainActivity : Activity() {
             val r2 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(4)
                 layoutParams = lp
             }
             val activeCostPerKm = if (hasDrivenFirstKm) (realCalibratedFuelCostPerKm + oilCostPerKm + depCostPerKm) else (loadedFuelCostPerKm + oilCostPerKm + depCostPerKm)
@@ -1620,7 +1706,7 @@ class MainActivity : Activity() {
             val r3 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(4)
                 layoutParams = lp
             }
             val tankCap = preferences.getFloat("tank_capacity_liters", 45.0f)
@@ -1635,86 +1721,66 @@ class MainActivity : Activity() {
             r3.addView(mbRate.parent as View)
             addView(r3)
 
-            val fuelSourceBanner = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(18, 42, 62))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
+            val btnRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
+                lp.topMargin = dp(6)
                 layoutParams = lp
-                addView(text("📡 نظام الحساب الآلي لكمية الوقود المستهلكة (أعلى دقة بدون إدخال يدوي):", 13, Color.rgb(126, 242, 154), true))
-                val tvSensorInfo = text("• الحساس النشط: ${telemetry.fuelCalculationSource}\n• تدفق الوقود اللحظي للمحرك: ${String.format("%.2f", telemetry.instantFuelLitersPerHour)} لتر/ساعة\n• المستهلك الفعلي بالرحلة: ${String.format("%.3f", telemetry.actualTripFuelLiters)} لتر (${String.format("%.2f", currentTripFuelCost)} ج.م)\n• حساب وقوف الزحام والإشارات: مدمج تلقائياً بدقة 100% (1.2 - 1.5 لتر/ساعة أثناء التوقف).", 12, Color.rgb(200, 230, 255), false)
-                tvFuelTabSensorInfoText = tvSensorInfo
-                addView(tvSensorInfo)
             }
-            addView(fuelSourceBanner)
+            fun quickActionBtn(label: String, color: Int, onClick: () -> Unit): Button {
+                return Button(this@MainActivity).apply {
+                    text = label
+                    textSize = 10f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(color)
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+                    setOnClickListener { onClick() }
+                }
+            }
+            btnRow.addView(quickActionBtn("🔍 فحص الكمبيوتر", Color.rgb(16, 185, 129)) { scanAllFuelComputers() })
+            btnRow.addView(quickActionBtn("⛽ معايرة التانك", Color.rgb(36, 77, 111)) { showFuelCalibrationDialog() })
+            btnRow.addView(quickActionBtn("⚙️ نوع الوقود", Color.rgb(24, 52, 78)) { showFuelTypeDialog() })
+            addView(btnRow)
 
-            addView(button("🔍 فحص واستكشاف كمبيوترات السيارة ذاتياً (قراءة العدادات والمكينة تلقائياً)") {
-                scanAllFuelComputers()
-            }.apply {
-                setBackgroundColor(Color.rgb(16, 185, 129))
-                setTextColor(Color.WHITE)
-            })
-
-            addView(button("⛽ ضبط ومعايرة خزان الوقود (يدوي / تثبيت / إضافة لترات)") {
-                showFuelCalibrationDialog()
-            }.apply {
-                setBackgroundColor(Color.rgb(248, 199, 74))
-                setTextColor(Color.rgb(8, 23, 32))
-            })
-
-            addView(button("⚙️ تحديد نوع وقود المحرك (بنزين 92/95 | غاز طبيعي CNG | سولار ديزل)") {
-                showFuelTypeDialog()
-            }.apply {
-                setBackgroundColor(Color.rgb(36, 77, 111))
-                setTextColor(Color.WHITE)
-            })
+            val tvSensorInfo = text("• الحساس النشط: ${telemetry.fuelCalculationSource} | تدفق الوقود: ${String.format("%.2f", telemetry.instantFuelLitersPerHour)} لتر/ساعة", 11, Color.rgb(167, 203, 226), false).apply {
+                setPadding(0, dp(4), 0, 0)
+            }
+            tvFuelTabSensorInfoText = tvSensorInfo
+            addView(tvSensorInfo)
         }
         container.addView(cardHero)
 
-        // --- Card 2: Future Trip Distance, Manual Input & Map Route Card ---
-        val cardMapRoute = card().apply {
-            addView(text("🛣️ مسار الرحلة المستقبلية والمسافة (إدخال يدوي أو خريطة)", 17, Color.rgb(110, 231, 255), true))
-            addView(text("حدد مسافة رحلتك المستقبلية بالكيلومتر إما بكتابتها يدوياً أو باختيارها تلقائياً من الخريطة:", 13, Color.rgb(167, 203, 226), false))
+        // --- SECTION 1 (Collapsible): Future Trip Calculator ---
+        val sectionTripFuture = collapsibleSection("حاسبة وتكلفة الرحلة المستقبلية (مسار + حمولة + تكلفة)", "🛣️", initiallyExpanded = true) { sec ->
+            sec.addView(text("🚩 نقطة الانطلاق: $tripStartLocationName | 🏁 نقطة الوصول: $tripEndLocationName", 13, Color.rgb(167, 203, 226), false))
 
-            val routeBox = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(24, 45, 66))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
-                layoutParams = lp
-            }
-            routeBox.addView(text("🚩 نقطة الانطلاق: $tripStartLocationName", 14, Color.WHITE, true))
-            routeBox.addView(text("🏁 نقطة الوصول: $tripEndLocationName", 14, Color.WHITE, true))
-            routeBox.addView(text("🛣️ المسافة الكلية المعتمدة للمشوار: ${String.format("%.1f", plannedRouteDistanceKm)} كم", 16, Color.rgb(126, 242, 154), true))
-            addView(routeBox)
-
-            // Direct Manual Distance Input Row
-            addView(text("✏️ اكتب مسافة الرحلة المستقبلية بالكيلومتر يدوياً مباشرة:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(10), 0, dp(2)) })
-            val manualDistRow = LinearLayout(context).apply {
+            // 1. Distance Input Row (No quick preset buttons)
+            sec.addView(text("المسافة المستقبلية للمشوار بالكيلومتر:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, dp(2)) })
+            val distRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.bottomMargin = dp(4)
+                lp.bottomMargin = dp(6)
                 layoutParams = lp
             }
-            val etManualDist = edit("المسافة بالكيلومتر (مثال: 220)").apply {
+            val etManualDist = edit("اكتب المسافة بالكم (مثال: 220)").apply {
                 setText(String.format("%.0f", plannedRouteDistanceKm))
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
                 lp.setMargins(0, 0, dp(4), 0)
                 layoutParams = lp
             }
-            val btnSaveManualDist = button("💾 اعتماد المسافة") {
+            val btnSaveDist = button("💾 اعتماد") {
                 val d = etManualDist.text.toString().toFloatOrNull()
                 if (d != null && d > 0f) {
                     preferences.edit().putFloat("planned_route_distance", d).apply()
                     plannedRouteDistanceKm = d
-                    Toast.makeText(this@MainActivity, "تم اعتماد مسافة الرحلة: ${String.format("%.1f", d)} كم 🛣️", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم اعتماد مسافة: ${String.format("%.1f", d)} كم 🛣️", Toast.LENGTH_SHORT).show()
                     switchTab("fuel")
                 } else {
-                    Toast.makeText(this@MainActivity, "يرجى كتابة رقم مسافة صحيح بالكيلومتر", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "يرجى كتابة رقم مسافة صحيح", Toast.LENGTH_SHORT).show()
                 }
             }.apply {
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -1722,83 +1788,93 @@ class MainActivity : Activity() {
                 setBackgroundColor(Color.rgb(126, 242, 154))
                 setTextColor(Color.rgb(8, 23, 32))
             }
-            manualDistRow.addView(etManualDist)
-            manualDistRow.addView(btnSaveManualDist)
-            addView(manualDistRow)
+            distRow.addView(etManualDist)
+            distRow.addView(btnSaveDist)
+            sec.addView(distRow)
 
-            // Quick distance presets for common destinations
-            val quickDistRow = LinearLayout(context).apply {
+            val mapBtnRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.bottomMargin = dp(6)
                 layoutParams = lp
             }
-            fun quickDistBtn(label: String, distKm: Float): Button {
-                return Button(this@MainActivity).apply {
-                    text = label
-                    textSize = 10f
-                    setTextColor(if (plannedRouteDistanceKm == distKm) Color.rgb(8, 23, 32) else Color.WHITE)
-                    setBackgroundColor(if (plannedRouteDistanceKm == distKm) Color.rgb(126, 242, 154) else Color.rgb(20, 42, 64))
-                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    lp.setMargins(dp(1), 0, dp(1), 0)
-                    layoutParams = lp
-                    setOnClickListener {
-                        etManualDist.setText(String.format("%.0f", distKm))
-                        preferences.edit().putFloat("planned_route_distance", distKm).apply()
-                        plannedRouteDistanceKm = distKm
-                        switchTab("fuel")
-                    }
-                }
-            }
-            quickDistRow.addView(quickDistBtn("50 كم\nسفر قصير", 50f))
-            quickDistRow.addView(quickDistBtn("120 كم\nطنطا/السويس", 120f))
-            quickDistRow.addView(quickDistBtn("220 كم\nإسكندرية", 220f))
-            quickDistRow.addView(quickDistBtn("380 كم\nالساحل", 380f))
-            quickDistRow.addView(quickDistBtn("500 كم\nشرم/أسيوط", 500f))
-            addView(quickDistRow)
-
-            addView(button("🗺️ فتح الخريطة التفاعلية لاختيار مسار واستخراج المسافة تلقائياً") {
-                showMapRouteDialog()
-            }.apply {
-                setBackgroundColor(Color.rgb(110, 231, 255))
-                setTextColor(Color.rgb(8, 23, 32))
-            })
-
-            addView(button("🧭 فتح الملاحة خطوة بخطوة في Google Maps") {
-                openGoogleMapsNavigation(tripStartLat, tripStartLng, tripEndLat, tripEndLng)
-            }.apply {
+            val btnMapDialog = Button(this@MainActivity).apply {
+                text = "🗺️ اختيار مسار من الخريطة"
+                textSize = 11f
                 setBackgroundColor(Color.rgb(36, 77, 111))
                 setTextColor(Color.WHITE)
-            })
-        }
-        container.addView(cardMapRoute)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(0, 0, dp(2), 0)
+                layoutParams = lp
+                setOnClickListener { showMapRouteDialog() }
+            }
+            val btnGoogleNav = Button(this@MainActivity).apply {
+                text = "🧭 فتح الملاحة في Google Maps"
+                textSize = 11f
+                setBackgroundColor(Color.rgb(24, 52, 78))
+                setTextColor(Color.WHITE)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(dp(2), 0, 0, 0)
+                layoutParams = lp
+                setOnClickListener { openGoogleMapsNavigation(tripStartLat, tripStartLng, tripEndLat, tripEndLng) }
+            }
+            mapBtnRow.addView(btnMapDialog)
+            mapBtnRow.addView(btnGoogleNav)
+            sec.addView(mapBtnRow)
 
-        // --- Card 3: Cargo Weight & Engine Baseline Consumption ---
-        val cardWeight = card().apply {
-            addView(text("⚖️ وزن الحمولة ومتوسط استهلاك المحرك للمشوار", 17, Color.rgb(248, 199, 74), true))
-            addView(text("الحمولة الإضافية (ركاب، حقائب، بضائع) تزيد الاستهلاك بنحو 5% لكل 100 كجم إضافية. أدخل الوزن المتوقع ومتوسط استهلاك المحرك لمشوارك:", 13, Color.rgb(167, 203, 226), false))
-
-            // Quick Baseline Rate Edit
-            addView(text("متوسط استهلاك المحرك القياسي فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, 0) })
-            val rateEditRow = LinearLayout(context).apply {
+            // 2. Cargo Weight Input Row (No quick preset buttons)
+            sec.addView(text("وزن الحمولة الإضافية (ركاب وحقائب وبضائع) بالكجم:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            val weightRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.bottomMargin = dp(4)
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+            }
+            val etWeight = edit("أدخل وزن الحمولة كجم (مثال: 150)").apply {
+                setText(String.format("%.0f", plannedCargoWeightKg))
+                inputType = InputType.TYPE_CLASS_NUMBER
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
+                lp.setMargins(0, 0, dp(4), 0)
+                layoutParams = lp
+            }
+            val btnSaveWeight = button("💾 حفظ الوزن") {
+                val w = etWeight.text.toString().toFloatOrNull() ?: 0f
+                preferences.edit().putFloat("planned_cargo_weight", w).apply()
+                plannedCargoWeightKg = w
+                Toast.makeText(this@MainActivity, "تم تطبيق وزن حمولة $w كجم", Toast.LENGTH_SHORT).show()
+                switchTab("fuel")
+            }.apply {
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+                setBackgroundColor(Color.rgb(248, 199, 74))
+                setTextColor(Color.rgb(8, 23, 32))
+            }
+            weightRow.addView(etWeight)
+            weightRow.addView(btnSaveWeight)
+            sec.addView(weightRow)
+
+            // 3. Engine Baseline Consumption Rate Row
+            sec.addView(text("متوسط استهلاك المحرك فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            val rateRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
                 layoutParams = lp
             }
             val etBaseRate = edit("استهلاك المحرك (مثال: 7.2)").apply {
                 setText(String.format("%.1f", baselineFuelRate))
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
                 lp.setMargins(0, 0, dp(4), 0)
                 layoutParams = lp
             }
             val btnSaveRate = button("💾 حفظ المعدل") {
                 val r = etBaseRate.text.toString().toFloatOrNull()
-                if (r != null && r in 2.0f..30.0f) {
+                if (r != null && r in 2.0f..35.0f) {
                     preferences.edit().putFloat("fuel_rate_baseline", r).apply()
-                    Toast.makeText(this@MainActivity, "تم اعتماد متوسط استهلاك المحرك: $r لتر/100 كم ⛽", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم اعتماد متوسط استهلاك المحرك: $r لتر/100 كم", Toast.LENGTH_SHORT).show()
                     switchTab("fuel")
                 } else {
                     Toast.makeText(this@MainActivity, "يرجى كتابة رقم استهلاك صحيح (مثال: 7.2)", Toast.LENGTH_SHORT).show()
@@ -1809,156 +1885,36 @@ class MainActivity : Activity() {
                 setBackgroundColor(Color.rgb(110, 231, 255))
                 setTextColor(Color.rgb(8, 23, 32))
             }
-            rateEditRow.addView(etBaseRate)
-            rateEditRow.addView(btnSaveRate)
-            addView(rateEditRow)
+            rateRow.addView(etBaseRate)
+            rateRow.addView(btnSaveRate)
+            sec.addView(rateRow)
 
-            addView(text("الوزن الإضافي المحتمل للمشوار (كجم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, 0) })
-            val etWeight = edit("أدخل وزن الحمولة بالكجم (مثال: 150)").apply {
-                setText(String.format("%.0f", plannedCargoWeightKg))
-                inputType = InputType.TYPE_CLASS_NUMBER
-            }
-            addView(etWeight)
-
-            val tvQuick = text("اختيار سريع لوزن الحمولة بنقرة واحدة:", 12, Color.rgb(167, 203, 226), false)
-            addView(tvQuick)
-
-            val qRow1 = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
+            // 4. Clean Stacked Financial Result Box (As requested: fuel, oil, depreciation, total)
+            val resultCard = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(16, 34, 52))
+                setPadding(dp(14), dp(12), dp(14), dp(12))
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-
-            fun quickWeightBtn(label: String, weight: Float): Button {
-                return Button(this@MainActivity).apply {
-                    text = label
-                    textSize = 10f
-                    setTextColor(if (plannedCargoWeightKg == weight) Color.rgb(8, 23, 32) else Color.WHITE)
-                    setBackgroundColor(if (plannedCargoWeightKg == weight) Color.rgb(248, 199, 74) else Color.rgb(20, 42, 64))
-                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    lp.setMargins(dp(2), 0, dp(2), 0)
-                    layoutParams = lp
-                    setOnClickListener {
-                        etWeight.setText(String.format("%.0f", weight))
-                        preferences.edit().putFloat("planned_cargo_weight", weight).apply()
-                        plannedCargoWeightKg = weight
-                        switchTab("fuel")
-                    }
-                }
-            }
-
-            qRow1.addView(quickWeightBtn("🚗 فارغة\n(0 كجم)", 0f))
-            qRow1.addView(quickWeightBtn("👤 راكب\n(75 كجم)", 75f))
-            qRow1.addView(quickWeightBtn("👥 راكبان\n(150 كجم)", 150f))
-            addView(qRow1)
-
-            val qRow2 = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(4)
-                layoutParams = lp
-            }
-            qRow2.addView(quickWeightBtn("👨‍👩‍👧‍👦 أسرة وحقائب\n(300 كجم)", 300f))
-            qRow2.addView(quickWeightBtn("📦 حمولة ثقيلة\n(500 كجم)", 500f))
-            addView(qRow2)
-
-            addView(button("💾 حفظ وتطبيق وزن الحمولة") {
-                val w = etWeight.text.toString().toFloatOrNull() ?: 0f
-                preferences.edit().putFloat("planned_cargo_weight", w).apply()
-                plannedCargoWeightKg = w
-                Toast.makeText(this@MainActivity, "تم تطبيق وزن حمولة $w كجم", Toast.LENGTH_SHORT).show()
-                switchTab("fuel")
-            }.apply {
-                setBackgroundColor(Color.rgb(248, 199, 74))
-                setTextColor(Color.rgb(8, 23, 32))
+            resultCard.addView(text("💰 نتيجة حساب تكلفة الرحلة المتوقعة (${plannedRouteDistanceKm.toInt()} كم):", 15, Color.WHITE, true))
+            resultCard.addView(text("• ⛽ تكلفة الوقود: ${String.format("%.2f", loadedTripFuelCost)} ج.م (${String.format("%.1f", loadedTripFuelLiters)} لتر بمعدل ${String.format("%.1f", loadedFuelRate)} لتر/100كم)", 13, Color.rgb(167, 203, 226), false))
+            resultCard.addView(text("• 🛢️ تكلفة الزيت: ${String.format("%.2f", loadedTripOilCost)} ج.م (بمعدل ${String.format("%.2f", oilCostPerKm)} ج.م/كم)", 13, Color.rgb(167, 203, 226), false))
+            resultCard.addView(text("• 🚗 استهلاك وإهلاك وصيانة السيارة: ${String.format("%.2f", loadedTripDepCost)} ج.م (نسبة ${String.format("%.3f", tripDepPercent)}% من قيمة السيارة لمسافة ${plannedRouteDistanceKm.toInt()} كم)", 13, Color.rgb(255, 180, 100), false))
+            resultCard.addView(text("• 💰 إجمالي التكلفة الشاملة للرحلة: ${String.format("%.2f", loadedTripTotalCost)} ج.م (بمعدل ${String.format("%.2f", loadedFuelCostPerKm + oilCostPerKm + depCostPerKm)} ج.م/كم)", 14, Color.rgb(126, 242, 154), true).apply {
+                setPadding(0, dp(4), 0, 0)
             })
+            sec.addView(resultCard)
         }
-        container.addView(cardWeight)
+        container.addView(sectionTripFuture)
 
-        // --- Card 4: Complete Triple Financial Comparison (Empty vs Loaded vs Real-World 1KM Calibration) ---
-        val cardCostTriple = card().apply {
-            addView(text("💰 حساب وتوقع تكلفة الرحلة الشاملة (وقود + زيت + إهلاك السيارة)", 18, Color.WHITE, true))
-            addView(text("المسار: ${plannedRouteDistanceKm.toInt()} كم من $tripStartLocationName إلى $tripEndLocationName | سعر اللتر: ${String.format("%.2f", fuelPrice)} ج.م", 12, Color.rgb(167, 203, 226), false))
-
-            // Box A: Empty Car
-            val boxEmpty = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(16, 32, 46))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
-                layoutParams = lp
-            }
-            boxEmpty.addView(text("🚗 1. في حالة السيارة فارغة (0 كجم حمولة إضافية):", 14, Color.rgb(110, 231, 255), true))
-            boxEmpty.addView(text("• معدل الاستهلاك القياسي: ${String.format("%.1f", baselineFuelRate)} لتر / 100 كم", 12, Color.WHITE, false))
-            boxEmpty.addView(text("• كمية الوقود المطلوبة: ${String.format("%.1f", emptyTripFuelLiters)} لتر (${String.format("%.2f", emptyTripFuelCost)} ج.م)", 12, Color.rgb(167, 203, 226), false))
-            boxEmpty.addView(text("• نصيب استهلاك زيت المحرك: ${String.format("%.2f", emptyTripOilCost)} ج.م", 12, Color.rgb(167, 203, 226), false))
-            boxEmpty.addView(text("• نصيب استهلاك وإهلاك وصيانة السيارة (${String.format("%.2f", depRatePer1000Km)}% لكل 1000 كم): ${String.format("%.2f", emptyTripDepCost)} ج.م", 12, Color.rgb(255, 180, 100), false))
-            boxEmpty.addView(text("• إجمالي التكلفة الشاملة فارغة: ${String.format("%.2f", emptyTripTotalCost)} ج.م (${String.format("%.2f", emptyFuelCostPerKm + oilCostPerKm + depCostPerKm)} ج.م/كم)", 14, Color.rgb(126, 242, 154), true))
-            addView(boxEmpty)
-
-            // Box B: Loaded Car with plannedCargoWeightKg
-            val boxLoaded = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(24, 40, 56))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
-                layoutParams = lp
-            }
-            boxLoaded.addView(text("📦 2. مع الحمولة المحددة (+${plannedCargoWeightKg.toInt()} كجم وزن إضافي):", 14, Color.rgb(248, 199, 74), true))
-            boxLoaded.addView(text("• نسبة الزيادة في الاستهلاك بسبب الوزن: +${String.format("%.1f", weightPenaltyPercent)}%", 12, Color.rgb(248, 199, 74), false))
-            boxLoaded.addView(text("• معدل الاستهلاك المتوقع بالحمل: ${String.format("%.1f", loadedFuelRate)} لتر / 100 كم", 12, Color.WHITE, false))
-            boxLoaded.addView(text("• كمية الوقود المتوقعة: ${String.format("%.1f", loadedTripFuelLiters)} لتر (${String.format("%.2f", loadedTripFuelCost)} ج.م)", 12, Color.rgb(167, 203, 226), false))
-            boxLoaded.addView(text("• نصيب استهلاك زيت المحرك: ${String.format("%.2f", loadedTripOilCost)} ج.م", 12, Color.rgb(167, 203, 226), false))
-            boxLoaded.addView(text("• نصيب استهلاك وإهلاك وصيانة السيارة: ${String.format("%.2f", loadedTripDepCost)} ج.م", 12, Color.rgb(255, 180, 100), false))
-            boxLoaded.addView(text("• إجمالي التكلفة المتوقعة مع الحمولة: ${String.format("%.2f", loadedTripTotalCost)} ج.م (${String.format("%.2f", loadedFuelCostPerKm + oilCostPerKm + depCostPerKm)} ج.م/كم)", 14, Color.rgb(248, 199, 74), true))
-            if (plannedCargoWeightKg > 0) {
-                boxLoaded.addView(text("• فارق التكلفة الناتج عن الحمولة: +${String.format("%.2f", weightDeltaCost)} ج.م (زيادة ${String.format("%.1f", weightDeltaLiters)} لتر)", 13, Color.rgb(255, 180, 100), true))
-            }
-            addView(boxLoaded)
-
-            // Box C: Real-World Calibration after driving 1st KM
-            val boxReal = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                val bgColor = if (hasDrivenFirstKm) Color.rgb(10, 48, 36) else Color.rgb(14, 28, 44)
-                setBackgroundColor(bgColor)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(8)
-                layoutParams = lp
-            }
-            containerFuelRealBox = boxReal
-
-            val tTitle = if (hasDrivenFirstKm) {
-                text("🎯 3. المعايرة الواقعية المؤكدة (بعد سير أول ${String.format("%.2f", telemetry.tripDistanceKm)} كم) 🟢", 15, Color.rgb(126, 242, 154), true)
-            } else {
-                text("🎯 3. المعايرة الحقيقية التلقائية أثناء السير (بعد أول 1 كم) ⏳", 14, Color.rgb(110, 231, 255), true)
-            }
-            tvFuelTabRealBoxTitle = tTitle
-            boxReal.addView(tTitle)
-
-            val tDetails = if (hasDrivenFirstKm) {
-                text("تم ضبط الاستهلاك الحقيقي لسيارتك تحت هذا الحمل والظروف الفعلية عبر حساسات OBD2!\n• معدل الاستهلاك الفعلي المقاس بالرحلة: ${String.format("%.1f", realMeasuredTripRate)} لتر / 100 كم\n• إجمالي تكلفة الرحلة الحقيقية المستنتجة كاملة (وقود + زيت + إهلاك): ${String.format("%.2f", realTripProjectedTotalCost)} ج.م (${String.format("%.1f", realTripProjectedFuelLiters)} لتر)\n• ما تم دفعه/استهلاكه حتى الآن: ${String.format("%.2f", currentTripTotalCost)} ج.م (${String.format("%.2f", telemetry.actualTripFuelLiters)} لتر)\n• التكلفة المتبقية لإنهاء المسار: ${String.format("%.2f", remainingProjectedCost)} ج.م (متبقي ${remainingRouteKm.toInt()} كم)", 12, Color.rgb(167, 203, 226), false)
-            } else {
-                text("💡 بمجرد انطلاقك بالسيارة وقطع أول كيلومتر (1 كم) من المشوار، ستقوم حساسات الـ OBD2 بقياس الاستهلاك الحقيقي لسيارتك تحت هذا الحمل والظروف الفعلية، وسيتم استبدال الحسابات التقديرية بالتكلفة الحقيقية المؤكدة آلياً!", 12, Color.rgb(167, 203, 226), false)
-            }
-            tvFuelTabRealBoxDetails = tDetails
-            boxReal.addView(tDetails)
-            addView(boxReal)
-        }
-        container.addView(cardCostTriple)
-
-        // --- Card 5: Live Trip Metrics & Financials Card (تكلفة الرحلة الحالية اللحظية) ---
-        val cardTripLive = card().apply {
-            addView(text("🚀 بيانات وتكلفة الرحلة الحالية اللحظية (OBD Live)", 17, Color.rgb(110, 231, 255), true))
-            addView(text("يتم الآن حساب الاستهلاك والتكلفة الفورية مباشرة من حساسات السيارة أثناء السير:", 13, Color.rgb(167, 203, 226), false))
-
+        // --- SECTION 2 (Collapsible): Live Trip Metrics (OBD Live) & End Trip Button ---
+        val sectionTripLive = collapsibleSection("حساب وبيانات الوقود اللحظي أثناء السير (OBD Live)", "🚀", initiallyExpanded = true) { sec ->
             val tRow1 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(4)
                 layoutParams = lp
             }
             val mbDist = metricBox("المسافة المقطوعة", String.format("%.2f كم", telemetry.tripDistanceKm), Color.WHITE)
@@ -1968,12 +1924,12 @@ class MainActivity : Activity() {
             val mbLiters = metricBox("الوقود المستهلك", String.format("%.2f %s", telemetry.actualTripFuelLiters, telemetry.fuelUnitName), Color.rgb(248, 199, 74))
             tvFuelTabActualConsumed = mbLiters
             tRow1.addView(mbLiters.parent as View)
-            addView(tRow1)
+            sec.addView(tRow1)
 
             val tRow2 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(4)
                 layoutParams = lp
             }
             val instantStr = if (telemetry.speed > 3) String.format("%.1f L/100 (%.1f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour) else String.format("%.2f L/h (توقف وزحام)", telemetry.instantFuelLitersPerHour)
@@ -1984,27 +1940,58 @@ class MainActivity : Activity() {
             val mbCost = metricBox("تكلفة الرحلة الحالية", String.format("%.2f ج.م", currentTripTotalCost), Color.rgb(126, 242, 154))
             tvFuelTabCurrentCost = mbCost
             tRow2.addView(mbCost.parent as View)
-            addView(tRow2)
+            sec.addView(tRow2)
 
-            addView(button("🔄 تصفير وبدء رحلة جديدة") {
-                telemetry.tripDistanceKm = 0f
-                telemetry.actualTripFuelLiters = 0f
-                telemetry.tripAverageFuelRate = baselineFuelRate
-                switchTab("fuel")
+            // Real-World 1KM Calibration status box
+            val boxReal = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                val bgColor = if (hasDrivenFirstKm) Color.rgb(10, 48, 36) else Color.rgb(14, 28, 44)
+                setBackgroundColor(bgColor)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+            }
+            containerFuelRealBox = boxReal
+
+            val tTitle = if (hasDrivenFirstKm) {
+                text("🎯 معايرة استهلاك سيارتك الواقعية من حساسات OBD2 (بعد سير ${String.format("%.2f", telemetry.tripDistanceKm)} كم) 🟢", 13, Color.rgb(126, 242, 154), true)
+            } else {
+                text("🎯 المعايرة الحقيقية التلقائية أثناء السير (بعد سير أول 1 كم) ⏳", 13, Color.rgb(110, 231, 255), true)
+            }
+            tvFuelTabRealBoxTitle = tTitle
+            boxReal.addView(tTitle)
+
+            val tDetails = if (hasDrivenFirstKm) {
+                text("• معدل الاستهلاك الفعلي المقاس: ${String.format("%.1f", realMeasuredTripRate)} لتر / 100 كم | إجمالي الرحلة المتوقع: ${String.format("%.2f", realTripProjectedTotalCost)} ج.م", 12, Color.rgb(167, 203, 226), false)
+            } else {
+                text("💡 بمجرد انطلاقك وقطع 1 كم، ستقوم حساسات الـ OBD2 بقياس الاستهلاك الحقيقي وتحديث التكلفة آلياً.", 12, Color.rgb(167, 203, 226), false)
+            }
+            tvFuelTabRealBoxDetails = tDetails
+            boxReal.addView(tDetails)
+            sec.addView(boxReal)
+
+            // Prominent End & Reset Trip Button (Red)
+            val btnEndTrip = button("🏁 إنهاء وتصفير الرحلة") {
+                finalizeAndResetTrip()
             }.apply {
-                setBackgroundColor(Color.rgb(36, 77, 111))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+                setBackgroundColor(Color.rgb(185, 28, 28))
                 setTextColor(Color.WHITE)
+            }
+            sec.addView(btnEndTrip)
+            sec.addView(text("💡 بيانات مسافة ووقود الرحلة تظل محفوظة تلقائياً حتى عند غلق السيارة أو فصل الهاتف، ولا تُمسح إلا عند ضغط إنهاء الرحلة أعلاه.", 11, Color.rgb(167, 203, 226), false).apply {
+                setPadding(0, dp(4), 0, 0)
             })
         }
-        container.addView(cardTripLive)
+        container.addView(sectionTripLive)
 
-        // --- Card 6: Settings Card for Fuel & Oil prices ---
-        val cardSettings = card().apply {
-            addView(text("⚙️ ضبط أسعار التشغيل وسعة التانك والزيت", 17, Color.WHITE, true))
-            addView(text("أدخل أسعارك لتحديث حساب التكلفة فورياً لكل الرحلات:", 13, Color.rgb(167, 203, 226), false))
-
+        // --- SECTION 3 (Collapsible): Settings Card for Fuel, Oil, Vehicle Value & Calibrated Weight ---
+        val sectionSettings = collapsibleSection("إدخال وضبط أسعار التشغيل وبيانات المركبة", "⚙️", initiallyExpanded = false) { sec ->
             val curFuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
-            addView(text("نوع وقود السيارة (يحدد تلقائياً معادلة الاحتراق الفيزيائية الدقيقة):", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(6), 0, 0) })
+            sec.addView(text("نوع وقود المركبة:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, 0) })
 
             val fuelTypeRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -2042,42 +2029,75 @@ class MainActivity : Activity() {
             fuelTypeRow.addView(fuelTypeBtn("gasoline", "⛽ بنزين", 15.00f, 8.5f))
             fuelTypeRow.addView(fuelTypeBtn("diesel", "🛢️ سولار / ديزل", 13.50f, 6.8f))
             fuelTypeRow.addView(fuelTypeBtn("cng", "💨 غاز طبيعي CNG", 7.00f, 8.0f))
-            addView(fuelTypeRow)
+            sec.addView(fuelTypeRow)
 
             val unitName = preferences.getString("fuel_unit_name", "لتر") ?: "لتر"
             val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
-            addView(text("سعة خزان الوقود بالكامل ($unitName):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("سعة خزان الوقود بالكامل ($unitName):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etTankCap = edit("مثال: 50").apply { setText(String.format("%.0f", tankCap)) }
-            addView(etTankCap)
+            sec.addView(etTankCap)
 
-            addView(text("سعر لتر البنزين (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etFuelPrice = edit("مثال: 22.00").apply { setText(String.format("%.2f", fuelPrice)) }
-            addView(etFuelPrice)
+            sec.addView(text("سعر لتر الوقود (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etFuelPrice = edit("مثال: 15.00").apply { setText(String.format("%.2f", fuelPrice)) }
+            sec.addView(etFuelPrice)
 
-            addView(text("متوسط استهلاك سيارتك القياسي وهي فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("متوسط استهلاك المركبة القياسي وهي فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etFuelRate = edit("مثال: 7.2").apply { setText(String.format("%.1f", baselineFuelRate)) }
-            addView(etFuelRate)
+            sec.addView(etFuelRate)
 
-            addView(text("تكلفة غيار الزيت والفلتر بالكامل (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("تكلفة غيار الزيت والفلتر بالكامل (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etOilPrice = edit("مثال: 1200").apply { setText(String.format("%.0f", oilPrice)) }
-            addView(etOilPrice)
+            sec.addView(etOilPrice)
 
-            addView(text("عمر/صلاحية نوع الزيت بالكيلومتر (مثلاً 3000 أو 5000 أو 10000 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("عمر/صلاحية نوع الزيت بالكيلومتر (مثلاً 5000 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etOilTarget = edit("مثال: 5000").apply { setText(String.format("%.0f", oilTargetKm)) }
-            addView(etOilTarget)
+            sec.addView(etOilTarget)
 
-            addView(text("القيمة السوقية التقديرية للسيارة (ج.م) لحساب الإهلاك والتآكل:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("القيمة السوقية التقديرية للسيارة (ج.م) لحساب الإهلاك والتآكل:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etCarValue = edit("مثال: 400000").apply { setText(String.format("%.0f", vehicleMarketValue)) }
-            addView(etCarValue)
+            sec.addView(etCarValue)
 
-            addView(text("نسبة استهلاك وإهلاك وتآكل السيارة لكل 1000 كم (الافتراضي 0.20% لتغطية دورة حياة 500 ألف كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            sec.addView(text("نسبة استهلاك وإهلاك السيارة لكل 1000 كم (الافتراضي 0.20% لتغطية 500 ألف كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
             val etDepRate = edit("مثال: 0.20").apply { setText(String.format("%.2f", depRatePer1000Km)) }
-            addView(etDepRate)
+            sec.addView(etDepRate)
+
+            // Vehicle Empty Weight & Category Selector (Physics Calibration)
+            sec.addView(text("وزن المركبة وهي فارغة (كجم) - لمعايرة أثر الحمولة والوزن بدقة فيزيائية:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(6), 0, 0) })
+            val etVehicleWeight = edit("وزن المركبة كجم (مثال: 1200)").apply { setText(String.format("%.0f", vehicleEmptyWeight)) }
+            sec.addView(etVehicleWeight)
+
+            val vCatRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(4)
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+            }
+            fun vCatBtn(label: String, weightVal: Float): Button {
+                return Button(this@MainActivity).apply {
+                    text = label
+                    textSize = 10f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(if (vehicleEmptyWeight == weightVal) Color.rgb(126, 242, 154) else Color.rgb(24, 46, 68))
+                    if (vehicleEmptyWeight == weightVal) setTextColor(Color.rgb(8, 23, 32))
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    lp.setMargins(dp(1), 0, dp(1), 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        etVehicleWeight.setText(String.format("%.0f", weightVal))
+                    }
+                }
+            }
+            vCatRow.addView(vCatBtn("🚗 ملاكي\n(1200 كجم)", 1200f))
+            vCatRow.addView(vCatBtn("🚐 ميكروباص\n(2500 كجم)", 2500f))
+            vCatRow.addView(vCatBtn("🚛 شاحنة\n(12000 كجم)", 12000f))
+            vCatRow.addView(vCatBtn("🚜 جرار\n(6000 كجم)", 6000f))
+            sec.addView(vCatRow)
 
             val tvSaveMsg = text("", 13, Color.rgb(126, 242, 154), false)
-            addView(tvSaveMsg)
+            sec.addView(tvSaveMsg)
 
-            addView(button("💾 حفظ وتحديث أسعار التشغيل") {
+            sec.addView(button("💾 حفظ وتحديث أسعار التشغيل وبيانات المركبة") {
                 val fP = etFuelPrice.text.toString().toFloatOrNull() ?: fuelPrice
                 val fR = etFuelRate.text.toString().toFloatOrNull() ?: baselineFuelRate
                 val oP = etOilPrice.text.toString().toFloatOrNull() ?: oilPrice
@@ -2085,6 +2105,7 @@ class MainActivity : Activity() {
                 val tC = etTankCap.text.toString().toFloatOrNull() ?: tankCap
                 val cV = etCarValue.text.toString().toFloatOrNull() ?: vehicleMarketValue
                 val dR = etDepRate.text.toString().toFloatOrNull() ?: depRatePer1000Km
+                val vW = etVehicleWeight.text.toString().toFloatOrNull() ?: vehicleEmptyWeight
 
                 preferences.edit()
                     .putFloat("fuel_liter_price", fP)
@@ -2094,37 +2115,32 @@ class MainActivity : Activity() {
                     .putFloat("tank_capacity_liters", tC)
                     .putFloat("vehicle_market_value", cV)
                     .putFloat("depreciation_percent_per_1000km", dR)
+                    .putFloat("vehicle_empty_weight", vW)
                     .apply()
 
-                tvSaveMsg.text = "تم حفظ وتحديث الأسعار ومعدل الإهلاك بنجاح! يتم الآن إعادة حساب التكاليف."
+                tvSaveMsg.text = "تم حفظ وتحديث الإعدادات بنجاح! يتم الآن إعادة حساب التكاليف."
                 switchTab("fuel")
             })
         }
-        container.addView(cardSettings)
+        container.addView(sectionSettings)
 
-        // --- Card 7: Engine Oil Odometer & Reset Button Card ---
-        val cardOilCounter = card().apply {
-            addView(text("🛢️ عداد وتصفير كيلومترات زيت المحرك", 17, Color.rgb(248, 199, 74), true))
-            addView(text("تابع مسافة الزيت الحالية (تعد تلقائياً أثناء القيادة)، واضغط على زر التصفير عند تغيير الزيت:", 13, Color.rgb(167, 203, 226), false))
-
+        // --- SECTION 4 (Collapsible): Engine Oil Odometer & Reset ---
+        val sectionOilCounter = collapsibleSection("عداد وتصفير كيلومترات زيت المحرك", "🛢️", initiallyExpanded = false) { sec ->
             val oilStatsRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
+                lp.topMargin = dp(4)
                 layoutParams = lp
             }
             oilStatsRow.addView(metricBox("المقطوع بالزيت الحالي", "${oilCurrentKm.toInt()} كم", Color.WHITE).parent as View)
             oilStatsRow.addView(metricBox("المتبقي حتى الغيار", "${remainingOilKm.toInt()} كم", if (remainingOilKm < 500f) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154)).parent as View)
-            addView(oilStatsRow)
+            sec.addView(oilStatsRow)
 
             val tvResetMsg = text("", 13, Color.rgb(126, 242, 154), false)
-            addView(tvResetMsg)
+            sec.addView(tvResetMsg)
 
-            addView(button("🔄 تصفير عداد الزيت (تم تغيير الزيت الآن)") {
-                preferences.edit()
-                    .putFloat("oil_current_km", 0.0f)
-                    .apply()
-
+            sec.addView(button("🔄 تصفير عداد الزيت (تم تغيير الزيت الآن)") {
+                preferences.edit().putFloat("oil_current_km", 0.0f).apply()
                 tvResetMsg.text = "تم تصفير عداد الزيت بنجاح! تبدأ الآن دورة جديدة لـ ${oilTargetKm.toInt()} كم."
                 switchTab("fuel")
             }.apply {
@@ -2132,26 +2148,7 @@ class MainActivity : Activity() {
                 setTextColor(Color.rgb(8, 23, 32))
             })
         }
-        container.addView(cardOilCounter)
-
-        // --- Card 8: Real-Time OBD Fuel vs Baseline Educational Guide Card ---
-        val cardFuelComparison = card().apply {
-            addView(text("📊 دليل فيزياء الوقود ومعادلة الحمولة والـ OBD", 17, Color.rgb(110, 231, 255), true))
-            addView(text("كيف يحسب البرنامج تكلفة الوقود والمشاوير بالمليم؟", 14, Color.WHITE, true).apply { setPadding(0, dp(4), 0, 0) })
-            addView(text("• 1. التقدير القياسي (فارغة): $baselineFuelRate لتر/100 كم (متوسط كتالوج الشركة المصنعة).", 13, Color.rgb(167, 203, 226), false))
-            addView(text("• 2. معادلة الحمل والوزن: كل 100 كجم إضافية تزيد الاستهلاك 5% بسبب مقاومة القصور الذاتي.", 13, Color.rgb(248, 199, 74), false))
-            addView(text("• 3. المعايرة الذكية (بعد أول 1 كم): فور تحرك السيارة وقراءة حساسات تدفق الهواء (MAF) وتغير مستوى الوقود (Delta Fuel)، يستنتج النظام المعدل الواقعي الحقيقي فوراً.", 13, Color.rgb(126, 242, 154), false))
-
-            addView(button("🔊 اختبار نغمة التنبيه الصوتي والإنذارات") {
-                isSimulatingAlert = true
-                testAudioAlert()
-                setSafetyAlert("🔊 إنذار تجريبي: نظام التحذير الصوتي والمرئي", "الإنذار الصوتي والمرئي جاهز ويعمل بكفاءة لحماية محرك سيارتك أثناء القيادة.", critical = false)
-            }.apply {
-                setBackgroundColor(Color.rgb(36, 77, 111))
-                setTextColor(Color.WHITE)
-            })
-        }
-        container.addView(cardFuelComparison)
+        container.addView(sectionOilCounter)
 
         return container
     }
@@ -2811,16 +2808,20 @@ class MainActivity : Activity() {
 
                 // Simulate distance, oil odometer, instant fuel and trip average
                 val dtSec = 0.5
-                val distSlice = (telemetry.speed * (dtSec / 3600.0)).toFloat()
                 telemetry.tripDistanceKm += distSlice
                 val curOil = preferences.getFloat("oil_current_km", 0f)
-                preferences.edit().putFloat("oil_current_km", curOil + distSlice).apply()
 
                 val consumedLiters = (telemetry.instantFuelLitersPerHour.toDouble() * (dtSec / 3600.0)).toFloat()
                 telemetry.actualTripFuelLiters += consumedLiters
                 if (telemetry.tripDistanceKm > 0.05f) {
                     telemetry.tripAverageFuelRate = (telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f
                 }
+
+                preferences.edit()
+                    .putFloat("oil_current_km", curOil + distSlice)
+                    .putFloat("saved_trip_distance_km", telemetry.tripDistanceKm)
+                    .putFloat("saved_trip_fuel_liters", telemetry.actualTripFuelLiters)
+                    .apply()
 
                 runOnUiThread { updateLiveUI() }
                 Thread.sleep(500)
@@ -3280,7 +3281,12 @@ class MainActivity : Activity() {
         val depRatePer1000Km = preferences.getFloat("depreciation_percent_per_1000km", 0.20f)
         val depCostPerKm = (vehicleMarketValue * (depRatePer1000Km / 100.0f)) / 1000.0f
 
-        val weightPenaltyPercent = (plannedCargoWeightKg / 100.0f) * 5.0f
+        val vehicleEmptyWeight = preferences.getFloat("vehicle_empty_weight", 1200.0f)
+        val weightPenaltyPercent = if (vehicleEmptyWeight > 0f) {
+            (plannedCargoWeightKg / vehicleEmptyWeight) * 60.0f
+        } else {
+            (plannedCargoWeightKg / 100.0f) * 5.0f
+        }
         val loadedFuelRate = baselineFuelRate * (1.0f + (weightPenaltyPercent / 100.0f))
         val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
 
@@ -4150,6 +4156,14 @@ class MainActivity : Activity() {
                     telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
                 } else {
                     telemetry.tripAverageFuelRate = baseRate100km
+                }
+
+                // Periodic persistence for trip metrics (survives car shutoff or phone disconnect)
+                if (loopCount % 4 == 0) {
+                    preferences.edit()
+                        .putFloat("saved_trip_distance_km", telemetry.tripDistanceKm)
+                        .putFloat("saved_trip_fuel_liters", telemetry.actualTripFuelLiters)
+                        .apply()
                 }
 
                 // 7. Universal Fuel Level Reading (ECU / Cluster) or High-Precision Dynamic Fuel Flow Tracking
