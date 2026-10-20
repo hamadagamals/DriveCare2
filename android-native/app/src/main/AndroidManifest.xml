@@ -22,6 +22,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Keeps the CPU awake (timed) while the OBD link is monitored by the foreground service -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Prerequisite for the connectedDevice foreground-service type on Android 14+ (Wi-Fi OBD adapters) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
@@ -33,11 +37,19 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Keeps the process + OBD loop + safety alerts alive while the app is in the background -->
+        <service
+            android:name=".ObdForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

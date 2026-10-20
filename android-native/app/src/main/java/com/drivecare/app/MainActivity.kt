@@ -285,6 +285,9 @@ class MainActivity : Activity() {
     private val SAFETY_NOTIFICATION_ID = 9991
     private val SAFETY_CHANNEL_ID = "drivecare_safety_channel"
     private var notificationManager: NotificationManager? = null
+    // De-dup state so the (≈500ms) alert evaluation does not re-post a notification the user just swiped away
+    @Volatile private var lastNotifiedAlertKey: String? = null
+    @Volatile private var lastNotifiedTitle: String? = null
 
     // Adaptive Telemetry State (بث مباشر عند الطلب vs تجميع دوري بالخلفية)
     private var isAppInForeground: Boolean = true
@@ -465,6 +468,17 @@ class MainActivity : Activity() {
 
     private fun showSystemSafetyNotification(key: String, title: String, desc: String, critical: Boolean) {
         val nm = notificationManager ?: getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+
+        // Same alert as the one already posted: never re-post it (that makes a swiped notification pop back
+        // every 500ms). Only refresh it silently when it is still visible and its title actually changed.
+        val sameKey = lastNotifiedAlertKey == key
+        if (sameKey) {
+            val stillVisible = try {
+                nm.activeNotifications.any { it.id == SAFETY_NOTIFICATION_ID }
+            } catch (_: Exception) { false }
+            if (!stillVisible || lastNotifiedTitle == title) return
+        }
+
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -486,6 +500,7 @@ class MainActivity : Activity() {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setOngoing(false)
+            .setOnlyAlertOnce(sameKey)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             builder.setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -493,9 +508,13 @@ class MainActivity : Activity() {
         }
 
         nm.notify(SAFETY_NOTIFICATION_ID, builder.build())
+        lastNotifiedAlertKey = key
+        lastNotifiedTitle = title
     }
 
     private fun cancelSystemSafetyNotification() {
+        lastNotifiedAlertKey = null
+        lastNotifiedTitle = null
         notificationManager?.cancel(SAFETY_NOTIFICATION_ID)
     }
 
@@ -756,8 +775,25 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Invoked (on the service's main thread) when the user taps "إيقاف المراقبة" in the foreground notification. */
+    private val stopRequestHandler: () -> Unit = {
+        runOnUiThread {
+            if (!isDestroyed && !isFinishing) {
+                disconnectObd(userInitiated = true)
+                if (::statusText.isInitialized) {
+                    statusText.text = "تم إيقاف المراقبة من الإشعار. اضغط اتصال لإعادة التشغيل."
+                }
+                if (::tvConnectionState.isInitialized) {
+                    tvConnectionState.text = "منقطع 🔴"
+                    tvConnectionState.setTextColor(Color.rgb(255, 122, 122))
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ObdForegroundService.onStopRequested = stopRequestHandler
         preferences = getSharedPreferences("drivecare_native", Context.MODE_PRIVATE)
 
         isLoggedIn = preferences.getBoolean("is_logged_in", false)
@@ -860,10 +896,14 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         userRequestedDisconnect = true
+        if (ObdForegroundService.onStopRequested === stopRequestHandler) {
+            ObdForegroundService.onStopRequested = null
+        }
         uiUpdateHandler.removeCallbacksAndMessages(null)
         scanHandler.removeCallbacksAndMessages(null)
         stopDiscovery()
         disconnectObd()
+        ObdForegroundService.stop(applicationContext)
         toneGenerator?.release()
         if (classicReceiverRegistered) {
             try { unregisterReceiver(classicReceiver) } catch (_: Exception) {}
@@ -5997,6 +6037,9 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
                 val autoRetrying = obdReconnectAttempts > 0 && !userRequestedDisconnect
+                // A first/manual connect that fails must not leave a foreground notification behind; during
+                // an automatic retry cycle the service stays up (handleObdLinkLost decides when to give up).
+                if (!autoRetrying) ObdForegroundService.stop(applicationContext)
                 runOnUiThread {
                     statusText.text = "فشل الاتصال: ${e.localizedMessage ?: "تأكد من فتح كونتاكت السيارة وتشغيل القطعة"}"
                     telemetry.isConnected = false
@@ -6172,6 +6215,8 @@ class MainActivity : Activity() {
         runOnUiThread {
             obdReconnectAttempts = 0
             telemetry.isConnected = true
+            // Link is up: promote the process to a foreground service so the loop + alerts survive screen-off/Doze.
+            ObdForegroundService.start(this@MainActivity, "متصل بـ $devName • المراقبة والإنذارات تعمل بالخلفية")
             statusText.text = "متصل بنجاح بـ $devName! جاري قراءة الحساسات الحية 🟢"
             selectedText.text = "الجهاز المتصل: $devName (متصل حياً)"
             if (::tvConnectionState.isInitialized) {
@@ -6513,6 +6558,12 @@ class MainActivity : Activity() {
         obdReconnectAttempts = attempt
         val canRetry = cand != null && attempt <= 6
         val delayMs = (3000L * attempt).coerceAtMost(15000L)
+        if (canRetry) {
+            ObdForegroundService.updateText(applicationContext, "⚠️ انقطع الاتصال بقطعة OBD • إعادة المحاولة $attempt/6")
+        } else {
+            // Gave up (or no device to retry): stop the foreground notification so it never lies about monitoring.
+            ObdForegroundService.stop(applicationContext)
+        }
         runOnUiThread {
             if (isDestroyed || isFinishing) return@runOnUiThread
             telemetry.isConnected = false
@@ -7412,7 +7463,11 @@ class MainActivity : Activity() {
     }
 
     private fun disconnectObd(userInitiated: Boolean = true) {
-        if (userInitiated) userRequestedDisconnect = true
+        if (userInitiated) {
+            userRequestedDisconnect = true
+            // Manual/real shutdown: nothing left to monitor, so release the foreground service + wake lock.
+            ObdForegroundService.stop(applicationContext)
+        }
         obdLoopGeneration.incrementAndGet() // invalidates any running/zombie telemetry loop immediately
         isTelemetryLoopRunning = false
         try { activeSocket?.close() } catch (_: Exception) {}
