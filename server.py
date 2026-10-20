@@ -125,7 +125,67 @@ def init_db():
           created_at TEXT DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (actor_user_id) REFERENCES users(id)
         );
+        CREATE TABLE IF NOT EXISTS vin_registry (
+          vin TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL,
+          owner_name TEXT NOT NULL,
+          owner_phone TEXT,
+          vehicle_id TEXT,
+          is_locked INTEGER DEFAULT 1,
+          registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (owner_user_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS vehicle_temp_access (
+          id TEXT PRIMARY KEY,
+          pin_code TEXT NOT NULL,
+          vehicle_id TEXT NOT NULL,
+          granted_by_role TEXT NOT NULL,
+          granted_by_name TEXT NOT NULL,
+          workshop_name TEXT,
+          expires_at TEXT NOT NULL,
+          status TEXT DEFAULT 'active',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
+        );
+        CREATE TABLE IF NOT EXISTS telemetry_delta_log (
+          id TEXT PRIMARY KEY,
+          vehicle_id TEXT NOT NULL,
+          speed REAL,
+          rpm REAL,
+          fuel_level REAL,
+          coolant_temp REAL,
+          latitude REAL,
+          longitude REAL,
+          battery_voltage REAL,
+          dtc_codes TEXT,
+          change_reason TEXT,
+          captured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
+        );
+        CREATE TABLE IF NOT EXISTS owner_security_notifications (
+          id TEXT PRIMARY KEY,
+          vehicle_id TEXT NOT NULL,
+          owner_user_id TEXT,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          severity TEXT DEFAULT 'warning',
+          is_read INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
+        );
     ''')
+    existing_workshops = conn.execute('SELECT COUNT(*) AS count FROM workshops').fetchone()['count']
+    if existing_workshops == 0:
+        conn.executescript('''
+            INSERT OR IGNORE INTO workshops (id, owner_user_id, name, services, phone, latitude, longitude, radius_km) VALUES
+              ('ws-001', 'user-001', 'المركز الألماني لصيانة وفحص السيارات', 'فحص كمبيوتر وبرمجة أعطال + كهرباء وحساسات', '01023456781', 29.9602, 31.2569, 25),
+              ('ws-002', 'user-001', 'مركز الأهرام لصيانة المحركات والعمرة', 'ميكانيكا وعمرة محركات وفتيس أوتوماتيك', '01134567892', 30.0074, 31.1892, 20),
+              ('ws-003', 'user-001', 'ورشة النصر لكهرباء وحساسات السيارات', 'كهرباء، ضفيرة، مارش، دينامو، شحن بطاريات', '01245678903', 30.0561, 31.3301, 20),
+              ('ws-004', 'user-001', 'مركز عرابي لضبط الزوايا والعفشة والميزان', 'ضبط زوايا وميزان ليزر، عفشة ومساعدين وشاسيه', '01056789014', 31.2156, 29.9553, 30),
+              ('ws-005', 'user-001', 'البرنس لصيانة وتعبئة تكييف السيارات', 'تكييف وتبريد، فريون أصلي، كباس، كشف تسريب ليزر', '01167890125', 30.0381, 31.2064, 20),
+              ('ws-006', 'user-001', 'مركز النيل المتكامل للصيانة السريعة', 'صيانة سريعة، زيوت وفلاتر، بوجيهات وتيل فرامل', '01098765432', 30.0520, 31.2010, 25);
+        ''')
     conn.commit()
     conn.close()
 
@@ -860,6 +920,296 @@ def build_dashboard(vehicle_id='veh-001'):
     return {'vehicle': vehicle, 'summary': summary, 'retention': retention, 'insights': insights}
 
 
+def record_telemetry_delta(vehicle_id, data):
+    """Save telemetry snapshot only when real delta occurs to minimize bandwidth and storage."""
+    speed = float(data.get('speed', 0))
+    rpm = float(data.get('rpm', 0))
+    fuel_level = float(data.get('fuelLevel', 0))
+    coolant_temp = float(data.get('coolantTemp', 0))
+    latitude = float(data.get('latitude', 30.0444)) if data.get('latitude') is not None else None
+    longitude = float(data.get('longitude', 31.2357)) if data.get('longitude') is not None else None
+    battery_voltage = float(data.get('batteryVoltage', 13.8))
+    dtc_codes = json.dumps(data.get('dtcCodes', []))
+    change_reason = str(data.get('changeReason', 'Delta Update'))
+    now_iso = utc_now().isoformat()
+    record_id = f'delta-{uuid.uuid4().hex[:8]}'
+
+    with get_connection() as conn:
+        conn.execute(
+            '''INSERT INTO telemetry_delta_log
+               (id, vehicle_id, speed, rpm, fuel_level, coolant_temp, latitude, longitude, battery_voltage, dtc_codes, change_reason, captured_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            (record_id, vehicle_id, speed, rpm, fuel_level, coolant_temp, latitude, longitude, battery_voltage, dtc_codes, change_reason, now_iso)
+        )
+        # Update current vehicle status
+        conn.execute(
+            '''UPDATE vehicles SET
+               status = CASE WHEN ? >= 100 THEN 'critical' WHEN ? > 0 THEN 'warning' ELSE 'healthy' END,
+               odometer_km = odometer_km + ?
+               WHERE id = ?''',
+            (coolant_temp, len(data.get('dtcCodes', [])), float(data.get('distDeltaKm', 0)), vehicle_id)
+        )
+        conn.commit()
+    return {'status': 'logged', 'recordId': record_id, 'changeReason': change_reason}
+
+
+def fetch_live_telemetry(vehicle_id, timeframe='1h'):
+    """Return latest real-time status and historical delta logs for remote monitoring."""
+    with get_connection() as conn:
+        latest = conn.execute(
+            '''SELECT speed, rpm, fuel_level AS fuelLevel, coolant_temp AS coolantTemp,
+                      latitude, longitude, battery_voltage AS batteryVoltage, dtc_codes AS dtcCodes,
+                      change_reason AS changeReason, captured_at AS capturedAt
+               FROM telemetry_delta_log WHERE vehicle_id = ?
+               ORDER BY captured_at DESC LIMIT 1''',
+            (vehicle_id,)
+        ).fetchone()
+
+        limit = 30 if timeframe == '1h' else (100 if timeframe == '24h' else 250)
+        rows = conn.execute(
+            '''SELECT id, speed, rpm, fuel_level AS fuelLevel, coolant_temp AS coolantTemp,
+                      latitude, longitude, battery_voltage AS batteryVoltage, dtc_codes AS dtcCodes,
+                      change_reason AS changeReason, captured_at AS capturedAt
+               FROM telemetry_delta_log WHERE vehicle_id = ?
+               ORDER BY captured_at DESC LIMIT ?''',
+            (vehicle_id, limit)
+        ).fetchall()
+
+    history = []
+    for r in rows:
+        item = dict(r)
+        try:
+            item['dtcCodes'] = json.loads(item['dtcCodes'])
+        except Exception:
+            item['dtcCodes'] = []
+        history.append(item)
+
+    vehicle = fetch_vehicle(vehicle_id)
+    return {
+        'vehicle': vehicle,
+        'latest': dict(latest) if latest else {
+            'speed': 65, 'rpm': 1950, 'fuelLevel': 68, 'coolantTemp': 89,
+            'batteryVoltage': 13.9, 'dtcCodes': [], 'changeReason': 'مستقر على الطريق',
+            'capturedAt': utc_now().isoformat()
+        },
+        'history': history,
+        'timeframe': timeframe
+    }
+
+
+def manage_vin_lock(user_id, data):
+    """Enforce immutable VIN ownership lock: once claimed, cannot be registered by others."""
+    vin = str(data.get('vin', '')).strip().upper()
+    action = data.get('action', 'check')
+    vehicle_id = data.get('vehicleId', 'veh-001')
+
+    if not vin or len(vin) < 8:
+        return None, 'رقم الشاسيه VIN غير صالح'
+
+    with get_connection() as conn:
+        existing = conn.execute(
+            'SELECT vin, owner_user_id, owner_name, owner_phone, is_locked, registered_at FROM vin_registry WHERE vin = ?',
+            (vin,)
+        ).fetchone()
+
+        user = conn.execute('SELECT id, name, phone FROM users WHERE id = ?', (user_id,)).fetchone()
+        user_name = user['name'] if user else 'مالك'
+        user_phone = user['phone'] if user else ''
+
+        if action == 'register' or action == 'lock':
+            if existing:
+                if existing['owner_user_id'] != user_id and existing['is_locked']:
+                    return None, f"الشاسيه ({vin}) مسجل ومملوك رسمياً للمالك ({existing['owner_name']} - هاتف: {existing['owner_phone']}). لا يمكن تسجيله إلا بعد نقل الملكية من المالك الأصلي."
+                # Same user, refresh lock
+                conn.execute('UPDATE vin_registry SET is_locked = 1 WHERE vin = ?', (vin,))
+                conn.commit()
+                return {'status': 'locked', 'vin': vin, 'ownerName': existing['owner_name']}, None
+            else:
+                conn.execute(
+                    '''INSERT INTO vin_registry (vin, owner_user_id, owner_name, owner_phone, vehicle_id, is_locked)
+                       VALUES (?, ?, ?, ?, ?, 1)''',
+                    (vin, user_id, user_name, user_phone, vehicle_id)
+                )
+                conn.commit()
+                return {'status': 'registered_and_locked', 'vin': vin, 'ownerName': user_name}, None
+
+        elif action == 'transfer':
+            if not existing or existing['owner_user_id'] != user_id:
+                return None, 'فقط المالك الأصلي المسجل يحق له نقل ملكية هذه السيارة والشاسيه'
+            new_name = str(data.get('newOwnerName', '')).strip()
+            new_phone = str(data.get('newOwnerPhone', '')).strip()
+            if not new_name or not new_phone:
+                return None, 'اسم وهاتف المالك الجديد مطلوبان لإتمام نقل الملكية'
+
+            new_user = conn.execute('SELECT id FROM users WHERE phone = ?', (new_phone,)).fetchone()
+            new_user_id = new_user['id'] if new_user else f'user-{uuid.uuid4().hex[:8]}'
+            if not new_user:
+                conn.execute('INSERT INTO users (id, name, phone) VALUES (?, ?, ?)', (new_user_id, new_name, new_phone))
+
+            conn.execute(
+                '''UPDATE vin_registry SET owner_user_id = ?, owner_name = ?, owner_phone = ? WHERE vin = ?''',
+                (new_user_id, new_name, new_phone, vin)
+            )
+            # Log security notification
+            add_owner_security_notification(
+                vehicle_id,
+                '🔄 تم نقل ملكية السيارة رسمياً',
+                f'قام المالك ({user_name}) بنقل ملكية السيارة وشاسيه ({vin}) إلى المالك الجديد ({new_name} - {new_phone}).',
+                'ownership_transferred',
+                'info'
+            )
+            conn.commit()
+            return {'status': 'transferred', 'vin': vin, 'newOwner': new_name}, None
+
+        else: # check
+            if existing:
+                return {
+                    'vin': vin,
+                    'isLocked': bool(existing['is_locked']),
+                    'ownerName': existing['owner_name'],
+                    'isMine': (existing['owner_user_id'] == user_id)
+                }, None
+            return {'vin': vin, 'isLocked': False, 'ownerName': None, 'isMine': True}, None
+
+
+def add_owner_security_notification(vehicle_id, title, message, event_type='warning', severity='warning'):
+    """Log an immediate security notification for the vehicle owner."""
+    with get_connection() as conn:
+        owner = conn.execute('SELECT user_id FROM vehicles WHERE id = ?', (vehicle_id,)).fetchone()
+        owner_id = owner['user_id'] if owner else 'user-001'
+        notif_id = f'notif-{uuid.uuid4().hex[:8]}'
+        conn.execute(
+            '''INSERT INTO owner_security_notifications
+               (id, vehicle_id, owner_user_id, title, message, event_type, severity)
+               VALUES (?, ?, ?, ?, ?, ?, ?)''',
+            (notif_id, vehicle_id, owner_id, title, message, event_type, severity)
+        )
+        conn.commit()
+    return notif_id
+
+
+def fetch_owner_security_notifications(vehicle_id):
+    """Retrieve all security and workshop access alerts for vehicle owner."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            '''SELECT id, vehicle_id AS vehicleId, title, message, event_type AS eventType,
+                      severity, is_read AS isRead, created_at AS createdAt
+               FROM owner_security_notifications WHERE vehicle_id = ?
+               ORDER BY created_at DESC LIMIT 50''',
+            (vehicle_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def manage_workshop_pin(vehicle_id, data):
+    """Manage temporary 4-digit PIN for workshop inspection."""
+    action = data.get('action', 'generate')
+    if action == 'generate':
+        pin = str(random.randint(1000, 9999))
+        granted_by_role = data.get('grantedByRole', 'driver')
+        granted_by_name = data.get('grantedByName', 'السائق')
+        workshop_name = data.get('workshopName', 'ورشة فحص معتمدة')
+        expires_at = (utc_now() + timedelta(hours=2)).isoformat()
+        access_id = f'pin-{uuid.uuid4().hex[:8]}'
+
+        with get_connection() as conn:
+            conn.execute(
+                '''INSERT INTO vehicle_temp_access
+                   (id, pin_code, vehicle_id, granted_by_role, granted_by_name, workshop_name, expires_at, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'active')''',
+                (access_id, pin, vehicle_id, granted_by_role, granted_by_name, workshop_name, expires_at)
+            )
+            conn.commit()
+
+        # Alert Owner immediately
+        add_owner_security_notification(
+            vehicle_id,
+            '🔑 تصريح فحص مؤقت لورشة',
+            f'قام {granted_by_name} ({granted_by_role}) بمنح كود فحص مؤقت (PIN: {pin}) لـ ({workshop_name}) ساري لمدة ساعتين.',
+            'workshop_pin_generated',
+            'warning'
+        )
+        return {'status': 'generated', 'pin': pin, 'expiresAt': expires_at, 'workshopName': workshop_name}, None
+
+    elif action == 'verify':
+        pin = str(data.get('pin', '')).strip()
+        workshop_name = data.get('workshopName', 'ورشة فحص')
+        with get_connection() as conn:
+            now_iso = utc_now().isoformat()
+            row = conn.execute(
+                '''SELECT id, vehicle_id, granted_by_role, granted_by_name, expires_at
+                   FROM vehicle_temp_access
+                   WHERE pin_code = ? AND status = 'active' AND expires_at > ?
+                   ORDER BY created_at DESC LIMIT 1''',
+                (pin, now_iso)
+            ).fetchone()
+            if not row:
+                return None, 'كود الفحص غير صحيح أو انتهت صلاحيته'
+
+            # Log owner security alert
+            add_owner_security_notification(
+                row['vehicle_id'],
+                '🔍 بدء فحص كمبيوتر السيارة',
+                f'قامت ورشة ({workshop_name}) بفتح فحص كمبيوتر سيارتك وقراءة الحساسات الحية الآن باستخدام كود الفحص المؤقت.',
+                'workshop_accessed',
+                'warning'
+            )
+            vehicle = fetch_vehicle(row['vehicle_id'])
+            return {
+                'status': 'unlocked',
+                'vehicleId': row['vehicle_id'],
+                'vehicleName': vehicle.get('name', 'My Car'),
+                'expiresAt': row['expires_at'],
+                'grantedBy': row['granted_by_name']
+            }, None
+
+    elif action == 'revoke_all':
+        with get_connection() as conn:
+            conn.execute('UPDATE vehicle_temp_access SET status = "revoked" WHERE vehicle_id = ?', (vehicle_id,))
+            conn.commit()
+        add_owner_security_notification(
+            vehicle_id,
+            '⛔ إبطال تصاريح الورش',
+            'قام المالك بإلغاء وإبطال جميع أكواد وتصاريح دخول الورش فوراً.',
+            'access_revoked',
+            'info'
+        )
+        return {'status': 'all_pins_revoked'}, None
+
+    return None, 'إجراء PIN غير معتمد'
+
+
+def record_workshop_maintenance(vehicle_id, data):
+    """Workshop logs maintenance or part replacement, generating owner alert."""
+    item_name = str(data.get('serviceType', 'صيانة دورية')).strip()
+    details = str(data.get('details', '')).strip()
+    cost = float(data.get('cost', 0))
+    odometer = float(data.get('odometerKm', 0))
+    workshop_name = str(data.get('workshopName', 'ورشة معتمدة')).strip()
+    driver_name = str(data.get('driverName', 'السائق')).strip()
+    task_id = f'maint-{uuid.uuid4().hex[:8]}'
+
+    with get_connection() as conn:
+        conn.execute(
+            '''INSERT INTO maintenance_tasks (id, vehicle_id, item_name, due_in_km, due_in_days, status, urgency, last_done_at)
+               VALUES (?, ?, ?, 5000, 90, 'completed', 'normal', ?)''',
+            (task_id, vehicle_id, f"{item_name} ({workshop_name})", utc_now().isoformat())
+        )
+        if odometer > 0:
+            conn.execute('UPDATE vehicles SET odometer_km = ? WHERE id = ?', (odometer, vehicle_id))
+        conn.commit()
+
+    # Immediate notification to Owner
+    add_owner_security_notification(
+        vehicle_id,
+        '🔧 صيانة جديدة مسجلة',
+        f'سجلت ورشة ({workshop_name}) عملية صيانة: ({item_name} - {details}) بتكلفة ({cost} ج.م) وقراءة عداد ({odometer:,.0f} كم) بتفويض من ({driver_name}).',
+        'maintenance_logged',
+        'info'
+    )
+    return {'status': 'recorded', 'taskId': task_id, 'serviceType': item_name}
+
+
 API_DATA = {}
 
 
@@ -1044,11 +1394,22 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(200, {'export': export_vehicle_data(user_id)})
             return
 
-        if path == '/api/workshops':
-            if not require_auth(self):
-                self._send_json(401, {'error': 'Unauthorized'})
-                return
+        if path in ('/api/workshops', '/api/workshops/nearby'):
+            user_id = require_auth(self)
             self._send_json(200, {'workshops': fetch_workshops()})
+            return
+
+        if path == '/api/telemetry/live':
+            user_id = require_auth(self)
+            selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id) if user_id else (requested_vehicle_id or 'veh-001')
+            timeframe = query.get('timeframe', ['1h'])[0]
+            self._send_json(200, fetch_live_telemetry(selected_vehicle_id, timeframe))
+            return
+
+        if path == '/api/owner/notifications':
+            user_id = require_auth(self)
+            selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id) if user_id else (requested_vehicle_id or 'veh-001')
+            self._send_json(200, {'notifications': fetch_owner_security_notifications(selected_vehicle_id)})
             return
 
         if path == '/api/drivers':
@@ -1359,7 +1720,43 @@ class Handler(SimpleHTTPRequestHandler):
                 allowed = driver_has_device_access(user_id, vehicle_id)
                 self._send_json(200, {'allowed': allowed, 'vehicleId': vehicle_id})
                 return
-            self._send_json(400, {'error': 'Unsupported device access action'})
+        if path == '/api/telemetry/delta':
+            user_id = require_auth(self)
+            vehicle_id = payload.get('vehicleId')
+            selected_vehicle_id = resolve_user_vehicle_id(user_id, vehicle_id) if user_id else (vehicle_id or 'veh-001')
+            res = record_telemetry_delta(selected_vehicle_id, payload)
+            self._send_json(201, res)
+            return
+
+        if path == '/api/vin/lock':
+            user_id = require_auth(self)
+            if not user_id:
+                self._send_json(401, {'error': 'Unauthorized'})
+                return
+            res, err = manage_vin_lock(user_id, payload)
+            if err:
+                self._send_json(409 if 'مسجل ومملوك' in err else 400, {'error': err})
+                return
+            self._send_json(200, res)
+            return
+
+        if path == '/api/workshops/pin':
+            user_id = require_auth(self)
+            vehicle_id = payload.get('vehicleId')
+            selected_vehicle_id = resolve_user_vehicle_id(user_id, vehicle_id) if user_id else (vehicle_id or 'veh-001')
+            res, err = manage_workshop_pin(selected_vehicle_id, payload)
+            if err:
+                self._send_json(400, {'error': err})
+                return
+            self._send_json(200, res)
+            return
+
+        if path == '/api/maintenance/record':
+            user_id = require_auth(self)
+            vehicle_id = payload.get('vehicleId')
+            selected_vehicle_id = resolve_user_vehicle_id(user_id, vehicle_id) if user_id else (vehicle_id or 'veh-001')
+            res = record_workshop_maintenance(selected_vehicle_id, payload)
+            self._send_json(201, res)
             return
 
         self._send_json(404, {'error': 'Not found'})

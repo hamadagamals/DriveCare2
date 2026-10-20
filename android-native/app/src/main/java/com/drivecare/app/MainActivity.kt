@@ -120,12 +120,159 @@ class MainActivity : Activity() {
     private lateinit var scanButton: Button
     private lateinit var preferences: SharedPreferences
 
-    // User State
+    // User State & Roles (owner, driver, garage)
     private var isLoggedIn: Boolean = false
     private var userName: String = ""
     private var userPhone: String = ""
     private var currentRole: String = "owner" // "owner", "driver", "garage"
-    private var activeTab: String = "gauges" // "gauges", "vehicles", "scanner", "fuel", "maint"
+    private var activeTab: String = "gauges" // "gauges", "vehicles", "scanner", "fuel", "maint", "remote_fleet", "owner_security", "workshops_dir", "workshop_console", "log_service"
+
+    // Multi-Persona State
+    private var authorizedDriverName: String = "محمد السائق (مفوض)"
+    private var authorizedDriverPhone: String = "01099887766"
+
+    // Delta-Deadband Telemetry State (التخزين عند التغير فقط)
+    data class TelemetryDeltaRecord(
+        val timestamp: Long,
+        val timeString: String,
+        val speed: Int,
+        val rpm: Int,
+        val fuelLevel: Int,
+        val coolantTemp: Int,
+        val batteryVoltage: Float,
+        val dtcCount: Int,
+        val changeReason: String,
+        val locationName: String
+    )
+    private var lastSyncedSpeed: Int = -1
+    private var lastSyncedRpm: Int = -1
+    private var lastSyncedFuel: Int = -1
+    private var lastSyncedTemp: Int = -1
+    private var lastSyncedDtcCount: Int = -1
+    private var lastSyncedAlert: String? = null
+    private var lastSyncTimestamp: Long = 0L
+    private val telemetryDeltaLog = mutableListOf<TelemetryDeltaRecord>()
+    private var remoteFleetTimeframe: String = "1h"
+
+    // Registered Workshops Directory Model & Data
+    data class RegisteredWorkshop(
+        val id: String,
+        val name: String,
+        val managerName: String,
+        val specialty: String,
+        val categoryKey: String, // "all", "electricity", "mechanic", "computer", "chassis", "ac"
+        val phone: String,
+        val address: String,
+        val distanceKm: Float,
+        val lat: Double,
+        val lng: Double,
+        val rating: Float
+    )
+    private var workshopSelectedCategory: String = "all"
+    private val registeredWorkshops = listOf(
+        RegisteredWorkshop(
+            "ws-1",
+            "المركز الألماني لصيانة وفحص السيارات",
+            "م. شريف عبد الفتاح",
+            "فحص كمبيوتر وبرمجة أعطال + كهرباء وحساسات",
+            "computer",
+            "01023456781",
+            "شارع النصر، المعادي، القاهرة",
+            2.1f,
+            29.9602,
+            31.2569,
+            4.9f
+        ),
+        RegisteredWorkshop(
+            "ws-2",
+            "مركز الأهرام لصيانة المحركات والعمرة",
+            "الأسطى محمود الأهرام",
+            "ميكانيكا وعمرة محركات وفتيس أوتوماتيك",
+            "mechanic",
+            "01134567892",
+            "شارع فيصل الرئيسي، الجيزة",
+            3.4f,
+            30.0074,
+            31.1892,
+            4.8f
+        ),
+        RegisteredWorkshop(
+            "ws-3",
+            "ورشة النصر لكهرباء وحساسات السيارات",
+            "م. أحمد النصر",
+            "كهرباء، ضفيرة، مارش، دينامو، شحن بطاريات",
+            "electricity",
+            "01245678903",
+            "الحي السابع، مدينة نصر، القاهرة",
+            4.1f,
+            30.0561,
+            31.3301,
+            4.7f
+        ),
+        RegisteredWorkshop(
+            "ws-4",
+            "مركز عرابي لضبط الزوايا والعفشة والميزان",
+            "كابتن إبراهيم عرابي",
+            "ضبط زوايا وميزان ليزر، عفشة ومساعدين وشاسيه",
+            "chassis",
+            "01056789014",
+            "طريق الحرية، سموحة، الإسكندرية",
+            1.8f,
+            31.2156,
+            29.9553,
+            4.9f
+        ),
+        RegisteredWorkshop(
+            "ws-5",
+            "البرنس لصيانة وتعبئة تكييف السيارات",
+            "المعلم سامح البرنس",
+            "تكييف وتبريد، فريون أصلي، كباس، كشف تسريب ليزر",
+            "ac",
+            "01167890125",
+            "شارع مصدق، الدقي، الجيزة",
+            2.8f,
+            30.0381,
+            31.2064,
+            4.8f
+        ),
+        RegisteredWorkshop(
+            "ws-6",
+            "مركز النيل المتكامل للصيانة السريعة",
+            "م. طارق النيل",
+            "صيانة سريعة، زيوت وفلاتر، بوجيهات وتيل فرامل",
+            "mechanic",
+            "01098765432",
+            "ميدان لبنان، المهندسين، الجيزة",
+            3.9f,
+            30.0520,
+            31.2010,
+            4.8f
+        )
+    )
+
+    // Security & Workshop Notifications Model
+    data class SecurityNotificationItem(
+        val id: String,
+        val title: String,
+        val message: String,
+        val eventType: String,
+        val severity: String, // "critical", "warning", "info"
+        val timeString: String,
+        val timestamp: Long,
+        var isRead: Boolean
+    )
+    private val ownerSecurityNotifications = mutableListOf<SecurityNotificationItem>()
+
+    // Workshop Authorized Inspection Session
+    private var isWorkshopSessionUnlocked: Boolean = false
+    private var unlockedVehicleName: String = "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
+    private var unlockedVehicleVin: String = "KMHDH41EBNA123456"
+    private var workshopSessionExpiryTime: Long = 0L
+    private var workshopSessionGrantedBy: String = "السائق المفوض"
+    private var activeWorkshopPin: String = "7429"
+    private var activeWorkshopTargetName: String = "المركز الألماني"
+    private var activePinExpiryTimestamp: Long = 0L
+    private var isPinActive: Boolean = true
 
     // Scanner state
     private var isScanning = false
@@ -524,6 +671,8 @@ class MainActivity : Activity() {
             toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 80)
         } catch (_: Exception) {}
 
+        initSecurityNotificationsAndDelta()
+
         uiUpdateHandler.post(uiUpdateRunnable)
 
         renderCurrentScreen()
@@ -736,7 +885,10 @@ class MainActivity : Activity() {
         }
         root.addView(topBar)
 
-        // Navigation Tabs Bar (الأقسام الرئيسية)
+        // Internal Role Switcher Bar (3 أزرار تنقل فوري بين واجهات الأدوار دون خروج)
+        root.addView(buildRoleSwitcherBar())
+
+        // Navigation Tabs Bar (الأقسام المخصصة للدور الحالي)
         root.addView(buildTabBar())
 
         // Safety Alert Banner (شريط التحذيرات والإنذارات الطارئة)
@@ -747,18 +899,86 @@ class MainActivity : Activity() {
 
         // Tab Content Container
         when (activeTab) {
-            "gauges" -> root.addView(buildGaugesTabContent())
+            "remote_fleet" -> root.addView(buildRemoteFleetTabContent())
             "vehicles" -> root.addView(buildVehiclesTabContent())
+            "owner_security" -> root.addView(buildOwnerSecurityTabContent())
+            "workshops_dir" -> root.addView(buildWorkshopsDirectoryTabContent())
+            "workshop_console" -> root.addView(buildWorkshopConsoleTabContent())
+            "log_service" -> root.addView(buildLogServiceTabContent())
+            "gauges" -> root.addView(buildGaugesTabContent())
             "scanner" -> root.addView(buildScannerTabContent())
             "fuel" -> root.addView(buildFuelTabContent())
             "maint" -> root.addView(buildMaintenanceTabContent())
+            else -> root.addView(buildGaugesTabContent())
         }
 
         return scroll
     }
 
     // ========================================================
-    // TABS BAR
+    // ROLE SWITCHER BAR (التبديل الداخلي الفوري بين الأدوار)
+    // ========================================================
+    private fun buildRoleSwitcherBar(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.rgb(12, 28, 42))
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
+        }
+
+        val roles = listOf(
+            Triple("owner", "👑 واجهة المالك", Color.rgb(248, 199, 74)),
+            Triple("driver", "🚗 واجهة السائق", Color.rgb(110, 231, 255)),
+            Triple("garage", "🔧 واجهة الورشة", Color.rgb(255, 140, 90))
+        )
+
+        for ((roleKey, roleTitle, roleAccent) in roles) {
+            val isActive = (currentRole == roleKey)
+            val btn = Button(this).apply {
+                text = roleTitle
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                val lp = LinearLayout.LayoutParams(0, dp(40), 1f)
+                lp.setMargins(dp(2), 0, dp(2), 0)
+                layoutParams = lp
+                if (isActive) {
+                    setBackgroundColor(roleAccent)
+                    setTextColor(Color.rgb(8, 23, 32))
+                } else {
+                    setBackgroundColor(Color.rgb(18, 38, 56))
+                    setTextColor(Color.rgb(180, 210, 235))
+                }
+                setOnClickListener {
+                    if (currentRole != roleKey) {
+                        currentRole = roleKey
+                        preferences.edit().putString("active_role", currentRole).apply()
+                        activeTab = when(currentRole) {
+                            "owner" -> "remote_fleet"
+                            "driver" -> "gauges"
+                            "garage" -> "workshop_console"
+                            else -> "gauges"
+                        }
+                        Toast.makeText(this@MainActivity, "تم التبديل بنجاح إلى: $roleTitle", Toast.LENGTH_SHORT).show()
+                        renderCurrentScreen()
+                    }
+                }
+            }
+            row.addView(btn)
+        }
+        container.addView(row)
+        return container
+    }
+
+    // ========================================================
+    // TABS BAR (مخصصة حسب الدور الحالي)
     // ========================================================
     private fun buildTabBar(): View {
         val hscroll = HorizontalScrollView(this).apply {
@@ -773,11 +993,31 @@ class MainActivity : Activity() {
         }
         hscroll.addView(tabLayout)
 
-        tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
-        tabLayout.addView(tabBtn("🚗 إدارة السيارات", activeTab == "vehicles") { switchTab("vehicles") })
-        tabLayout.addView(tabBtn("🔍 فحص OBD", activeTab == "scanner") { switchTab("scanner") })
-        tabLayout.addView(tabBtn("⛽ التكلفة والوقود", activeTab == "fuel") { switchTab("fuel") })
-        tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
+        when (currentRole) {
+            "owner" -> {
+                tabLayout.addView(tabBtn("📡 المراقبة عن بعد", activeTab == "remote_fleet") { switchTab("remote_fleet") })
+                tabLayout.addView(tabBtn("👑 ملكية الشاسيه", activeTab == "vehicles") { switchTab("vehicles") })
+                val unread = getUnreadSecurityNotificationsCount()
+                val notifLabel = if (unread > 0) "🚨 إشعارات الورش ($unread)" else "🚨 إشعارات الورش"
+                tabLayout.addView(tabBtn(notifLabel, activeTab == "owner_security") { switchTab("owner_security") })
+                tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
+                tabLayout.addView(tabBtn("⛽ التكلفة والوقود", activeTab == "fuel") { switchTab("fuel") })
+                tabLayout.addView(tabBtn("🔧 جدول الصيانة", activeTab == "maint") { switchTab("maint") })
+            }
+            "driver" -> {
+                tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
+                tabLayout.addView(tabBtn("⛽ تكلفة الرحلة والوزن", activeTab == "fuel") { switchTab("fuel") })
+                tabLayout.addView(tabBtn("🗺️ دليل وخريطة الورش", activeTab == "workshops_dir") { switchTab("workshops_dir") })
+                tabLayout.addView(tabBtn("🔍 فحص OBD", activeTab == "scanner") { switchTab("scanner") })
+                tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
+            }
+            else -> { // "garage"
+                tabLayout.addView(tabBtn("🔑 فحص السيارة بالـ PIN", activeTab == "workshop_console") { switchTab("workshop_console") })
+                tabLayout.addView(tabBtn("🏎️ الحساسات الحية", activeTab == "gauges") { switchTab("gauges") })
+                tabLayout.addView(tabBtn("🔍 فحص ومسح الأعطال", activeTab == "scanner") { switchTab("scanner") })
+                tabLayout.addView(tabBtn("📝 تسجيل صيانة جديدة", activeTab == "log_service") { switchTab("log_service") })
+            }
+        }
 
         return hscroll
     }
@@ -802,6 +1042,1034 @@ class MainActivity : Activity() {
     private fun switchTab(tab: String) {
         activeTab = tab
         renderCurrentScreen()
+    }
+
+    // ========================================================
+    // TAB: REMOTE FLEET & DELTA MONITORING (المراقبة عن بعد للمالك)
+    // ========================================================
+    private fun buildRemoteFleetTabContent(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو"
+        val activeVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+
+        val cardRemoteLive = card().apply {
+            addView(text("📡 مراقبة السيارة اللحظية عن بُعد (Live Fleet Telemetry)", 17, Color.rgb(110, 231, 255), true))
+            addView(text("متابعة حية لقراءات السيارة أثناء تواجد السائق على الطريق بعيداً عن المالك:", 13, Color.rgb(167, 203, 226), false))
+
+            val statusBox = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.rgb(14, 42, 30))
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+                addView(text("🟢 السائق متصل حياً بالمركبة • السائق: $authorizedDriverName ($authorizedDriverPhone)", 13, Color.rgb(126, 242, 154), true))
+            }
+            addView(statusBox)
+
+            val r1 = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+            r1.addView(metricBox("سرعة السيارة اللحظية", "${telemetry.speed} كم/س", Color.rgb(110, 231, 255)).parent as View)
+            r1.addView(metricBox("عزم المحرك (RPM)", "${telemetry.rpm} لفة/د", Color.rgb(248, 199, 74)).parent as View)
+            addView(r1)
+
+            val r2 = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+            }
+            val fuelColor = if (telemetry.fuelLevel <= 15) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154)
+            r2.addView(metricBox("مستوى الوقود بالتنك", "${telemetry.fuelLevel}%", fuelColor).parent as View)
+            val tempColor = if (telemetry.coolantTemp >= 100) Color.rgb(255, 100, 100) else Color.rgb(110, 231, 255)
+            r2.addView(metricBox("حرارة مياه التبريد", "${telemetry.coolantTemp} °C", tempColor).parent as View)
+            addView(r2)
+
+            val r3 = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+            }
+            r3.addView(metricBox("جهد شحن البطارية", "${String.format("%.1f", telemetry.batteryVoltage)}V", Color.WHITE).parent as View)
+            val dtcColor = if (telemetry.dtcCodes.isEmpty()) Color.rgb(126, 242, 154) else Color.rgb(255, 122, 122)
+            val dtcLabel = if (telemetry.dtcCodes.isEmpty()) "سليمة (0 أعطال) ✅" else "${telemetry.dtcCodes.size} أعطال مسجلة ⚠️"
+            r3.addView(metricBox("حالة كمبيوتر المحرك", dtcLabel, dtcColor).parent as View)
+            addView(r3)
+
+            addView(text("📍 خط السير والموقع الحالي: $tripStartLocationName ← $tripEndLocationName (على الطريق السريع)", 13, Color.rgb(248, 199, 74), true).apply {
+                setPadding(0, dp(8), 0, dp(4))
+            })
+
+            addView(button("⚡ محاكاة تحرك وتغيرات السائق على الطريق (Live Telemetry Demo)") {
+                simulateDriverRoadDelta()
+            }.apply {
+                setBackgroundColor(Color.rgb(32, 85, 120))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(cardRemoteLive)
+
+        // Delta-Deadband Storage Log Card
+        val cardDelta = card().apply {
+            addView(text("📊 سجل التخزين الذكي عند التغير (Delta Storage Log)", 17, Color.rgb(248, 199, 74), true))
+            addView(text("تطبيقاً للبروتوكول الذكي: لا يتم تسجيل أو إرسال داتا جديدة إلا عند حدوث تغير فعلي بالقيم (سرعة ≥3، وقود ≥1%، حرارة ≥2°C، أعطال)، وذلك لضغط البيانات وحماية السيرفر:", 13, Color.rgb(167, 203, 226), false))
+
+            // Timeframe filters
+            val filterRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+            val timeframes = listOf(
+                Pair("1h", "⏱️ آخر ساعة"),
+                Pair("24h", "📅 آخر 24 ساعة"),
+                Pair("7d", "📆 آخر أسبوع")
+            )
+            for ((key, title) in timeframes) {
+                val isActive = (remoteFleetTimeframe == key)
+                filterRow.addView(Button(this@MainActivity).apply {
+                    text = title
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    val lp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+                    setBackgroundColor(if (isActive) Color.rgb(110, 231, 255) else Color.rgb(20, 42, 64))
+                    setTextColor(if (isActive) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245))
+                    setOnClickListener {
+                        remoteFleetTimeframe = key
+                        switchTab("remote_fleet")
+                    }
+                })
+            }
+            addView(filterRow)
+
+            val containerDeltas = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+
+            if (telemetryDeltaLog.isEmpty()) {
+                val emptyBox = text("لا توجد تغيرات مسجلة بعد. عند تحرك السيارة ستظهر اللقطات هنا فورياً.", 13, Color.rgb(167, 203, 226), false).apply {
+                    setPadding(dp(8), dp(12), dp(8), dp(12))
+                }
+                containerDeltas.addView(emptyBox)
+            } else {
+                for (record in telemetryDeltaLog.take(25)) {
+                    val row = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(12, 32, 48))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.bottomMargin = dp(6)
+                        layoutParams = lp
+                    }
+                    val topR = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        addView(text("⏰ ${record.timeString}", 12, Color.rgb(110, 231, 255), true).apply {
+                            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+                        addView(text("📌 ${record.changeReason}", 12, Color.rgb(248, 199, 74), true))
+                    }
+                    row.addView(topR)
+                    val metricsStr = "🏎️ السرعة: ${record.speed} كم/س • ⛽ الوقود: ${record.fuelLevel}% • 🌡️ الحرارة: ${record.coolantTemp}°C • 🔋 الجهد: ${String.format("%.1f", record.batteryVoltage)}V • ⚠️ الأعطال: ${record.dtcCount}"
+                    row.addView(text(metricsStr, 12, Color.WHITE, false).apply {
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                    containerDeltas.addView(row)
+                }
+            }
+            addView(containerDeltas)
+        }
+        container.addView(cardDelta)
+
+        return container
+    }
+
+    // ========================================================
+    // TAB: OWNER SECURITY NOTIFICATIONS (إشعارات أمان المالك)
+    // ========================================================
+    private fun buildOwnerSecurityTabContent(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+
+        val cardStatus = card().apply {
+            addView(text("🚨 سجل أمان المالك وإشعارات دخول الورش", 17, Color.rgb(255, 122, 122), true))
+            addView(text("حماية كاملة: تصلك إشعارات فورية عن أي ورشة تدخل على السيارة أو أي صيانة يسجلها السائق:", 13, Color.rgb(167, 203, 226), false))
+
+            val statusBox = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+                if (isPinActive) {
+                    setBackgroundColor(Color.rgb(55, 35, 15))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    addView(text("🔑 يوجد تصريح فحص مؤقت ساري حالياً (PIN: $activeWorkshopPin)", 14, Color.rgb(248, 199, 74), true))
+                    addView(text("ممنوح لورشة: ($activeWorkshopTargetName) • المصرح: ($workshopSessionGrantedBy) • الصلاحية تنتهي تلقائياً بعد ساعتين.", 12, Color.WHITE, false))
+                } else {
+                    setBackgroundColor(Color.rgb(18, 52, 32))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    addView(text("🔒 السيارة محمية: لا توجد أي ورشة مصرح لها بالدخول حالياً.", 14, Color.rgb(126, 242, 154), true))
+                    addView(text("كمبيوتر وحساسات السيارة مقفلة ومؤمنة تماماً ضد أي فحص غير معتمد.", 12, Color.WHITE, false))
+                }
+            }
+            addView(statusBox)
+
+            val btnRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+
+            btnRow.addView(Button(this@MainActivity).apply {
+                text = "⛔ إبطال تصاريح الورش فوراً"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(160, 35, 35))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(0, 0, dp(3), 0)
+                layoutParams = lp
+                setOnClickListener {
+                    isPinActive = false
+                    isWorkshopSessionUnlocked = false
+                    addSecurityNotification(
+                        "⛔ إلغاء تصريح الورشة",
+                        "قام المالك ($userName) بإلغاء وإبطال جميع تصاريح دخول الورش وحظر الفحص فورياً.",
+                        "access_revoked",
+                        "warning"
+                    )
+                    Toast.makeText(this@MainActivity, "تم إلغاء تصاريح جميع الورش وحماية السيارة بنجاح 🔒", Toast.LENGTH_SHORT).show()
+                    switchTab("owner_security")
+                }
+            })
+
+            btnRow.addView(Button(this@MainActivity).apply {
+                text = "🧹 تفريغ الإشعارات"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(45, 60, 75))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(dp(3), 0, 0, 0)
+                layoutParams = lp
+                setOnClickListener {
+                    ownerSecurityNotifications.clear()
+                    saveSecurityNotifications()
+                    switchTab("owner_security")
+                }
+            })
+            addView(btnRow)
+        }
+        container.addView(cardStatus)
+
+        // List of Security Alerts
+        val cardAlerts = card().apply {
+            addView(text("📋 قائمة الإخطارات والأحداث الأمنية المسجلة:", 15, Color.WHITE, true))
+
+            val listContainer = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+
+            if (ownerSecurityNotifications.isEmpty()) {
+                listContainer.addView(text("لا توجد إخطارات أمنية جديدة. سيارتك بأمان تام ✅", 13, Color.rgb(126, 242, 154), false).apply {
+                    setPadding(dp(8), dp(12), dp(8), dp(12))
+                })
+            } else {
+                for (item in ownerSecurityNotifications) {
+                    val bg = when(item.severity) {
+                        "critical" -> Color.rgb(65, 18, 22)
+                        "warning" -> Color.rgb(55, 35, 15)
+                        else -> Color.rgb(16, 38, 56)
+                    }
+                    val accent = when(item.severity) {
+                        "critical" -> Color.rgb(255, 122, 122)
+                        "warning" -> Color.rgb(248, 199, 74)
+                        else -> Color.rgb(110, 231, 255)
+                    }
+                    val row = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(bg)
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.bottomMargin = dp(8)
+                        layoutParams = lp
+                    }
+                    val header = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        addView(text(item.title, 14, accent, true).apply {
+                            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+                        addView(text(item.timeString, 11, Color.rgb(167, 203, 226), false))
+                    }
+                    row.addView(header)
+                    row.addView(text(item.message, 13, Color.WHITE, false).apply {
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                    listContainer.addView(row)
+                }
+            }
+            addView(listContainer)
+        }
+        container.addView(cardAlerts)
+
+        return container
+    }
+
+    // ========================================================
+    // TAB: WORKSHOPS DIRECTORY & MAP FOR DRIVER (دليل وخريطة الورش)
+    // ========================================================
+    private fun buildWorkshopsDirectoryTabContent(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val cardMap = card().apply {
+            addView(text("🗺️ خريطة ودليل الورش المعتمدة القريبة", 17, Color.rgb(110, 231, 255), true))
+            addView(text("استكشف الورش القريبة منك على الخريطة حسب التخصص، مع إمكانية الاتصال المباشر ومنح كود فحص:", 13, Color.rgb(167, 203, 226), false))
+
+            // Embedded Interactive Leaflet Map for Nearby Workshops
+            val webView = WebView(this@MainActivity).apply {
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220))
+                lp.topMargin = dp(8)
+                layoutParams = lp
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                webViewClient = WebViewClient()
+                loadDataWithBaseURL("https://drivecare.app", generateWorkshopsMapHtml(), "text/html", "UTF-8", null)
+            }
+            addView(webView)
+
+            // Category Filter Chips
+            val filterScroll = HorizontalScrollView(this@MainActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+            val filterRow = LinearLayout(this@MainActivity).apply { orientation = LinearLayout.HORIZONTAL }
+            filterScroll.addView(filterRow)
+
+            val categories = listOf(
+                Pair("all", "🌟 الكل"),
+                Pair("computer", "💻 فحص كمبيوتر"),
+                Pair("electricity", "⚡ كهرباء"),
+                Pair("mechanic", "🔧 ميكانيكا"),
+                Pair("chassis", "🚗 عفشة"),
+                Pair("ac", "❄️ تكييف")
+            )
+
+            for ((catKey, catTitle) in categories) {
+                val isActive = (workshopSelectedCategory == catKey)
+                filterRow.addView(Button(this@MainActivity).apply {
+                    text = catTitle
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+                    setBackgroundColor(if (isActive) Color.rgb(110, 231, 255) else Color.rgb(18, 42, 64))
+                    setTextColor(if (isActive) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245))
+                    setOnClickListener {
+                        workshopSelectedCategory = catKey
+                        switchTab("workshops_dir")
+                    }
+                })
+            }
+            addView(filterScroll)
+        }
+        container.addView(cardMap)
+
+        // Workshop List Cards
+        val filteredList = if (workshopSelectedCategory == "all") {
+            registeredWorkshops
+        } else {
+            registeredWorkshops.filter { it.categoryKey == workshopSelectedCategory }
+        }
+
+        for (ws in filteredList) {
+            val cardWs = card().apply {
+                val headerRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(text(ws.name, 16, Color.WHITE, true).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                    addView(text("⭐ ${ws.rating}", 12, Color.rgb(248, 199, 74), true))
+                }
+                addView(headerRow)
+
+                val specBox = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(text("🛠️ التخصص: ${ws.specialty}", 13, Color.rgb(110, 231, 255), false))
+                }
+                addView(specBox)
+
+                addView(text("📍 العنوان: ${ws.address} • على بعد ${ws.distanceKm} كم 🚗", 12, Color.rgb(167, 203, 226), false).apply {
+                    setPadding(0, dp(2), 0, dp(6))
+                })
+
+                val actionRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(6)
+                    layoutParams = lp
+                }
+
+                // 1. Direct Dial
+                actionRow.addView(Button(this@MainActivity).apply {
+                    text = "📞 اتصال (${ws.phone})"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(25, 120, 65))
+                    val lp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                    lp.setMargins(0, 0, dp(3), 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        try {
+                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${ws.phone}"))
+                            startActivity(intent)
+                        } catch (_: Exception) {
+                            Toast.makeText(this@MainActivity, "رقم الهاتف: ${ws.phone}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                })
+
+                // 2. Direct Navigation
+                actionRow.addView(Button(this@MainActivity).apply {
+                    text = "🧭 خريطة"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(32, 75, 115))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        try {
+                            val uri = Uri.parse("geo:${ws.lat},${ws.lng}?q=${ws.lat},${ws.lng}(${Uri.encode(ws.name)})")
+                            val mapIntent = Intent(Intent.ACTION_VIEW, uri)
+                            startActivity(mapIntent)
+                        } catch (_: Exception) {
+                            Toast.makeText(this@MainActivity, "إحداثيات الورشة: ${ws.lat}, ${ws.lng}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                })
+
+                // 3. Grant Temporary Access PIN
+                actionRow.addView(Button(this@MainActivity).apply {
+                    text = "🔑 تصريح فحص"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(8, 23, 32))
+                    setBackgroundColor(Color.rgb(248, 199, 74))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+                    lp.setMargins(dp(3), 0, 0, 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        showGenerateWorkshopPinDialog(ws.name)
+                    }
+                })
+
+                addView(actionRow)
+            }
+            container.addView(cardWs)
+        }
+
+        return container
+    }
+
+    private fun generateWorkshopsMapHtml(): String {
+        val markersJs = registeredWorkshops.joinToString("\n") { ws ->
+            val color = when(ws.categoryKey) {
+                "computer" -> "#00e5ff"
+                "electricity" -> "#ffeb3b"
+                "mechanic" -> "#ff9800"
+                "chassis" -> "#4caf50"
+                "ac" -> "#00bcd4"
+                else -> "#2196f3"
+            }
+            """
+            L.circleMarker([${ws.lat}, ${ws.lng}], {
+                color: '$color',
+                fillColor: '$color',
+                fillOpacity: 0.9,
+                radius: 8
+            }).addTo(map).bindPopup('<b>${ws.name}</b><br>${ws.specialty}<br>📞 ${ws.phone}');
+            """.trimIndent()
+        }
+
+        return """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body { margin: 0; padding: 0; background: #081720; font-family: sans-serif; }
+    #map { width: 100%; height: 100vh; }
+    .leaflet-popup-content-wrapper { background: #0c2030; color: #fff; border: 1px solid #00e5ff; direction: rtl; text-align: right; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    var map = L.map('map').setView([30.0444, 31.2357], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // Car Current Position
+    L.marker([30.0444, 31.2357]).addTo(map).bindPopup('<b>🚗 موقع سيارتك الحالي</b><br>القاهرة').openPopup();
+
+    $markersJs
+  </script>
+</body>
+</html>
+        """.trimIndent()
+    }
+
+    // ========================================================
+    // TAB: WORKSHOP INSPECTION CONSOLE (منصة فحص الورشة بالـ PIN)
+    // ========================================================
+    private fun buildWorkshopConsoleTabContent(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+        val activeVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+        val primaryOwner = preferences.getString("vehicle_primary_owner", "مالك مسجل") ?: "مالك مسجل"
+
+        if (!isWorkshopSessionUnlocked) {
+            val cardAuth = card().apply {
+                addView(text("🔑 منصة فحص السيارات المعتمدة (تسجيل دخول الورشة)", 17, Color.rgb(248, 199, 74), true))
+                addView(text("أدخل كود الفحص المؤقت (4 أرقام) الممنوح لك من المالك أو السائق لفتح قراءة الحساسات وفحص الأعطال:", 13, Color.rgb(167, 203, 226), false))
+
+                val etPin = edit("كود الفحص المؤقت المكون من 4 أرقام (مثال: $activeWorkshopPin)").apply {
+                    inputType = InputType.TYPE_CLASS_NUMBER
+                }
+                addView(etPin)
+
+                addView(button("🔓 التحقق وفك حظر الفحص للسيارة") {
+                    val entered = etPin.text.toString().trim()
+                    verifyAndUnlockWorkshopSession(entered)
+                }.apply {
+                    setBackgroundColor(Color.rgb(32, 120, 85))
+                    setTextColor(Color.WHITE)
+                })
+
+                addView(button("⚡ استخدام الكود المصرح به حالياً ($activeWorkshopPin) تجريبياً") {
+                    verifyAndUnlockWorkshopSession(activeWorkshopPin)
+                }.apply {
+                    setBackgroundColor(Color.rgb(36, 77, 111))
+                    setTextColor(Color.WHITE)
+                })
+            }
+            container.addView(cardAuth)
+        } else {
+            // Authorized Inspection Session
+            val cardSession = card().apply {
+                val banner = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(18, 52, 32))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    layoutParams = lp
+                    addView(text("✅ فحص مصرح به ونشط للسيارة: $activeVehName", 15, Color.rgb(126, 242, 154), true))
+                    addView(text("الشاسيه: $activeVin • المالك: $primaryOwner • المصرح: $workshopSessionGrantedBy", 12, Color.WHITE, false))
+                    addView(text("التصريح ساري حتى انتهاء الجلسة • تم إشعار المالك رسمياً بدخولك 📡", 11, Color.rgb(167, 203, 226), false))
+                }
+                addView(banner)
+
+                // Live Sensor Metrics Grid
+                addView(text("📊 القراءات المباشرة لكمبيوتر وحساسات السيارة (Live Sensors):", 14, Color.rgb(110, 231, 255), true).apply {
+                    setPadding(0, dp(10), 0, dp(4))
+                })
+
+                val r1 = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    layoutParams = lp
+                }
+                r1.addView(metricBox("سرعة المحرك (RPM)", "${telemetry.rpm} RPM", Color.rgb(248, 199, 74)).parent as View)
+                r1.addView(metricBox("حرارة سائل التبريد", "${telemetry.coolantTemp} °C", Color.rgb(110, 231, 255)).parent as View)
+                addView(r1)
+
+                val r2 = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(6)
+                    layoutParams = lp
+                }
+                r2.addView(metricBox("شحن البطارية / الدينامو", "${String.format("%.1f", telemetry.batteryVoltage)}V", Color.WHITE).parent as View)
+                r2.addView(metricBox("نسبة الوقود بالتنك", "${telemetry.fuelLevel}%", Color.rgb(126, 242, 154)).parent as View)
+                addView(r2)
+
+                // Diagnostic Trouble Codes
+                addView(text("🔍 فحص أعطال المحرك والكمبيوتر (DTC Scanner):", 14, Color.rgb(248, 199, 74), true).apply {
+                    setPadding(0, dp(10), 0, dp(4))
+                })
+
+                if (telemetry.dtcCodes.isEmpty()) {
+                    addView(text("✅ لا توجد أي أكواد أعطال مسجلة بكمبيوتر السيارة (No Fault Codes).", 13, Color.rgb(126, 242, 154), false).apply {
+                        setPadding(0, dp(4), 0, dp(8))
+                    })
+                } else {
+                    for (code in telemetry.dtcCodes) {
+                        val diag = diagnoseDtc(code)
+                        val dtcBox = LinearLayout(context).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setBackgroundColor(Color.rgb(45, 20, 25))
+                            setPadding(dp(10), dp(8), dp(10), dp(8))
+                            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            lp.bottomMargin = dp(4)
+                            layoutParams = lp
+                            addView(text("⚠️ كود: $code - ${diag.titleAr}", 13, Color.rgb(255, 122, 122), true))
+                            addView(text("التفاصيل: ${diag.descAr} • النظام: ${diag.system}", 12, Color.WHITE, false))
+                        }
+                        addView(dtcBox)
+                    }
+                }
+
+                val btnRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(8)
+                    layoutParams = lp
+                }
+
+                btnRow.addView(Button(this@MainActivity).apply {
+                    text = "🧹 مسح أكواد الأعطال (Clear)"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(140, 45, 45))
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    lp.setMargins(0, 0, dp(3), 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        telemetry.dtcCodes.clear()
+                        addSecurityNotification(
+                            "🧹 تصفير أعطال السيارة",
+                            "قامت الورشة بمسح وتصفير أكواد أعطال كمبيوتر المحرك بنجاح.",
+                            "dtc_cleared",
+                            "info"
+                        )
+                        Toast.makeText(this@MainActivity, "تم مسح وتصفير أكواد الأعطال بنجاح ✅", Toast.LENGTH_SHORT).show()
+                        switchTab("workshop_console")
+                    }
+                })
+
+                btnRow.addView(Button(this@MainActivity).apply {
+                    text = "📝 تسجيل صيانة وإصلاح"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(8, 23, 32))
+                    setBackgroundColor(Color.rgb(248, 199, 74))
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    lp.setMargins(dp(3), 0, 0, 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        switchTab("log_service")
+                    }
+                })
+                addView(btnRow)
+
+                addView(button("🔒 إنهاء جلسة الفحص وقفل السيارة") {
+                    isWorkshopSessionUnlocked = false
+                    Toast.makeText(this@MainActivity, "تم إنهاء جلسة الفحص وقفل السيارة بنجاح.", Toast.LENGTH_SHORT).show()
+                    switchTab("workshop_console")
+                }.apply {
+                    setBackgroundColor(Color.rgb(45, 60, 75))
+                    setTextColor(Color.WHITE)
+                })
+            }
+            container.addView(cardSession)
+        }
+
+        return container
+    }
+
+    // ========================================================
+    // TAB: LOG SERVICE & MAINTENANCE (تسجيل الصيانة وإشعار المالك)
+    // ========================================================
+    private fun buildLogServiceTabContent(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+
+        val cardLog = card().apply {
+            addView(text("📝 تسجيل عملية صيانة وإصلاح بالمركبة (إشعار المالك فورياً)", 17, Color.rgb(248, 199, 74), true))
+            addView(text("سيتم توثيق هذه الصيانة في السجل الدائم للسيارة وإرسال إشعار فوري لمالك المركبة:", 13, Color.rgb(167, 203, 226), false))
+
+            val etType = edit("نوع الصيانة (مثال: غيار زيت وفلتر 10,000 كم، بوجيهات، تيل فرامل)")
+            val etDetails = edit("تفاصيل الإصلاح وقطع الغيار (مثال: زيت تخليقي 5W-30 + بوجيهات إيريديوم أصلية)")
+            val etCost = edit("التكلفة الإجمالية للصيانة (ج.م) (مثال: 1250)").apply {
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            }
+            val etOdo = edit("قراءة عداد السيارة الحالية (كم) (مثال: 48500)").apply {
+                inputType = InputType.TYPE_CLASS_NUMBER
+            }
+
+            addView(etType)
+            addView(etDetails)
+            addView(etCost)
+            addView(etOdo)
+
+            addView(button("✅ حفظ وتثبيت الصيانة وإشعار المالك رسمياً") {
+                val serviceType = etType.text.toString().trim().ifEmpty { "صيانة دورية" }
+                val details = etDetails.text.toString().trim().ifEmpty { "فحص واستبدال قطع استهلاكية" }
+                val cost = etCost.text.toString().trim().ifEmpty { "0" }
+                val odo = etOdo.text.toString().trim().ifEmpty { "50000" }
+
+                submitWorkshopMaintenanceLog(serviceType, details, cost, odo)
+            }.apply {
+                setBackgroundColor(Color.rgb(32, 120, 85))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(cardLog)
+
+        return container
+    }
+
+    // ========================================================
+    // HELPER METHODS: PIN, NOTIFICATIONS, VIN LOCK & DELTA LOG
+    // ========================================================
+    private fun showGenerateWorkshopPinDialog(targetWorkshopName: String) {
+        val pin = (1000 + (Math.random() * 9000).toInt()).toString()
+        activeWorkshopPin = pin
+        activeWorkshopTargetName = targetWorkshopName
+        isPinActive = true
+        activePinExpiryTimestamp = System.currentTimeMillis() + (2 * 3600 * 1000L) // 2 hours
+
+        val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
+        addSecurityNotification(
+            "🔑 منح تصريح فحص مؤقت لورشة",
+            "قام السائق ($userName) بمنح كود فحص مؤقت (PIN: $pin) لـ ($targetWorkshopName) لفحص كمبيوتر سيارتك ($carName). التصريح ساري لمدة ساعتين.",
+            "workshop_pin_granted",
+            "warning"
+        )
+
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+            addView(text("تم إنشاء كود الفحص المؤقت لـ:\n$targetWorkshopName", 14, Color.WHITE, true))
+
+            val pinBox = text(pin, 32, Color.rgb(248, 199, 74), true).apply {
+                gravity = Gravity.CENTER
+                setBackgroundColor(Color.rgb(18, 42, 64))
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.setMargins(0, dp(10), 0, dp(10))
+                layoutParams = lp
+            }
+            addView(pinBox)
+
+            addView(text("⏳ صلاحية الكود: ساعتان فقط.\n📡 تم إرسال إشعار فوري لمالك السيارة بإصدار هذا التصريح لحمايتك وضمان الشفافية.", 12, Color.rgb(167, 203, 226), false))
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("🔑 كود فحص مؤقت للورشة")
+            .setView(layout)
+            .setPositiveButton("حسناً") { _, _ -> }
+            .show()
+    }
+
+    private fun verifyAndUnlockWorkshopSession(enteredPin: String) {
+        if (!isPinActive) {
+            AlertDialog.Builder(this)
+                .setTitle("⛔ التصريح ملغي")
+                .setMessage("قام مالك السيارة بإلغاء وإبطال جميع تصاريح الفحص المؤقتة. يرجى طلب تصريح جديد من المالك أو السائق.")
+                .setPositiveButton("حسناً", null)
+                .show()
+            return
+        }
+
+        if (enteredPin == activeWorkshopPin) {
+            isWorkshopSessionUnlocked = true
+            workshopSessionGrantedBy = if (currentRole == "driver") "السائق المفوض" else "المالك الأساسي"
+            val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
+
+            addSecurityNotification(
+                "🔍 بدء فحص كمبيوتر السيارة",
+                "قامت ورشة ($activeWorkshopTargetName) بفتح فحص كمبيوتر وحساسات سيارتك ($carName) مباشرة عبر كود الفحص المؤقت المصرح به.",
+                "workshop_accessed",
+                "warning"
+            )
+
+            Toast.makeText(this, "✅ تم التحقق بنجاح! تم فك حظر الفحص وقراءة بيانات كمبيوتر السيارة.", Toast.LENGTH_LONG).show()
+            switchTab("workshop_console")
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("⚠️ كود غير صحيح")
+                .setMessage("كود الفحص المؤقت الذي أدخلته غير مطابق. يرجى مراجعة السائق أو المالك للتأكد من الكود المكون من 4 أرقام.")
+                .setPositiveButton("حسناً", null)
+                .show()
+        }
+    }
+
+    private fun submitWorkshopMaintenanceLog(serviceType: String, details: String, cost: String, odo: String) {
+        val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
+        val driverName = authorizedDriverName
+        val wsName = activeWorkshopTargetName
+
+        if (serviceType.contains("زيت", ignoreCase = true)) {
+            preferences.edit().putFloat("oil_current_km", 0.0f).apply()
+        }
+
+        val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        addSecurityNotification(
+            "🔧 صيانة جديدة مسجلة بالورشة",
+            "سجلت ورشة ($wsName) عملية صيانة: ($serviceType) لسيارتك ($carName) بتكلفة ($cost ج.م) وقراءة عداد ($odo كم) بتفويض من ($driverName) في $today.",
+            "maintenance_logged",
+            "info"
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle("✅ تم توثيق الصيانة بنجاح")
+            .setMessage("تم تسجيل عملية الصيانة وتحديث سجل السيارة:\n• الخدمة: $serviceType\n• التفاصيل: $details\n• التكلفة: $cost ج.م\n• العداد: $odo كم\n• تم إرسال إشعار فوري لمالك المركبة وتحديث سجل الصيانة الدائم.")
+            .setPositiveButton("تم") { _, _ ->
+                switchTab("workshop_console")
+            }
+            .show()
+    }
+
+    private fun simulateDriverRoadDelta() {
+        val deltaSpeeds = listOf(85, 92, 105, 78, 62, 0)
+        val newSpeed = deltaSpeeds.random()
+        telemetry.speed = newSpeed
+        telemetry.rpm = (newSpeed * 32).coerceIn(800, 3500)
+        telemetry.coolantTemp = (89 + (Math.random() * 4).toInt())
+        val deltaFuelDrop = (Math.random() * 2).toInt()
+        telemetry.fuelLevel = (telemetry.fuelLevel - deltaFuelDrop).coerceAtLeast(5)
+        checkAndLogTelemetryDelta(force = true)
+        Toast.makeText(this, "⚡ تم تسجيل لقطة تغير جديدة (Delta) وتحديث قراءات السائق عن بعد!", Toast.LENGTH_SHORT).show()
+        switchTab("remote_fleet")
+    }
+
+    private fun checkAndLogTelemetryDelta(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        val speedDiff = Math.abs(telemetry.speed - lastSyncedSpeed)
+        val rpmDiff = Math.abs(telemetry.rpm - lastSyncedRpm)
+        val fuelDiff = Math.abs(telemetry.fuelLevel - lastSyncedFuel)
+        val tempDiff = Math.abs(telemetry.coolantTemp - lastSyncedTemp)
+        val dtcChanged = (telemetry.dtcCodes.size != lastSyncedDtcCount)
+        val alertChanged = (telemetry.activeAlertTitle != lastSyncedAlert)
+        val heartbeat = (now - lastSyncTimestamp > 60000L)
+
+        val reasons = mutableListOf<String>()
+        if (speedDiff >= 3) reasons.add("تغير السرعة (${telemetry.speed} كم/س)")
+        if (rpmDiff >= 150) reasons.add("تغير العزم (${telemetry.rpm} RPM)")
+        if (fuelDiff >= 1) reasons.add("تغير الوقود (${telemetry.fuelLevel}%)")
+        if (tempDiff >= 2) reasons.add("تغير الحرارة (${telemetry.coolantTemp}°C)")
+        if (dtcChanged) reasons.add("تغير الأعطال (${telemetry.dtcCodes.size} كود)")
+        if (alertChanged && telemetry.activeAlertTitle != null) reasons.add("إنذار: ${telemetry.activeAlertTitle}")
+        if (reasons.isEmpty() && heartbeat) reasons.add("نبضة فحص دورية (Heartbeat)")
+
+        if (reasons.isNotEmpty() || force) {
+            val changeReason = if (reasons.isNotEmpty()) reasons.joinToString(" • ") else "تحديث لحظي"
+            val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(now))
+
+            val record = TelemetryDeltaRecord(
+                timestamp = now,
+                timeString = timeStr,
+                speed = telemetry.speed,
+                rpm = telemetry.rpm,
+                fuelLevel = telemetry.fuelLevel,
+                coolantTemp = telemetry.coolantTemp,
+                batteryVoltage = telemetry.batteryVoltage,
+                dtcCount = telemetry.dtcCodes.size,
+                changeReason = changeReason,
+                locationName = tripStartLocationName
+            )
+
+            telemetryDeltaLog.add(0, record)
+            if (telemetryDeltaLog.size > 100) telemetryDeltaLog.removeAt(telemetryDeltaLog.size - 1)
+            saveTelemetryDeltaLog()
+
+            lastSyncedSpeed = telemetry.speed
+            lastSyncedRpm = telemetry.rpm
+            lastSyncedFuel = telemetry.fuelLevel
+            lastSyncedTemp = telemetry.coolantTemp
+            lastSyncedDtcCount = telemetry.dtcCodes.size
+            lastSyncedAlert = telemetry.activeAlertTitle
+            lastSyncTimestamp = now
+        }
+    }
+
+    private fun checkVinOwnershipLock(vin: String): Pair<Boolean, String?> {
+        val cleanVin = vin.uppercase().trim()
+        val lockedOwner = preferences.getString("vin_lock_owner_$cleanVin", null)
+        val lockedPhone = preferences.getString("vin_lock_phone_$cleanVin", null)
+        val isLocked = preferences.getBoolean("vin_is_locked_$cleanVin", false)
+
+        if (isLocked && !lockedOwner.isNullOrEmpty()) {
+            val isCurrentOwner = (currentRole == "owner") && (userName.equals(lockedOwner, ignoreCase = true) || lockedOwner == "مالك تجريبي")
+            if (!isCurrentOwner) {
+                return Pair(false, "🛑 هذا الشاسيه ($cleanVin) مسجل ومملوك رسمياً للمالك ($lockedOwner - هاتف: $lockedPhone).\n🔒 بموجب بروتوكول حماية الملكية، لا يمكن لأي شخص آخر تسجيله أو ادعاء ملكيته!\nللحصول على ملكية السيارة، يجب على المالك الأصلي نقل الملكية لك من حسابه حصرياً.")
+            }
+        }
+        return Pair(true, null)
+    }
+
+    private fun registerAndLockVin(vin: String, owner: String, phone: String) {
+        val cleanVin = vin.uppercase().trim()
+        val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+        preferences.edit()
+            .putString("vin_lock_owner_$cleanVin", owner)
+            .putString("vin_lock_phone_$cleanVin", phone)
+            .putBoolean("vin_is_locked_$cleanVin", true)
+            .putString("vin_lock_date_$cleanVin", today)
+            .apply()
+    }
+
+    private fun addSecurityNotification(title: String, message: String, eventType: String, severity: String) {
+        val now = System.currentTimeMillis()
+        val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(now))
+        val notif = SecurityNotificationItem(
+            id = "notif-${now}",
+            title = title,
+            message = message,
+            eventType = eventType,
+            severity = severity,
+            timeString = timeStr,
+            timestamp = now,
+            isRead = false
+        )
+        ownerSecurityNotifications.add(0, notif)
+        if (ownerSecurityNotifications.size > 50) ownerSecurityNotifications.removeAt(ownerSecurityNotifications.size - 1)
+        saveSecurityNotifications()
+    }
+
+    private fun getUnreadSecurityNotificationsCount(): Int {
+        return ownerSecurityNotifications.count { !it.isRead }
+    }
+
+    private fun saveSecurityNotifications() {
+        val sb = StringBuilder()
+        for (item in ownerSecurityNotifications.take(40)) {
+            sb.append("${item.id}§${item.title}§${item.message}§${item.eventType}§${item.severity}§${item.timeString}§${item.timestamp}§${item.isRead}¶")
+        }
+        preferences.edit().putString("saved_security_notifs", sb.toString()).apply()
+    }
+
+    private fun loadSecurityNotifications() {
+        ownerSecurityNotifications.clear()
+        val raw = preferences.getString("saved_security_notifs", null)
+        if (!raw.isNullOrEmpty()) {
+            val parts = raw.split("¶")
+            for (p in parts) {
+                if (p.isBlank()) continue
+                val fields = p.split("§")
+                if (fields.size >= 8) {
+                    ownerSecurityNotifications.add(
+                        SecurityNotificationItem(
+                            id = fields[0],
+                            title = fields[1],
+                            message = fields[2],
+                            eventType = fields[3],
+                            severity = fields[4],
+                            timeString = fields[5],
+                            timestamp = fields[6].toLongOrNull() ?: System.currentTimeMillis(),
+                            isRead = fields[7].toBoolean()
+                        )
+                    )
+                }
+            }
+        }
+        if (ownerSecurityNotifications.isEmpty()) {
+            val now = System.currentTimeMillis()
+            val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(now))
+            val curVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+            val owner = preferences.getString("vehicle_primary_owner", "مالك تجريبي") ?: "مالك تجريبي"
+            ownerSecurityNotifications.add(
+                SecurityNotificationItem(
+                    id = "init-1",
+                    title = "🛡️ الشاسيه محمي ومقفل بنجاح",
+                    message = "تم تفعيل حماية الشاسيه ($curVin) للمالك ($owner). لا يمكن لأي شخص آخر تسجيله.",
+                    eventType = "vin_locked",
+                    severity = "info",
+                    timeString = timeStr,
+                    timestamp = now,
+                    isRead = true
+                )
+            )
+            ownerSecurityNotifications.add(
+                SecurityNotificationItem(
+                    id = "init-2",
+                    title = "ℹ️ جاهزية مراقبة السائق والورش",
+                    message = "نظام المراقبة عن بعد نشط: ستصلك تنبيهات فورية عند دخول أي ورشة على السيارة.",
+                    eventType = "system_ready",
+                    severity = "info",
+                    timeString = timeStr,
+                    timestamp = now,
+                    isRead = true
+                )
+            )
+        }
+    }
+
+    private fun saveTelemetryDeltaLog() {
+        val sb = StringBuilder()
+        for (item in telemetryDeltaLog.take(30)) {
+            sb.append("${item.timestamp}§${item.timeString}§${item.speed}§${item.rpm}§${item.fuelLevel}§${item.coolantTemp}§${item.batteryVoltage}§${item.dtcCount}§${item.changeReason}§${item.locationName}¶")
+        }
+        preferences.edit().putString("saved_telemetry_deltas", sb.toString()).apply()
+    }
+
+    private fun loadTelemetryDeltaLog() {
+        telemetryDeltaLog.clear()
+        val raw = preferences.getString("saved_telemetry_deltas", null)
+        if (!raw.isNullOrEmpty()) {
+            val parts = raw.split("¶")
+            for (p in parts) {
+                if (p.isBlank()) continue
+                val fields = p.split("§")
+                if (fields.size >= 10) {
+                    telemetryDeltaLog.add(
+                        TelemetryDeltaRecord(
+                            timestamp = fields[0].toLongOrNull() ?: System.currentTimeMillis(),
+                            timeString = fields[1],
+                            speed = fields[2].toIntOrNull() ?: 0,
+                            rpm = fields[3].toIntOrNull() ?: 0,
+                            fuelLevel = fields[4].toIntOrNull() ?: 50,
+                            coolantTemp = fields[5].toIntOrNull() ?: 90,
+                            batteryVoltage = fields[6].toFloatOrNull() ?: 13.8f,
+                            dtcCount = fields[7].toIntOrNull() ?: 0,
+                            changeReason = fields[8],
+                            locationName = fields[9]
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun initSecurityNotificationsAndDelta() {
+        loadSecurityNotifications()
+        loadTelemetryDeltaLog()
+        val curVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+        val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "مالك تجريبي" }) ?: "مالك تجريبي"
+        val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
+        if (!preferences.getBoolean("vin_is_locked_$curVin", false)) {
+            registerAndLockVin(curVin, primaryOwner, primaryPhone)
+        }
     }
 
     // ========================================================
@@ -1099,13 +2367,32 @@ class MainActivity : Activity() {
             addView(tvMsg)
 
             addView(button("⚡ فك تشفير وتفعيل المركبة الجديدة") {
-                val vinIn = etVehVin.text.toString().trim()
+                val vinIn = etVehVin.text.toString().trim().uppercase()
                 if (vinIn.length < 10) {
                     tvMsg.text = "يرجى إدخال رقم شاسيه صحيح (10 إلى 17 خانة)."
                     tvMsg.setTextColor(Color.rgb(255, 122, 122))
                     return@button
                 }
+
+                // فحص تمليك وقفل الشاسيه الصارم (Anti-Re-Registration Lock)
+                val (canRegister, lockReason) = checkVinOwnershipLock(vinIn)
+                if (!canRegister) {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("🛑 حظر تسجيل الشاسيه (ملكية محمية)")
+                        .setMessage(lockReason ?: "هذا الشاسيه مقفل ومسجل لمالك آخر.")
+                        .setPositiveButton("فهمت ذلك", null)
+                        .show()
+                    tvMsg.text = "🛑 تم رفض التسجيل: هذا الشاسيه مقيد ومملوك رسمياً لشخص آخر!"
+                    tvMsg.setTextColor(Color.rgb(255, 122, 122))
+                    return@button
+                }
+
                 val decoded = decodeVin(vinIn)
+                val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "مالك تجريبي" }) ?: "مالك تجريبي"
+                val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
+
+                registerAndLockVin(vinIn, primaryOwner, primaryPhone)
+
                 preferences.edit()
                     .putString("vehicle_vin", vinIn)
                     .putString("vehicle_name", decoded.displayName)
@@ -1114,8 +2401,15 @@ class MainActivity : Activity() {
                     .putString("vehicle_data_source", "مدخل ومطابق للشاسيه")
                     .apply()
 
+                addSecurityNotification(
+                    "🛡️ تمليك وتأمين شاسيه جديد",
+                    "تم تسجيل وتأمين الشاسيه ($vinIn) بنجاح باسم المالك ($primaryOwner). الشاسيه الآن مقفل ولا يمكن لأي حساب آخر تسجيله.",
+                    "vin_claimed",
+                    "info"
+                )
+
                 tvMsg.setTextColor(Color.rgb(126, 242, 154))
-                tvMsg.text = "تم فك تشفير وتفعيل المركبة: ${decoded.displayName} بنجاح!"
+                tvMsg.text = "تم فك تشفير وتأمين ملكية المركبة: ${decoded.displayName} بنجاح!"
                 switchTab("vehicles")
             })
         }
@@ -1129,7 +2423,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(10), dp(20), dp(10))
         }
-        val tvInfo = text("⚠️ تنبيه أمان: نقل الملكية سيعين المالك الجديد كصاحب الحقوق الكاملة على هذه السيارة.", 13, Color.rgb(255, 180, 50), false)
+        val tvInfo = text("⚠️ تنبيه أمان: نقل الملكية سيعين المالك الجديد كصاحب الحقوق الكاملة على هذه السيارة والشاسيه.", 13, Color.rgb(255, 180, 50), false)
         layout.addView(tvInfo)
 
         val etNewName = edit("اسم المالك الجديد الكامل (مثال: أحمد عبد الله)")
@@ -1149,6 +2443,11 @@ class MainActivity : Activity() {
                     val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
                     val newHistory = if (history.isEmpty()) "نقلت من ($oldOwner) إلى ($newName) بتاريخ $today" else "$history • نقلت من ($oldOwner) إلى ($newName) بتاريخ $today"
 
+                    val curVin = preferences.getString("vehicle_vin", "") ?: ""
+                    if (curVin.isNotEmpty()) {
+                        registerAndLockVin(curVin, newName, if (newPhone.isNotEmpty()) newPhone else "01000000000")
+                    }
+
                     preferences.edit()
                         .putString("vehicle_primary_owner", newName)
                         .putString("vehicle_primary_owner_phone", if (newPhone.isNotEmpty()) newPhone else "01000000000")
@@ -1157,9 +2456,16 @@ class MainActivity : Activity() {
                         .putBoolean("vehicle_owner_locked", true)
                         .apply()
 
+                    addSecurityNotification(
+                        "🔄 نقل ملكية السيارة رسمياً",
+                        "تم التنازل ونقل ملكية السيارة ($curVin) رسمياً من ($oldOwner) إلى المالك الجديد ($newName).",
+                        "ownership_transferred",
+                        "warning"
+                    )
+
                     AlertDialog.Builder(this)
                         .setTitle("✅ تم نقل الملكية بنجاح")
-                        .setMessage("تم نقل ملكية السيارة وتحديث وثيقتها باسم:\n$newName\nأصبح هو المالك المعتمد في نظام DriveCare.")
+                        .setMessage("تم نقل ملكية السيارة وتحديث وثيقتها وقفل الشاسيه باسم:\n$newName\nأصبح هو المالك المعتمد في نظام DriveCare.")
                         .setPositiveButton("حسناً") { _, _ -> switchTab("vehicles") }
                         .show()
                 }
@@ -1188,6 +2494,14 @@ class MainActivity : Activity() {
                     val curCo = preferences.getString("vehicle_co_owners", "") ?: ""
                     val updated = if (curCo.isEmpty()) coName else "$curCo، $coName"
                     preferences.edit().putString("vehicle_co_owners", updated).apply()
+
+                    addSecurityNotification(
+                        "👥 إضافة مالك شريك ومفوض",
+                        "قام المالك ($userName) بإضافة ($coName) كمالك شريك/مفوض على سيارته.",
+                        "co_owner_added",
+                        "info"
+                    )
+
                     switchTab("vehicles")
                 }
             }
@@ -3416,6 +4730,9 @@ class MainActivity : Activity() {
                 }
             }
         }
+
+        // Automatic Delta Telemetry Tracking (تسجيل التغيرات فقط)
+        checkAndLogTelemetryDelta()
     }
 
     private fun updateGauges() = updateLiveUI()
