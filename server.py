@@ -1138,7 +1138,7 @@ def manage_workshop_pin(vehicle_id, data):
     """Manage temporary 4-digit PIN for workshop inspection."""
     action = data.get('action', 'generate')
     if action == 'generate':
-        pin = str(random.randint(1000, 9999))
+        pin = f'{secrets.randbelow(9000) + 1000}'
         granted_by_role = data.get('grantedByRole', 'driver')
         granted_by_name = data.get('grantedByName', 'السائق')
         workshop_name = data.get('workshopName', 'ورشة فحص معتمدة')
