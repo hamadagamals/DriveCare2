@@ -3,6 +3,10 @@ package com.drivecare.app
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.text.InputType
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -169,7 +173,7 @@ class MainActivity : Activity() {
         val rating: Float
     )
     private var workshopSelectedCategory: String = "all"
-    private val registeredWorkshops = listOf(
+    private val registeredWorkshops = mutableListOf<RegisteredWorkshop>(
         RegisteredWorkshop(
             "ws-1",
             "المركز الألماني لصيانة وفحص السيارات",
@@ -273,6 +277,48 @@ class MainActivity : Activity() {
     private var activeWorkshopTargetName: String = "المركز الألماني"
     private var activePinExpiryTimestamp: Long = 0L
     private var isPinActive: Boolean = true
+
+    // Alert Dismissal, Snoozing & Background Android Notifications
+    private val snoozedAlertsMap = mutableMapOf<String, Long>()
+    private val permanentlyDismissedAlerts = mutableSetOf<String>()
+    private var currentActiveAlertKey: String? = null
+    private val SAFETY_NOTIFICATION_ID = 9991
+    private val SAFETY_CHANNEL_ID = "drivecare_safety_channel"
+    private var notificationManager: NotificationManager? = null
+
+    // Adaptive Telemetry State (بث مباشر عند الطلب vs تجميع دوري بالخلفية)
+    private var isAppInForeground: Boolean = true
+    private var telemetrySyncMode: String = "live" // "live" or "periodic_batch"
+    private var lastBatchSyncTimestamp: Long = 0L
+
+    // My Workshop Profile Registration State
+    private var myWorkshopName: String = "مركز النجم لصيانة وفحص السيارات"
+    private var myWorkshopManager: String = "م. إسلام النجم"
+    private var myWorkshopSpecialty: String = "فحص كمبيوتر وبرمجة أعطال + كهرباء وحساسات"
+    private var myWorkshopCategory: String = "computer" // "computer", "electricity", "mechanic", "chassis", "ac", "all"
+    private var myWorkshopPhone: String = "01099887755"
+    private var myWorkshopAddress: String = "شارع الهرم الرئيسي، الجيزة"
+    private var myWorkshopLat: Double = 29.9870
+    private var myWorkshopLng: Double = 31.1500
+    private var isMyWorkshopRegistered: Boolean = false
+
+    // Driver Assigned Vehicles Model & Data
+    data class DriverAssignedCar(
+        val id: String,
+        val name: String,
+        val make: String,
+        val year: String,
+        val vin: String,
+        val ownerName: String,
+        val ownerPhone: String,
+        val tankCapacity: Float,
+        val baseRate: Float,
+        val displacement: Float,
+        val fuelType: String,
+        val emptyWeightKg: Float,
+        var isActive: Boolean
+    )
+    private val driverAssignedCars = mutableListOf<DriverAssignedCar>()
 
     // Scanner state
     private var isScanning = false
@@ -394,14 +440,97 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun setSafetyAlert(title: String?, desc: String?, critical: Boolean) {
+    private fun initNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                SAFETY_CHANNEL_ID,
+                "تنبيهات الأمان والسلامة العاجلة لسيارتك",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "إشعارات فورية عن حرارة المحرك والوقود وشحن البطارية والأعطال"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 400, 200, 400)
+            }
+            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager?.createNotificationChannel(channel)
+        } else {
+            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        }
+    }
+
+    private fun showSystemSafetyNotification(key: String, title: String, desc: String, critical: Boolean) {
+        val nm = notificationManager ?: getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, openIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, SAFETY_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+
+        builder.setContentTitle(title)
+            .setContentText(desc)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setOngoing(false)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            builder.setVisibility(Notification.VISIBILITY_PUBLIC)
+            builder.setCategory(Notification.CATEGORY_ALARM)
+        }
+
+        nm.notify(SAFETY_NOTIFICATION_ID, builder.build())
+    }
+
+    private fun cancelSystemSafetyNotification() {
+        notificationManager?.cancel(SAFETY_NOTIFICATION_ID)
+    }
+
+    private fun setSafetyAlert(key: String, title: String?, desc: String?, critical: Boolean) {
+        if (title == null) {
+            if (currentActiveAlertKey == key || key == "all") {
+                telemetry.activeAlertTitle = null
+                telemetry.activeAlertDesc = null
+                currentActiveAlertKey = null
+                cancelSystemSafetyNotification()
+                runOnUiThread { updateAlertBannerUI() }
+            }
+            return
+        }
+
+        // Check if user permanently dismissed this alert for this trip
+        if (permanentlyDismissedAlerts.contains(key)) {
+            return
+        }
+
+        // Check if user snoozed this alert
+        val snoozedUntil = snoozedAlertsMap[key]
+        if (snoozedUntil != null && System.currentTimeMillis() < snoozedUntil) {
+            return
+        }
+
+        currentActiveAlertKey = key
         telemetry.activeAlertTitle = title
         telemetry.activeAlertDesc = desc
         telemetry.isAlertCritical = critical
-        if (title != null) {
-            playAlertSound(critical)
-        }
+
+        playAlertSound(critical)
+        showSystemSafetyNotification(key, title, desc ?: "", critical)
+
         runOnUiThread { updateAlertBannerUI() }
+    }
+
+    // Overload for legacy callers
+    private fun setSafetyAlert(title: String?, desc: String?, critical: Boolean) {
+        setSafetyAlert("general", title, desc, critical)
     }
 
     private fun updateAlertBannerUI() {
@@ -449,47 +578,71 @@ class MainActivity : Activity() {
 
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
+
+            // 1. Snooze for 15 minutes
             addView(Button(this@MainActivity).apply {
-                text = "✖ إغلاق التنبيه"
-                textSize = 12f
+                text = "🔕 تأجيل 15 دقيقة"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(180, 25, 35))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, 0, dp(6), 0)
-                layoutParams = lp
+                setBackgroundColor(Color.rgb(40, 55, 75))
+                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                blp.setMargins(0, 0, dp(4), 0)
+                layoutParams = blp
                 setOnClickListener {
+                    val key = currentActiveAlertKey ?: "general"
+                    snoozedAlertsMap[key] = System.currentTimeMillis() + (15 * 60 * 1000L)
                     telemetry.activeAlertTitle = null
                     telemetry.activeAlertDesc = null
                     isSimulatingAlert = false
+                    cancelSystemSafetyNotification()
+                    try { toneGenerator?.stopTone() } catch (_: Exception) {}
+                    banner.visibility = View.GONE
                     updateAlertBannerUI()
+                    Toast.makeText(this@MainActivity, "🔕 تم إخفاء وتأجيل التنبيه لمدة 15 دقيقة بنجاح.", Toast.LENGTH_SHORT).show()
                 }
             })
 
+            // 2. Permanent Dismiss for current trip
             addView(Button(this@MainActivity).apply {
-                text = "🔕 إخفاء مؤقتاً"
-                textSize = 12f
+                text = "✖ إخفاء نهائي للرحلة"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(40, 40, 40))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, 0, dp(6), 0)
-                layoutParams = lp
+                setBackgroundColor(Color.rgb(160, 30, 40))
+                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                blp.setMargins(0, 0, dp(4), 0)
+                layoutParams = blp
                 setOnClickListener {
+                    val key = currentActiveAlertKey ?: "general"
+                    permanentlyDismissedAlerts.add(key)
                     telemetry.activeAlertTitle = null
+                    telemetry.activeAlertDesc = null
                     isSimulatingAlert = false
+                    cancelSystemSafetyNotification()
+                    try { toneGenerator?.stopTone() } catch (_: Exception) {}
+                    banner.visibility = View.GONE
                     updateAlertBannerUI()
+                    Toast.makeText(this@MainActivity, "✖ تم إخفاء التنبيه نهائياً للرحلة الحالية بنجاح.", Toast.LENGTH_SHORT).show()
                 }
             })
 
+            // 3. Audio Mute / Unmute
             val btnSilence = Button(this@MainActivity).apply {
-                text = if (isAudioMuted) "🔊 إعادة تشغيل صوت الإنذار" else "🔇 كتم صوت الإنذار"
-                textSize = 12f
+                text = if (isAudioMuted) "🔊 إعادة الصوت" else "🔇 كتم الصوت"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
-                setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(100, 20, 30))
+                setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(80, 25, 35))
+                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                layoutParams = blp
                 setOnClickListener {
                     isAudioMuted = !isAudioMuted
                     preferences.edit().putBoolean("is_audio_alert_muted", isAudioMuted).apply()
-                    text = if (isAudioMuted) "🔊 إعادة تشغيل صوت الإنذار" else "🔇 كتم صوت الإنذار"
-                    setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(100, 20, 30))
+                    text = if (isAudioMuted) "🔊 إعادة الصوت" else "🔇 كتم الصوت"
+                    setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(80, 25, 35))
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
                 }
             }
@@ -672,10 +825,23 @@ class MainActivity : Activity() {
         } catch (_: Exception) {}
 
         initSecurityNotificationsAndDelta()
+        initNotificationChannel()
+        loadWorkshopProfile()
+        loadDriverAssignedCars()
 
         uiUpdateHandler.post(uiUpdateRunnable)
 
         renderCurrentScreen()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isAppInForeground = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isAppInForeground = false
     }
 
     private fun renderCurrentScreen() {
@@ -904,6 +1070,8 @@ class MainActivity : Activity() {
             "owner_security" -> root.addView(buildOwnerSecurityTabContent())
             "workshops_dir" -> root.addView(buildWorkshopsDirectoryTabContent())
             "workshop_console" -> root.addView(buildWorkshopConsoleTabContent())
+            "workshop_profile" -> root.addView(buildWorkshopProfileTabContent())
+            "driver_cars" -> root.addView(buildDriverCarsTabContent())
             "log_service" -> root.addView(buildLogServiceTabContent())
             "gauges" -> root.addView(buildGaugesTabContent())
             "scanner" -> root.addView(buildScannerTabContent())
@@ -1006,6 +1174,7 @@ class MainActivity : Activity() {
             }
             "driver" -> {
                 tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
+                tabLayout.addView(tabBtn("🚗 سياراتي المفوض بها", activeTab == "driver_cars") { switchTab("driver_cars") })
                 tabLayout.addView(tabBtn("⛽ تكلفة الرحلة والوزن", activeTab == "fuel") { switchTab("fuel") })
                 tabLayout.addView(tabBtn("🗺️ دليل وخريطة الورش", activeTab == "workshops_dir") { switchTab("workshops_dir") })
                 tabLayout.addView(tabBtn("🔍 فحص OBD", activeTab == "scanner") { switchTab("scanner") })
@@ -1013,6 +1182,7 @@ class MainActivity : Activity() {
             }
             else -> { // "garage"
                 tabLayout.addView(tabBtn("🔑 فحص السيارة بالـ PIN", activeTab == "workshop_console") { switchTab("workshop_console") })
+                tabLayout.addView(tabBtn("🏪 ملف الورشة وبياناتي", activeTab == "workshop_profile") { switchTab("workshop_profile") })
                 tabLayout.addView(tabBtn("🏎️ الحساسات الحية", activeTab == "gauges") { switchTab("gauges") })
                 tabLayout.addView(tabBtn("🔍 فحص ومسح الأعطال", activeTab == "scanner") { switchTab("scanner") })
                 tabLayout.addView(tabBtn("📝 تسجيل صيانة جديدة", activeTab == "log_service") { switchTab("log_service") })
@@ -1706,6 +1876,691 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
+    // TAB: WORKSHOP PROFILE & REGISTRATION (نافذة تسجيل وتعديل بيانات الورشة)
+    // ========================================================
+    private fun buildWorkshopProfileTabContent(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // Header Card
+        val cardHeader = card().apply {
+            addView(text("🏪 نافذة تسجيل وتحديث بيانات الورشة والمركز الفني", 18, Color.rgb(248, 199, 74), true))
+            addView(text("سجل بيانات مركزك ونشاطك وإحداثيات GPS لتظهر فورياً لجميع السائقين في دليل وخريطة الورش والتطبيق العام.", 13, Color.rgb(167, 203, 226), false))
+        }
+        container.addView(cardHeader)
+
+        // Form Card
+        val cardForm = card().apply {
+            addView(text("📝 بيانات المركز الأساسية:", 15, Color.WHITE, true))
+
+            // 1. Workshop Name
+            addView(text("اسم الورشة / المركز الفني:", 12, Color.rgb(180, 200, 220), false))
+            val etName = EditText(this@MainActivity).apply {
+                setText(myWorkshopName)
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            addView(etName)
+
+            // 2. Manager Name
+            addView(text("اسم المدير / الفني المسؤول:", 12, Color.rgb(180, 200, 220), false))
+            val etManager = EditText(this@MainActivity).apply {
+                setText(myWorkshopManager)
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            addView(etManager)
+
+            // 3. Contact Phone
+            addView(text("رقم هاتف التواصل والواتساب:", 12, Color.rgb(180, 200, 220), false))
+            val etPhone = EditText(this@MainActivity).apply {
+                setText(myWorkshopPhone)
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                inputType = android.text.InputType.TYPE_CLASS_PHONE
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            addView(etPhone)
+
+            // 4. Street Address
+            addView(text("العنوان التفصيلي:", 12, Color.rgb(180, 200, 220), false))
+            val etAddress = EditText(this@MainActivity).apply {
+                setText(myWorkshopAddress)
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            addView(etAddress)
+
+            // 5. Activity & Specialization Category
+            addView(text("نوع النشاط والتخصص الرئيسي:", 12, Color.rgb(180, 200, 220), false))
+            var selectedCategory = myWorkshopCategory
+
+            val catLayout = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+
+            val catOptions = listOf(
+                Pair("computer", "💻 فحص كمبيوتر وبرمجة أعطال OBD"),
+                Pair("electricity", "⚡ كهرباء سيارات وحساسات وضفيرة"),
+                Pair("mechanic", "🔧 ميكانيكا محركات وعمرة وفتيس"),
+                Pair("chassis", "🔩 عفشة وشاسيه وميزان هيدروليك"),
+                Pair("ac", "❄️ تكييف سيارات وشحن فريون وفلاتر"),
+                Pair("all", "🏆 صيانة شاملة وخدمة متكاملة")
+            )
+
+            val catButtons = mutableListOf<Button>()
+            catOptions.chunked(2).forEach { pairChunk ->
+                val row = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    rlp.bottomMargin = dp(4)
+                    layoutParams = rlp
+                }
+                pairChunk.forEach { (catKey, catLabel) ->
+                    val btn = Button(this@MainActivity).apply {
+                        text = catLabel
+                        textSize = 11f
+                        typeface = Typeface.DEFAULT_BOLD
+                        val blp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                        blp.setMargins(dp(2), 0, dp(2), 0)
+                        layoutParams = blp
+                        val isSel = (catKey == selectedCategory)
+                        setBackgroundColor(if (isSel) Color.rgb(20, 110, 80) else Color.rgb(28, 48, 68))
+                        setTextColor(if (isSel) Color.rgb(248, 199, 74) else Color.rgb(200, 215, 230))
+                        setOnClickListener {
+                            selectedCategory = catKey
+                            catButtons.forEachIndexed { idx, b ->
+                                val k = catOptions[idx].first
+                                val sel = (k == selectedCategory)
+                                b.setBackgroundColor(if (sel) Color.rgb(20, 110, 80) else Color.rgb(28, 48, 68))
+                                b.setTextColor(if (sel) Color.rgb(248, 199, 74) else Color.rgb(200, 215, 230))
+                            }
+                        }
+                    }
+                    catButtons.add(btn)
+                    row.addView(btn)
+                }
+                catLayout.addView(row)
+            }
+            addView(catLayout)
+
+            // 6. Detailed Specialty description
+            addView(text("وصف دقيق للخدمات المقدمة:", 12, Color.rgb(180, 200, 220), false))
+            val etSpecialty = EditText(this@MainActivity).apply {
+                setText(myWorkshopSpecialty)
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+            addView(etSpecialty)
+
+            // 7. GPS Coordinates
+            addView(text("📍 الموقع الجغرافي للورشة (GPS Coordinates):", 14, Color.rgb(248, 199, 74), true))
+            val gpsRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val glp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                glp.bottomMargin = dp(8)
+                layoutParams = glp
+            }
+
+            val etLat = EditText(this@MainActivity).apply {
+                setText(myWorkshopLat.toString())
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.rightMargin = dp(4)
+                layoutParams = lp
+            }
+            val etLng = EditText(this@MainActivity).apply {
+                setText(myWorkshopLng.toString())
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.leftMargin = dp(4)
+                layoutParams = lp
+            }
+            gpsRow.addView(etLat)
+            gpsRow.addView(etLng)
+            addView(gpsRow)
+
+            // Button to set quick location presets or capture GPS
+            val btnLocRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(10)
+                layoutParams = lp
+
+                addView(Button(this@MainActivity).apply {
+                    text = "🎯 إحداثيات القاهرة والجيزة"
+                    textSize = 11f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(30, 50, 70))
+                    val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                    blp.rightMargin = dp(4)
+                    layoutParams = blp
+                    setOnClickListener {
+                        etLat.setText("29.9870")
+                        etLng.setText("31.1500")
+                        Toast.makeText(this@MainActivity, "تم تعيين إحداثيات الجيزة/الهرم.", Toast.LENGTH_SHORT).show()
+                    }
+                })
+
+                addView(Button(this@MainActivity).apply {
+                    text = "🎯 إحداثيات الإسكندرية"
+                    textSize = 11f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(30, 50, 70))
+                    val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                    blp.leftMargin = dp(4)
+                    layoutParams = blp
+                    setOnClickListener {
+                        etLat.setText("31.2001")
+                        etLng.setText("29.9187")
+                        Toast.makeText(this@MainActivity, "تم تعيين إحداثيات الإسكندرية.", Toast.LENGTH_SHORT).show()
+                    }
+                })
+            }
+            addView(btnLocRow)
+
+            // Save / Update Profile Button
+            addView(Button(this@MainActivity).apply {
+                text = "💾 حفظ ونشر بيانات الورشة في الدليل العام للمركبات"
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(16, 120, 70))
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
+                blp.topMargin = dp(6)
+                layoutParams = blp
+                setOnClickListener {
+                    val name = etName.text.toString().trim()
+                    val manager = etManager.text.toString().trim()
+                    val phone = etPhone.text.toString().trim()
+                    val address = etAddress.text.toString().trim()
+                    val specialty = etSpecialty.text.toString().trim()
+                    val lat = etLat.text.toString().toDoubleOrNull() ?: myWorkshopLat
+                    val lng = etLng.text.toString().toDoubleOrNull() ?: myWorkshopLng
+
+                    if (name.isEmpty() || phone.isEmpty()) {
+                        Toast.makeText(this@MainActivity, "يرجى كتابة اسم الورشة ورقم هاتف التواصل على الأقل.", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
+                    }
+
+                    myWorkshopName = name
+                    myWorkshopManager = if (manager.isNotEmpty()) manager else "فني المركز"
+                    myWorkshopPhone = phone
+                    myWorkshopAddress = if (address.isNotEmpty()) address else "مصر"
+                    myWorkshopSpecialty = if (specialty.isNotEmpty()) specialty else "صيانة عامة وفحص"
+                    myWorkshopCategory = selectedCategory
+                    myWorkshopLat = lat
+                    myWorkshopLng = lng
+
+                    saveWorkshopProfile()
+
+                    Toast.makeText(this@MainActivity, "✅ تم حفظ ونشر بيانات الورشة بنجاح، وظهورها للسائقين بالدليل!", Toast.LENGTH_LONG).show()
+                    renderCurrentScreen()
+                }
+            })
+        }
+        container.addView(cardForm)
+
+        // Status Card
+        val cardStatus = card().apply {
+            addView(text("📌 معاينة بيانات الورشة الحالية بالسيرفر:", 14, Color.rgb(248, 199, 74), true))
+            addView(text("• اسم المركز: $myWorkshopName", 13, Color.WHITE, false))
+            addView(text("• المسؤول: $myWorkshopManager | هاتف: $myWorkshopPhone", 13, Color.rgb(180, 220, 200), false))
+            addView(text("• العنوان: $myWorkshopAddress", 13, Color.rgb(200, 210, 220), false))
+            addView(text("• التخصص: $myWorkshopSpecialty ($myWorkshopCategory)", 13, Color.rgb(180, 220, 240), false))
+            addView(text("• الإحداثيات: ($myWorkshopLat, $myWorkshopLng)", 13, Color.rgb(160, 200, 180), false))
+
+            addView(button("🗺️ فتح ومعاينة موقع الورشة في دليل وخريطة الورش") {
+                switchTab("workshops_dir")
+            }.apply {
+                setBackgroundColor(Color.rgb(28, 55, 85))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(cardStatus)
+
+        return container
+    }
+
+    // ========================================================
+    // TAB: DRIVER ASSIGNED CARS (عرض واختيار سيارات السائق المفوض بها)
+    // ========================================================
+    private fun buildDriverCarsTabContent(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // Header Card
+        val cardHeader = card().apply {
+            addView(text("🚗 السيارات المسجلة والمفوض بقيادتها", 18, Color.rgb(248, 199, 74), true))
+            addView(text("كافة المركبات المسجلة باسمك أو المفوض بقيادتها من المالكين. يمكنك اختيار وتفعيل السيارة الحالية لربط عدادات الـ OBD وحسابات استهلاك الوقود وتكلفة المشوار بها مباشرة:", 13, Color.rgb(167, 203, 226), false))
+
+            addView(button("➕ إضافة سيارة مفوضة جديدة (برقم الشاسية وموافقة المالك)") {
+                showAddDriverCarDialog()
+            }.apply {
+                setBackgroundColor(Color.rgb(20, 110, 80))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(cardHeader)
+
+        // List of Cars
+        if (driverAssignedCars.isEmpty()) {
+            loadDriverAssignedCars()
+        }
+
+        driverAssignedCars.forEach { car ->
+            val isCurrentActive = car.isActive
+            val cardCar = card().apply {
+                if (isCurrentActive) {
+                    setBackgroundColor(Color.rgb(12, 45, 35))
+                }
+
+                // Row Title & Active Badge
+                val rowTitle = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = dp(6)
+                    layoutParams = lp
+
+                    addView(TextView(this@MainActivity).apply {
+                        text = car.name
+                        textSize = 16f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (isCurrentActive) Color.rgb(248, 199, 74) else Color.WHITE)
+                        val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        layoutParams = tlp
+                    })
+
+                    addView(TextView(this@MainActivity).apply {
+                        text = if (isCurrentActive) "✅ السيارة النشطة حالياً" else "متاحة للقيادة"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (isCurrentActive) Color.rgb(120, 240, 160) else Color.rgb(180, 190, 200))
+                    })
+                }
+                addView(rowTitle)
+
+                // Details
+                addView(text("• الماركة والموديل: ${car.make} - موديل ${car.year}", 13, Color.rgb(200, 220, 240), false))
+                addView(text("• رقم الشاسية (VIN): ${car.vin}", 13, Color.rgb(180, 200, 210), false))
+                addView(text("• سعة التانك: ${car.tankCapacity} لتر | سعة المحرك: ${car.displacement}L | وزن فارغ: ${car.emptyWeightKg.toInt()} كجم", 13, Color.rgb(180, 210, 190), false))
+                addView(text("• مالك السيارة: ${car.ownerName} (هاتف: ${car.ownerPhone})", 13, Color.rgb(240, 200, 150), false))
+
+                // Actions Row
+                val rowActions = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(8)
+                    layoutParams = lp
+
+                    // Switch Active Car Button
+                    addView(Button(this@MainActivity).apply {
+                        text = if (isCurrentActive) "🏎️ الانتقال لعدادات هذه السيارة" else "🔘 قيادة وتفعيل هذه السيارة الآن"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(if (isCurrentActive) Color.rgb(15, 90, 60) else Color.rgb(35, 75, 115))
+                        val blp = LinearLayout.LayoutParams(0, dp(40), 1.5f)
+                        blp.rightMargin = dp(4)
+                        layoutParams = blp
+                        setOnClickListener {
+                            activateDriverCar(car)
+                        }
+                    })
+
+                    // Call Owner Button
+                    addView(Button(this@MainActivity).apply {
+                        text = "📞 اتصال بالمالك"
+                        textSize = 11f
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.rgb(40, 55, 70))
+                        val blp = LinearLayout.LayoutParams(0, dp(40), 1f)
+                        blp.leftMargin = dp(4)
+                        layoutParams = blp
+                        setOnClickListener {
+                            try {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:${car.ownerPhone}"))
+                                startActivity(intent)
+                            } catch (_: Exception) {
+                                Toast.makeText(this@MainActivity, "رقم المالك: ${car.ownerPhone}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    })
+                }
+                addView(rowActions)
+            }
+            container.addView(cardCar)
+        }
+
+        return container
+    }
+
+    private fun activateDriverCar(car: DriverAssignedCar) {
+        driverAssignedCars.forEach { it.isActive = (it.id == car.id) }
+        saveDriverAssignedCars()
+
+        preferences.edit()
+            .putString("vehicle_name", car.name)
+            .putString("vehicle_make", car.make)
+            .putString("vehicle_year", car.year)
+            .putString("vehicle_vin", car.vin)
+            .putFloat("tank_capacity_liters", car.tankCapacity)
+            .putFloat("engine_displacement_liters", car.displacement)
+            .putFloat("fuel_rate_baseline", car.baseRate)
+            .putFloat("vehicle_empty_weight", car.emptyWeightKg)
+            .putString("fuel_type", car.fuelType)
+            .putString("vehicle_primary_owner", car.ownerName)
+            .putString("vehicle_primary_owner_phone", car.ownerPhone)
+            .putString("vehicle_data_source", "تم التفعيل من أسطول سيارات السائق 🚗")
+            .apply()
+
+        vehicleEmptyWeightKg = car.emptyWeightKg
+        Toast.makeText(this@MainActivity, "🚗 تم تفعيل قيادة [${car.name}] وربط العدادات وحسابات الوقود بها بنجاح!", Toast.LENGTH_SHORT).show()
+        switchTab("gauges")
+    }
+
+    private fun showAddDriverCarDialog() {
+        val dialog = AlertDialog.Builder(this)
+        dialog.setTitle("➕ إضافة سيارة مفوضة جديدة للسائق")
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+        }
+
+        val etCarName = EditText(this).apply { hint = "اسم السيارة وموديلها (مثال: نيسان صني 2021)" }
+        val etMake = EditText(this).apply { hint = "الماركة (مثال: نيسان)" }
+        val etVin = EditText(this).apply { hint = "رقم الشاسية VIN (17 حرف)" }
+        val etOwnerName = EditText(this).apply { hint = "اسم المالك المفوض" }
+        val etOwnerPhone = EditText(this).apply { hint = "رقم هاتف المالك"; inputType = android.text.InputType.TYPE_CLASS_PHONE }
+        val etTank = EditText(this).apply { hint = "سعة التانك باللتر (مثال: 45)"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+
+        root.addView(etCarName)
+        root.addView(etMake)
+        root.addView(etVin)
+        root.addView(etOwnerName)
+        root.addView(etOwnerPhone)
+        root.addView(etTank)
+
+        dialog.setView(root)
+        dialog.setPositiveButton("إضافة واعتماد") { _, _ ->
+            val name = etCarName.text.toString().trim()
+            val make = etMake.text.toString().trim()
+            val vin = etVin.text.toString().trim().uppercase()
+            val owner = etOwnerName.text.toString().trim()
+            val phone = etOwnerPhone.text.toString().trim()
+            val tank = etTank.text.toString().toFloatOrNull() ?: 45.0f
+
+            if (name.isEmpty() || vin.isEmpty()) {
+                Toast.makeText(this, "يرجى كتابة اسم السيارة ورقم الشاسية.", Toast.LENGTH_SHORT).show()
+                return@setPositiveButton
+            }
+
+            val newCar = DriverAssignedCar(
+                id = "drv-car-${System.currentTimeMillis()}",
+                name = name,
+                make = if (make.isNotEmpty()) make else "سيارة حديثة",
+                year = "2022",
+                vin = vin,
+                ownerName = if (owner.isNotEmpty()) owner else "مالك مفوض",
+                ownerPhone = if (phone.isNotEmpty()) phone else "01000000000",
+                tankCapacity = tank,
+                baseRate = 7.0f,
+                displacement = 1.6f,
+                fuelType = "gasoline",
+                emptyWeightKg = 1200f,
+                isActive = false
+            )
+
+            driverAssignedCars.add(newCar)
+            saveDriverAssignedCars()
+            Toast.makeText(this, "✅ تمت إضافة السيارة إلى قائمة سياراتك بنجاح!", Toast.LENGTH_SHORT).show()
+            renderCurrentScreen()
+        }
+        dialog.setNegativeButton("إلغاء", null)
+        dialog.show()
+    }
+
+    private fun saveWorkshopProfile() {
+        preferences.edit()
+            .putString("my_workshop_name", myWorkshopName)
+            .putString("my_workshop_manager", myWorkshopManager)
+            .putString("my_workshop_specialty", myWorkshopSpecialty)
+            .putString("my_workshop_category", myWorkshopCategory)
+            .putString("my_workshop_phone", myWorkshopPhone)
+            .putString("my_workshop_address", myWorkshopAddress)
+            .putFloat("my_workshop_lat", myWorkshopLat.toFloat())
+            .putFloat("my_workshop_lng", myWorkshopLng.toFloat())
+            .apply()
+
+        // Also update or add to registeredWorkshops directory
+        val existingIdx = registeredWorkshops.indexOfFirst { it.id == "my-ws-profile" }
+        val wsItem = RegisteredWorkshop(
+            id = "my-ws-profile",
+            name = myWorkshopName,
+            managerName = myWorkshopManager,
+            specialty = myWorkshopSpecialty,
+            categoryKey = myWorkshopCategory,
+            phone = myWorkshopPhone,
+            address = myWorkshopAddress,
+            distanceKm = 0.5f,
+            lat = myWorkshopLat,
+            lng = myWorkshopLng,
+            rating = 5.0f
+        )
+        if (existingIdx >= 0) {
+            registeredWorkshops[existingIdx] = wsItem
+        } else {
+            registeredWorkshops.add(0, wsItem)
+        }
+
+        // Post to remote server in background
+        Thread {
+            try {
+                val jsonPayload = org.json.JSONObject().apply {
+                    put("action", "register")
+                    put("name", myWorkshopName)
+                    put("manager_name", myWorkshopManager)
+                    put("phone", myWorkshopPhone)
+                    put("address", myWorkshopAddress)
+                    put("category", myWorkshopCategory)
+                    put("specialty", myWorkshopSpecialty)
+                    put("lat", myWorkshopLat)
+                    put("lng", myWorkshopLng)
+                }
+                val url = java.net.URL("http://127.0.0.1:8000/api/workshops")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                conn.doOutput = true
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                conn.outputStream.use { os ->
+                    val input = jsonPayload.toString().toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                    os.write(input, 0, input.size)
+                }
+                conn.responseCode
+            } catch (_: Exception) {}
+        }.start()
+    }
+
+    private fun loadWorkshopProfile() {
+        myWorkshopName = preferences.getString("my_workshop_name", myWorkshopName) ?: myWorkshopName
+        myWorkshopManager = preferences.getString("my_workshop_manager", myWorkshopManager) ?: myWorkshopManager
+        myWorkshopSpecialty = preferences.getString("my_workshop_specialty", myWorkshopSpecialty) ?: myWorkshopSpecialty
+        myWorkshopCategory = preferences.getString("my_workshop_category", myWorkshopCategory) ?: myWorkshopCategory
+        myWorkshopPhone = preferences.getString("my_workshop_phone", myWorkshopPhone) ?: myWorkshopPhone
+        myWorkshopAddress = preferences.getString("my_workshop_address", myWorkshopAddress) ?: myWorkshopAddress
+        myWorkshopLat = preferences.getFloat("my_workshop_lat", myWorkshopLat.toFloat()).toDouble()
+        myWorkshopLng = preferences.getFloat("my_workshop_lng", myWorkshopLng.toFloat()).toDouble()
+
+        val existingIdx = registeredWorkshops.indexOfFirst { it.id == "my-ws-profile" }
+        val wsItem = RegisteredWorkshop(
+            id = "my-ws-profile",
+            name = myWorkshopName,
+            managerName = myWorkshopManager,
+            specialty = myWorkshopSpecialty,
+            categoryKey = myWorkshopCategory,
+            phone = myWorkshopPhone,
+            address = myWorkshopAddress,
+            distanceKm = 0.5f,
+            lat = myWorkshopLat,
+            lng = myWorkshopLng,
+            rating = 5.0f
+        )
+        if (existingIdx >= 0) {
+            registeredWorkshops[existingIdx] = wsItem
+        } else {
+            registeredWorkshops.add(0, wsItem)
+        }
+    }
+
+    private fun saveDriverAssignedCars() {
+        val array = org.json.JSONArray()
+        driverAssignedCars.forEach { car ->
+            val obj = org.json.JSONObject().apply {
+                put("id", car.id)
+                put("name", car.name)
+                put("make", car.make)
+                put("year", car.year)
+                put("vin", car.vin)
+                put("ownerName", car.ownerName)
+                put("ownerPhone", car.ownerPhone)
+                put("tankCapacity", car.tankCapacity.toDouble())
+                put("baseRate", car.baseRate.toDouble())
+                put("displacement", car.displacement.toDouble())
+                put("fuelType", car.fuelType)
+                put("emptyWeightKg", car.emptyWeightKg.toDouble())
+                put("isActive", car.isActive)
+            }
+            array.put(obj)
+        }
+        preferences.edit().putString("driver_assigned_cars_json", array.toString()).apply()
+    }
+
+    private fun loadDriverAssignedCars() {
+        val jsonStr = preferences.getString("driver_assigned_cars_json", null)
+        driverAssignedCars.clear()
+        if (!jsonStr.isNullOrEmpty()) {
+            try {
+                val array = org.json.JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    driverAssignedCars.add(
+                        DriverAssignedCar(
+                            id = obj.optString("id", "drv-car-$i"),
+                            name = obj.optString("name", "سيارة"),
+                            make = obj.optString("make", "عامة"),
+                            year = obj.optString("year", "2020"),
+                            vin = obj.optString("vin", "UNKNOWN_VIN"),
+                            ownerName = obj.optString("ownerName", "المالك"),
+                            ownerPhone = obj.optString("ownerPhone", "01000000000"),
+                            tankCapacity = obj.optDouble("tankCapacity", 45.0).toFloat(),
+                            baseRate = obj.optDouble("baseRate", 7.0).toFloat(),
+                            displacement = obj.optDouble("displacement", 1.5).toFloat(),
+                            fuelType = obj.optString("fuelType", "gasoline"),
+                            emptyWeightKg = obj.optDouble("emptyWeightKg", 1100.0).toFloat(),
+                            isActive = obj.optBoolean("isActive", (i == 0))
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+
+        if (driverAssignedCars.isEmpty()) {
+            driverAssignedCars.add(
+                DriverAssignedCar(
+                    id = "drv-car-1",
+                    name = "شيفروليه أفيو (Chevrolet Aveo 1.5L)",
+                    make = "شيفروليه",
+                    year = "2018",
+                    vin = "KL1TD69E29B123456",
+                    ownerName = "أحمد سالم (المالك)",
+                    ownerPhone = "01011223344",
+                    tankCapacity = 45.0f,
+                    baseRate = 7.2f,
+                    displacement = 1.5f,
+                    fuelType = "gasoline",
+                    emptyWeightKg = 1070.0f,
+                    isActive = true
+                )
+            )
+            driverAssignedCars.add(
+                DriverAssignedCar(
+                    id = "drv-car-2",
+                    name = "تويوتا كورولا (Toyota Corolla 1.6L)",
+                    make = "تويوتا",
+                    year = "2021",
+                    vin = "JTDBR32E12345678",
+                    ownerName = "شركة الفرسان للنقل (المالك)",
+                    ownerPhone = "01122334455",
+                    tankCapacity = 50.0f,
+                    baseRate = 6.5f,
+                    displacement = 1.6f,
+                    fuelType = "gasoline",
+                    emptyWeightKg = 1250.0f,
+                    isActive = false
+                )
+            )
+            driverAssignedCars.add(
+                DriverAssignedCar(
+                    id = "drv-car-3",
+                    name = "هيونداي إلنترا (Hyundai Elantra CN7)",
+                    make = "هيونداي",
+                    year = "2022",
+                    vin = "KMHD84LF7NU987654",
+                    ownerName = "محمود عبد العزيز (المالك)",
+                    ownerPhone = "01233445566",
+                    tankCapacity = 47.0f,
+                    baseRate = 6.8f,
+                    displacement = 1.6f,
+                    fuelType = "gasoline",
+                    emptyWeightKg = 1210.0f,
+                    isActive = false
+                )
+            )
+            saveDriverAssignedCars()
+        }
+    }
+
+    // ========================================================
     // TAB: LOG SERVICE & MAINTENANCE (تسجيل الصيانة وإشعار المالك)
     // ========================================================
     private fun buildLogServiceTabContent(): View {
@@ -1865,22 +2720,60 @@ class MainActivity : Activity() {
 
     private fun checkAndLogTelemetryDelta(force: Boolean = false) {
         val now = System.currentTimeMillis()
+
+        // Adaptive Telemetry: Check if user is actively watching a live tab in foreground
+        val isWatchingLiveTab = isAppInForeground && (activeTab in listOf("gauges", "fuel", "scanner", "remote_fleet"))
+        telemetrySyncMode = if (isWatchingLiveTab) "live_stream" else "periodic_batch"
+
+        // Emergency alerts & critical faults always bypass batch delay
+        val hasEmergencyAlert = (telemetry.activeAlertTitle != null && telemetry.isAlertCritical) || (telemetry.dtcCodes.size > lastSyncedDtcCount)
+        val heartbeat = (now - lastSyncTimestamp > 60000L) // نبضة دورية كل 60 ثانية لتوفير استهلاك الباقة
+
+        // If app is in background, screen locked, or static tab is open: accumulate data and send periodically
+        if (!isWatchingLiveTab && !hasEmergencyAlert && !force) {
+            if (!heartbeat) {
+                return // توفير الباقة: تجميع البيانات محلياً وإرسال دفعة كل 60 ثانية طالما لم يحدث إنذار طارئ
+            }
+        }
+
         val speedDiff = Math.abs(telemetry.speed - lastSyncedSpeed)
         val rpmDiff = Math.abs(telemetry.rpm - lastSyncedRpm)
         val fuelDiff = Math.abs(telemetry.fuelLevel - lastSyncedFuel)
         val tempDiff = Math.abs(telemetry.coolantTemp - lastSyncedTemp)
         val dtcChanged = (telemetry.dtcCodes.size != lastSyncedDtcCount)
         val alertChanged = (telemetry.activeAlertTitle != lastSyncedAlert)
-        val heartbeat = (now - lastSyncTimestamp > 60000L)
 
         val reasons = mutableListOf<String>()
-        if (speedDiff >= 3) reasons.add("تغير السرعة (${telemetry.speed} كم/س)")
-        if (rpmDiff >= 150) reasons.add("تغير العزم (${telemetry.rpm} RPM)")
-        if (fuelDiff >= 1) reasons.add("تغير الوقود (${telemetry.fuelLevel}%)")
-        if (tempDiff >= 2) reasons.add("تغير الحرارة (${telemetry.coolantTemp}°C)")
-        if (dtcChanged) reasons.add("تغير الأعطال (${telemetry.dtcCodes.size} كود)")
-        if (alertChanged && telemetry.activeAlertTitle != null) reasons.add("إنذار: ${telemetry.activeAlertTitle}")
-        if (reasons.isEmpty() && heartbeat) reasons.add("نبضة فحص دورية (Heartbeat)")
+
+        // Dynamic detection targeted to the active open tab
+        if (isWatchingLiveTab) {
+            when (activeTab) {
+                "gauges" -> {
+                    if (speedDiff >= 2) reasons.add("بث مباشر: سرعة (${telemetry.speed} كم/س)")
+                    if (rpmDiff >= 100) reasons.add("بث مباشر: عزم (${telemetry.rpm} RPM)")
+                    if (tempDiff >= 1) reasons.add("بث مباشر: حرارة (${telemetry.coolantTemp}°C)")
+                }
+                "fuel" -> {
+                    if (fuelDiff >= 1) reasons.add("بث مباشر: وقود (${telemetry.fuelLevel}%)")
+                    reasons.add("بث مباشر: تكلفة الرحلة واستهلاك الوقود")
+                }
+                "scanner" -> {
+                    if (dtcChanged) reasons.add("بث مباشر: فحص الأعطال (${telemetry.dtcCodes.size} كود)")
+                }
+                else -> {
+                    if (speedDiff >= 3) reasons.add("تغير السرعة (${telemetry.speed} كم/س)")
+                    if (rpmDiff >= 150) reasons.add("تغير العزم (${telemetry.rpm} RPM)")
+                    if (fuelDiff >= 1) reasons.add("تغير الوقود (${telemetry.fuelLevel}%)")
+                    if (tempDiff >= 2) reasons.add("تغير الحرارة (${telemetry.coolantTemp}°C)")
+                }
+            }
+        } else {
+            // Periodic batch reasons
+            if (dtcChanged) reasons.add("تغير الأعطال (${telemetry.dtcCodes.size} كود)")
+            if (heartbeat) reasons.add("نبضة دورية مجمعة لتوفير الباقة (Batch Pulse)")
+        }
+
+        if (alertChanged && telemetry.activeAlertTitle != null) reasons.add("🚨 إنذار فوري: ${telemetry.activeAlertTitle}")
 
         if (reasons.isNotEmpty() || force) {
             val changeReason = if (reasons.isNotEmpty()) reasons.joinToString(" • ") else "تحديث لحظي"
@@ -3991,8 +4884,11 @@ class MainActivity : Activity() {
 
             alertTestRow.addView(button("🚨 تجربة حرارة 105°C") {
                 isSimulatingAlert = true
+                permanentlyDismissedAlerts.remove("test_temp")
+                snoozedAlertsMap.remove("test_temp")
                 telemetry.coolantTemp = 105
                 setSafetyAlert(
+                    "test_temp",
                     "🚨 إنذار طارئ: حرارة المحرك مرتفعة جداً (105 °C)!",
                     "تجاوزت حرارة التبريد الحد الأقصى! أوقف المحرك فوراً لفحص سائل التبريد ومروحة الرادياتير.",
                     critical = true
@@ -4002,6 +4898,7 @@ class MainActivity : Activity() {
                         isSimulatingAlert = false
                         telemetry.coolantTemp = 88
                         telemetry.activeAlertTitle = null
+                        cancelSystemSafetyNotification()
                         updateAlertBannerUI()
                         updateLiveUI()
                     }
@@ -4015,8 +4912,11 @@ class MainActivity : Activity() {
 
             alertTestRow.addView(button("⛽ تجربة بنزين 8%") {
                 isSimulatingAlert = true
+                permanentlyDismissedAlerts.remove("test_fuel")
+                snoozedAlertsMap.remove("test_fuel")
                 telemetry.fuelLevel = 8
                 setSafetyAlert(
+                    "test_fuel",
                     "⛽ انتباه: مستوى الوقود منخفض جداً (8%)!",
                     "متبقي أقل من 8% في الخزان. توجه لأقرب محطة وقود لتجنب نفاذ البنزين.",
                     critical = false
@@ -4026,6 +4926,7 @@ class MainActivity : Activity() {
                         isSimulatingAlert = false
                         telemetry.fuelLevel = preferences.getInt("current_fuel_tank_percent", 50)
                         telemetry.activeAlertTitle = null
+                        cancelSystemSafetyNotification()
                         updateAlertBannerUI()
                         updateLiveUI()
                     }
@@ -4039,13 +4940,17 @@ class MainActivity : Activity() {
 
             addView(alertTestRow)
 
-            addView(button("✅ استعادة الوضع الطبيعي الآمن") {
+            addView(button("✅ استعادة الوضع الطبيعي الآمن وإعادة تفعيل التنبيهات") {
                 isSimulatingAlert = false
+                permanentlyDismissedAlerts.clear()
+                snoozedAlertsMap.clear()
+                cancelSystemSafetyNotification()
                 telemetry.coolantTemp = 88
                 telemetry.fuelLevel = preferences.getInt("current_fuel_tank_percent", 50)
                 telemetry.activeAlertTitle = null
                 updateAlertBannerUI()
                 updateLiveUI()
+                Toast.makeText(this@MainActivity, "✅ تم استعادة الوضع الطبيعي وإلغاء أي تأجيلات للإنذارات.", Toast.LENGTH_SHORT).show()
             }.apply {
                 setBackgroundColor(Color.rgb(20, 60, 40))
                 setTextColor(Color.rgb(126, 242, 154))
@@ -4688,18 +5593,21 @@ class MainActivity : Activity() {
 
             if (telemetry.coolantTemp >= 100) {
                 setSafetyAlert(
+                    "coolant_overheat",
                     "🚨 تحذير طارئ: حرارة المحرك مرتفعة (${telemetry.coolantTemp} °C)!",
                     "حرارة سائل التبريد تجاوزت 100°C! يرجى التوقف فوراً وفحص سائل التبريد ومروحة الرادياتير.",
                     critical = true
                 )
             } else if (telemetry.fuelLevel in 1..15) {
                 setSafetyAlert(
+                    "fuel_low",
                     "⛽ انتباه: مستوى الوقود منخفض (${telemetry.fuelLevel}%)",
                     "متبقي أقل من 15% في الخزان. توجه لأقرب محطة وقود لتجنب توقف المحرك وتلف طلمبة البنزين.",
                     critical = false
                 )
             } else if (remainingOil <= 500f && oilTarget > 0f) {
                 setSafetyAlert(
+                    "oil_service",
                     "🛢️ تذكير صيانة: اقترب موعد غيار الزيت (${remainingOil.toInt()} كم متبقي)",
                     "وصل استهلاك زيت المحرك للحد الموصى به. يرجى تغيير الزيت والفلتر للمحافظة على أداء المحرك.",
                     critical = false
@@ -4713,19 +5621,22 @@ class MainActivity : Activity() {
                     "${diag.titleAr} - ${diag.system}"
                 }
                 setSafetyAlert(
+                    "dtc_$firstCode",
                     "⚠️ تنبيه عطل محرك: كود $firstCode",
                     desc,
                     critical = (diag.severity.contains("حرجة"))
                 )
             } else if (telemetry.batteryVoltage in 0.1f..11.9f) {
                 setSafetyAlert(
+                    "battery_low",
                     "🔋 تنبيه: شحن البطارية / الدينامو منخفض (${String.format("%.1f", telemetry.batteryVoltage)}V)",
                     "جهد الشحن أقل من 12.0 فولت أثناء التشغيل. يرجى فحص الدينامو وحزام السير.",
                     critical = false
                 )
             } else {
-                if (telemetry.activeAlertTitle != null) {
+                if (telemetry.activeAlertTitle != null && !isSimulatingAlert) {
                     telemetry.activeAlertTitle = null
+                    cancelSystemSafetyNotification()
                     updateAlertBannerUI()
                 }
             }

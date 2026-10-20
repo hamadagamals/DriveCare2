@@ -652,6 +652,39 @@ def create_workshop(user_id, data):
     return workshop_id
 
 
+def upsert_workshop(user_id, data):
+    name = (data.get('name') or '').strip()
+    services = (data.get('services') or data.get('specialty') or '').strip()
+    phone = (data.get('phone') or '').strip()
+    lat = data.get('latitude') or data.get('lat')
+    lng = data.get('longitude') or data.get('lng')
+    radius_km = data.get('radiusKm') or data.get('radius_km') or 25
+    with get_connection() as conn:
+        existing = conn.execute(
+            'SELECT id FROM workshops WHERE owner_user_id = ?', (user_id,)
+        ).fetchone()
+        if existing:
+            workshop_id = existing['id']
+            conn.execute(
+                '''UPDATE workshops
+                   SET name = ?, services = ?, phone = ?, latitude = ?, longitude = ?, radius_km = ?
+                   WHERE id = ?''',
+                (name, services, phone, lat, lng, radius_km, workshop_id)
+            )
+        else:
+            workshop_id = f'workshop-{uuid.uuid4().hex[:8]}'
+            conn.execute(
+                '''INSERT INTO workshops (id, owner_user_id, name, services, phone, latitude, longitude, radius_km)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (workshop_id, user_id, name, services, phone, lat, lng, radius_km)
+            )
+        conn.commit()
+    roles = fetch_user_roles(user_id)
+    if 'workshop' not in roles:
+        save_user_roles(user_id, ['workshop'])
+    return workshop_id
+
+
 def add_account_role(user_id, role, workshop=None):
     """Add one role to the authenticated account without creating another user."""
     role = str(role or '').strip().lower()
@@ -1627,16 +1660,15 @@ class Handler(SimpleHTTPRequestHandler):
             if not user_id:
                 self._send_json(401, {'error': 'Unauthorized'})
                 return
-            if payload.get('action') == 'register':
-                if 'workshop' not in fetch_user_roles(user_id):
-                    self._send_json(403, {'error': 'Workshop role required'})
+            if payload.get('action') in ('register', 'update'):
+                name = (payload.get('name') or '').strip()
+                services = (payload.get('services') or payload.get('specialty') or '').strip()
+                phone = (payload.get('phone') or '').strip()
+                if not name or not phone:
+                    self._send_json(400, {'error': 'Workshop name and phone are required'})
                     return
-                required = ['name', 'services', 'phone']
-                if any(not str(payload.get(key) or '').strip() for key in required):
-                    self._send_json(400, {'error': 'Workshop name, services, and phone are required'})
-                    return
-                workshop_id = create_workshop(user_id, payload)
-                self._send_json(201, {'workshopId': workshop_id})
+                workshop_id = upsert_workshop(user_id, payload)
+                self._send_json(200, {'workshopId': workshop_id, 'status': 'saved', 'name': name})
                 return
             if payload.get('action') == 'request-access':
                 request_id = create_access_request(user_id, payload)
