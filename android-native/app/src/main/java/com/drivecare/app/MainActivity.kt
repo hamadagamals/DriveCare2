@@ -323,6 +323,32 @@ class MainActivity : Activity() {
     )
     private val driverAssignedCars = mutableListOf<DriverAssignedCar>()
 
+    // Owner Multi-Vehicle Fleet & Multi-Driver Delegation Models
+    data class AssignedDriver(
+        var name: String,
+        var phone: String,
+        var roleType: String = "سائق مفوض",
+        var assignedDate: String = "2026/10/20"
+    )
+
+    data class OwnerVehicle(
+        val id: String,
+        var name: String,
+        var make: String,
+        var year: String,
+        var vin: String,
+        var plateNumber: String,
+        var tankCapacity: Float = 45.0f,
+        var displacement: Float = 1.5f,
+        var baseRate: Float = 7.2f,
+        var emptyWeightKg: Float = 1200.0f,
+        var fuelType: String = "gasoline",
+        var alertsEnabled: Boolean = true,
+        var isCurrentActive: Boolean = false,
+        val assignedDrivers: MutableList<AssignedDriver> = mutableListOf()
+    )
+    private val ownerFleetVehicles = mutableListOf<OwnerVehicle>()
+
     // Scanner state
     private var isScanning = false
     private val scanHandler = Handler(Looper.getMainLooper())
@@ -541,13 +567,16 @@ class MainActivity : Activity() {
             return
         }
 
+        val vehName = preferences.getString("vehicle_name", "") ?: ""
+        val enrichedTitle = if (vehName.isNotEmpty() && !title.contains(vehName)) "$title • $vehName" else title
+
         currentActiveAlertKey = key
-        telemetry.activeAlertTitle = title
+        telemetry.activeAlertTitle = enrichedTitle
         telemetry.activeAlertDesc = desc
         telemetry.isAlertCritical = critical
 
         playAlertSound(critical)
-        showSystemSafetyNotification(key, title, desc ?: "", critical)
+        showSystemSafetyNotification(key, enrichedTitle, desc ?: "", critical)
 
         runOnUiThread { updateAlertBannerUI() }
     }
@@ -869,6 +898,7 @@ class MainActivity : Activity() {
         initNotificationChannel()
         loadWorkshopProfile()
         loadDriverAssignedCars()
+        loadOwnerFleetVehicles()
 
         uiUpdateHandler.post(uiUpdateRunnable)
 
@@ -1098,8 +1128,13 @@ class MainActivity : Activity() {
         }
         root.addView(topBar)
 
-        // Internal Role Switcher Bar (3 أزرار تنقل فوري بين واجهات الأدوار دون خروج)
+        // Internal Role Switcher Bar (3 أزرار تنقل فوري واضحة وأنيقة بين واجهات الأدوار)
         root.addView(buildRoleSwitcherBar())
+
+        // Quick Vehicle Switcher Bar (شريط التبديل الفوري بين سيارات المالك بنقرة زر واحدة)
+        if (currentRole == "owner") {
+            root.addView(buildOwnerVehiclePillBar())
+        }
 
         // Navigation Tabs Bar (الأقسام المخصصة للدور الحالي)
         root.addView(buildTabBar())
@@ -1112,6 +1147,7 @@ class MainActivity : Activity() {
 
         // Tab Content Container
         when (activeTab) {
+            "owner_fleet" -> root.addView(buildOwnerFleetTabContent())
             "remote_fleet" -> root.addView(buildRemoteFleetTabContent())
             "vehicles" -> root.addView(buildVehiclesTabContent())
             "owner_security" -> root.addView(buildOwnerSecurityTabContent())
@@ -1124,7 +1160,10 @@ class MainActivity : Activity() {
             "scanner" -> root.addView(buildScannerTabContent())
             "fuel" -> root.addView(buildFuelTabContent())
             "maint" -> root.addView(buildMaintenanceTabContent())
-            else -> root.addView(buildGaugesTabContent())
+            else -> {
+                if (currentRole == "owner") root.addView(buildOwnerFleetTabContent())
+                else root.addView(buildGaugesTabContent())
+            }
         }
 
         return scroll
@@ -1161,7 +1200,7 @@ class MainActivity : Activity() {
                 text = roleTitle
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
-                val lp = LinearLayout.LayoutParams(0, dp(40), 1f)
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
                 lp.setMargins(dp(2), 0, dp(2), 0)
                 layoutParams = lp
                 if (isActive) {
@@ -1176,7 +1215,7 @@ class MainActivity : Activity() {
                         currentRole = roleKey
                         preferences.edit().putString("active_role", currentRole).apply()
                         activeTab = when(currentRole) {
-                            "owner" -> "remote_fleet"
+                            "owner" -> "owner_fleet"
                             "driver" -> "gauges"
                             "garage" -> "workshop_console"
                             else -> "gauges"
@@ -1193,7 +1232,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // TABS BAR (مخصصة حسب الدور الحالي)
+    // TABS BAR (مخصصة حسب الدور الحالي بتصميم سلس ومنظم)
     // ========================================================
     private fun buildTabBar(): View {
         val hscroll = HorizontalScrollView(this).apply {
@@ -1204,17 +1243,18 @@ class MainActivity : Activity() {
         }
         val tabLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(4), 0, dp(12))
+            setPadding(0, dp(2), 0, dp(10))
         }
         hscroll.addView(tabLayout)
 
         when (currentRole) {
             "owner" -> {
+                tabLayout.addView(tabBtn("🚗 أسطول سياراتي والسائقين", activeTab == "owner_fleet") { switchTab("owner_fleet") })
                 tabLayout.addView(tabBtn("📡 المراقبة عن بعد", activeTab == "remote_fleet") { switchTab("remote_fleet") })
-                tabLayout.addView(tabBtn("👑 ملكية الشاسيه", activeTab == "vehicles") { switchTab("vehicles") })
                 val unread = getUnreadSecurityNotificationsCount()
                 val notifLabel = if (unread > 0) "🚨 إشعارات الورش ($unread)" else "🚨 إشعارات الورش"
                 tabLayout.addView(tabBtn(notifLabel, activeTab == "owner_security") { switchTab("owner_security") })
+                tabLayout.addView(tabBtn("👑 ملكية الشاسيه", activeTab == "vehicles") { switchTab("vehicles") })
                 tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
                 tabLayout.addView(tabBtn("⛽ التكلفة والوقود", activeTab == "fuel") { switchTab("fuel") })
                 tabLayout.addView(tabBtn("🔧 جدول الصيانة", activeTab == "maint") { switchTab("maint") })
@@ -1223,8 +1263,8 @@ class MainActivity : Activity() {
                 tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
                 tabLayout.addView(tabBtn("🚗 سياراتي المفوض بها", activeTab == "driver_cars") { switchTab("driver_cars") })
                 tabLayout.addView(tabBtn("⛽ تكلفة الرحلة والوزن", activeTab == "fuel") { switchTab("fuel") })
+                tabLayout.addView(tabBtn("🔍 فحص كمبيوتر السيارة", activeTab == "scanner") { switchTab("scanner") })
                 tabLayout.addView(tabBtn("🗺️ دليل وخريطة الورش", activeTab == "workshops_dir") { switchTab("workshops_dir") })
-                tabLayout.addView(tabBtn("🔍 فحص OBD", activeTab == "scanner") { switchTab("scanner") })
                 tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
             }
             else -> { // "garage"
@@ -1259,6 +1299,789 @@ class MainActivity : Activity() {
     private fun switchTab(tab: String) {
         activeTab = tab
         renderCurrentScreen()
+    }
+
+    // ========================================================
+    // OWNER MULTI-VEHICLE PILL BAR (شريط التبديل السريع بين سيارات المالك)
+    // ========================================================
+    private fun buildOwnerVehiclePillBar(): View {
+        val hscroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            val p = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            p.bottomMargin = dp(8)
+            layoutParams = p
+        }
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(2), 0, dp(4))
+        }
+        hscroll.addView(row)
+
+        if (ownerFleetVehicles.isEmpty()) {
+            loadOwnerFleetVehicles()
+        }
+
+        ownerFleetVehicles.forEach { veh ->
+            val isActive = veh.isCurrentActive
+            val alertIcon = if (veh.alertsEnabled) "🔔" else "🔕"
+            val btn = Button(this).apply {
+                text = if (isActive) "🚗 ${veh.name} (النشطة حالياً)" else "🚙 ${veh.name} $alertIcon"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40))
+                lp.setMargins(dp(3), 0, dp(3), 0)
+                layoutParams = lp
+                if (isActive) {
+                    setBackgroundColor(Color.rgb(248, 199, 74))
+                    setTextColor(Color.rgb(8, 23, 32))
+                } else {
+                    setBackgroundColor(Color.rgb(18, 38, 56))
+                    setTextColor(Color.rgb(180, 215, 245))
+                }
+                setOnClickListener {
+                    if (!veh.isCurrentActive) {
+                        activateOwnerVehicle(veh)
+                    } else {
+                        switchTab("owner_fleet")
+                    }
+                }
+            }
+            row.addView(btn)
+        }
+
+        // Add car quick button
+        val btnAdd = Button(this).apply {
+            text = "➕ إضافة سيارة"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setBackgroundColor(Color.rgb(22, 68, 48))
+            setTextColor(Color.rgb(126, 242, 154))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40))
+            lp.setMargins(dp(3), 0, dp(3), 0)
+            layoutParams = lp
+            setOnClickListener {
+                showAddOwnerVehicleDialog()
+            }
+        }
+        row.addView(btnAdd)
+
+        return hscroll
+    }
+
+    // ========================================================
+    // TAB: OWNER MULTI-VEHICLE & DRIVER FLEET MANAGEMENT (أسطول سيارات المالك)
+    // ========================================================
+    private fun buildOwnerFleetTabContent(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        if (ownerFleetVehicles.isEmpty()) {
+            loadOwnerFleetVehicles()
+        }
+
+        // 1. Fleet Overview Header Card
+        val cardOverview = card().apply {
+            addView(text("🚗 أسطول سيارات المالك وتفويض السائقين 👑", 18, Color.rgb(248, 199, 74), true))
+            addView(text("يمكنك هنا إدارة سياراتك المتعددة، وتعيين سائق أو أكثر لكل سيارة، وتفعيل أو كتم وصول إنذارات كل سيارة على هاتفك، والتبديل المباشر بين السيارات بنقرة واحدة:", 13, Color.rgb(167, 203, 226), false))
+
+            // 3-Metric Summary Row
+            val rowMetrics = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+            rowMetrics.addView(metricBox("إجمالي سياراتك", "${ownerFleetVehicles.size} مركبات 🚙", Color.rgb(110, 231, 255)).parent as View)
+            val totalDrivers = ownerFleetVehicles.sumOf { it.assignedDrivers.size }
+            rowMetrics.addView(metricBox("السائقون المفوضون", "$totalDrivers سائقين 👥", Color.rgb(248, 199, 74)).parent as View)
+            val alertsActiveCount = ownerFleetVehicles.count { it.alertsEnabled }
+            rowMetrics.addView(metricBox("إنذارات الهاتف", "$alertsActiveCount مفعّلة 🔔", Color.rgb(126, 242, 154)).parent as View)
+            addView(rowMetrics)
+
+            // Action Buttons Row (Add Car + Test Multi-Car Alerts)
+            val rowBtns = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(10)
+                layoutParams = lp
+            }
+
+            rowBtns.addView(Button(this@MainActivity).apply {
+                text = "➕ إضافة سيارة جديدة للأسطول"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(22, 100, 65))
+                val blp = LinearLayout.LayoutParams(0, dp(42), 1.3f)
+                blp.rightMargin = dp(4)
+                layoutParams = blp
+                setOnClickListener { showAddOwnerVehicleDialog() }
+            })
+
+            rowBtns.addView(Button(this@MainActivity).apply {
+                text = "🚨 تجربة إنذار لسيارة"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(140, 50, 40))
+                val blp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                blp.leftMargin = dp(4)
+                layoutParams = blp
+                setOnClickListener { showSimulateMultiCarAlertsDialog() }
+            })
+            addView(rowBtns)
+        }
+        container.addView(cardOverview)
+
+        // 2. Individual Vehicle Cards
+        ownerFleetVehicles.forEach { veh ->
+            val isActive = veh.isCurrentActive
+            val cardCar = card().apply {
+                if (isActive) {
+                    setBackgroundColor(Color.rgb(14, 42, 34))
+                }
+
+                // Title & Active Badge
+                val rowTitle = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = dp(4)
+                    layoutParams = lp
+
+                    addView(TextView(this@MainActivity).apply {
+                        text = "🚗 ${veh.name}"
+                        textSize = 16f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (isActive) Color.rgb(248, 199, 74) else Color.WHITE)
+                        val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        layoutParams = tlp
+                    })
+
+                    addView(TextView(this@MainActivity).apply {
+                        text = if (isActive) "✅ النشطة حالياً" else "متاحة بالأسطول"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (isActive) Color.rgb(126, 242, 154) else Color.rgb(160, 190, 210))
+                    })
+                }
+                addView(rowTitle)
+
+                // Vehicle Specs line
+                addView(text("• اللوحة: ${veh.plateNumber.ifEmpty { "غير محددة" }} | الماركة: ${veh.make} (${veh.year})", 13, Color.rgb(200, 225, 245), false))
+                addView(text("• رقم الشاسيه (VIN): ${veh.vin}", 13, Color.rgb(180, 210, 230), false))
+                addView(text("• سعة التانك: ${veh.tankCapacity.toInt()}L | محرك: ${veh.displacement}L | استهلاك: ${veh.baseRate}L/100km | وزن: ${veh.emptyWeightKg.toInt()} كجم", 13, Color.rgb(180, 220, 200), false))
+
+                // Mobile Alerts Subscription Box
+                val alertBox = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setBackgroundColor(if (veh.alertsEnabled) Color.rgb(18, 52, 40) else Color.rgb(35, 30, 32))
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    val alp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    alp.topMargin = dp(6)
+                    alp.bottomMargin = dp(6)
+                    layoutParams = alp
+
+                    val tvAlertStatus = TextView(this@MainActivity).apply {
+                        text = if (veh.alertsEnabled) "🔔 استلام الإنذارات على هاتفي: مفعّل (تصلك إنذارات الحرارة والأعطال)" else "🔕 استلام الإنذارات على هاتفي: متوقف"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (veh.alertsEnabled) Color.rgb(126, 242, 154) else Color.rgb(200, 150, 150))
+                        val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        layoutParams = tlp
+                    }
+                    addView(tvAlertStatus)
+
+                    val btnToggleAlert = Button(this@MainActivity).apply {
+                        text = if (veh.alertsEnabled) "كتم 🔕" else "تفعيل 🔔"
+                        textSize = 11f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(if (veh.alertsEnabled) Color.rgb(120, 45, 40) else Color.rgb(24, 85, 60))
+                        val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36))
+                        layoutParams = blp
+                        setOnClickListener { toggleVehicleAlerts(veh) }
+                    }
+                    addView(btnToggleAlert)
+                }
+                addView(alertBox)
+
+                // Assigned Drivers Box
+                val driversBox = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(12, 28, 42))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    dlp.topMargin = dp(4)
+                    layoutParams = dlp
+
+                    val headRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        addView(TextView(this@MainActivity).apply {
+                            text = "👥 السائقون المفوضون على هذه السيارة (${veh.assignedDrivers.size}):"
+                            textSize = 13f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(Color.rgb(110, 231, 255))
+                            val hlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                            layoutParams = hlp
+                        })
+                        addView(Button(this@MainActivity).apply {
+                            text = "➕ إضافة سائق"
+                            textSize = 11f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(Color.rgb(8, 23, 32))
+                            setBackgroundColor(Color.rgb(110, 231, 255))
+                            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32))
+                            layoutParams = blp
+                            setOnClickListener { showAddDriverToVehicleDialog(veh) }
+                        })
+                    }
+                    addView(headRow)
+
+                    if (veh.assignedDrivers.isEmpty()) {
+                        addView(text("لا يوجد سائق مفوض مسجل حالياً. انقر على 'إضافة سائق' لربط سائق بهذه السيارة.", 12, Color.rgb(170, 190, 210), false).apply {
+                            setPadding(0, dp(6), 0, dp(4))
+                        })
+                    } else {
+                        veh.assignedDrivers.forEachIndexed { dIdx, drv ->
+                            val driverRow = LinearLayout(this@MainActivity).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                setPadding(0, dp(6), 0, dp(6))
+                                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                                layoutParams = rlp
+
+                                val drvInfo = LinearLayout(this@MainActivity).apply {
+                                    orientation = LinearLayout.VERTICAL
+                                    val ilp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                                    layoutParams = ilp
+                                    addView(text("• ${drv.name} (${drv.roleType})", 13, Color.WHITE, true))
+                                    addView(text("  هاتف: ${drv.phone} | مفوض منذ: ${drv.assignedDate}", 11, Color.rgb(167, 203, 226), false))
+                                }
+                                addView(drvInfo)
+
+                                // Call Button
+                                addView(Button(this@MainActivity).apply {
+                                    text = "📞"
+                                    textSize = 13f
+                                    setTextColor(Color.WHITE)
+                                    setBackgroundColor(Color.rgb(25, 65, 95))
+                                    val blp = LinearLayout.LayoutParams(dp(40), dp(36))
+                                    blp.leftMargin = dp(4)
+                                    layoutParams = blp
+                                    setOnClickListener {
+                                        try {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_DIAL, android.net.Uri.parse("tel:${drv.phone}"))
+                                            startActivity(intent)
+                                        } catch (_: Exception) {
+                                            Toast.makeText(this@MainActivity, "رقم السائق: ${drv.phone}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                })
+
+                                // Remove Driver Button
+                                addView(Button(this@MainActivity).apply {
+                                    text = "❌"
+                                    textSize = 12f
+                                    setTextColor(Color.rgb(255, 122, 122))
+                                    setBackgroundColor(Color.rgb(45, 20, 25))
+                                    val blp = LinearLayout.LayoutParams(dp(40), dp(36))
+                                    blp.leftMargin = dp(4)
+                                    layoutParams = blp
+                                    setOnClickListener {
+                                        AlertDialog.Builder(this@MainActivity)
+                                            .setTitle("إلغاء تفويض السائق")
+                                            .setMessage("هل أنت متأكد من إلغاء تفويض السائق (${drv.name}) عن قيادة (${veh.name})؟")
+                                            .setPositiveButton("نعم، إلغاء") { _, _ ->
+                                                veh.assignedDrivers.removeAt(dIdx)
+                                                saveOwnerFleetVehicles()
+                                                addSecurityNotification(
+                                                    "إلغاء تفويض سائق",
+                                                    "تم إلغاء تفويض السائق (${drv.name}) عن سيارتك (${veh.name}).",
+                                                    "driver_removed",
+                                                    "info"
+                                                )
+                                                Toast.makeText(this@MainActivity, "تم إلغاء التفويض بنجاح", Toast.LENGTH_SHORT).show()
+                                                renderCurrentScreen()
+                                            }
+                                            .setNegativeButton("تراجع", null)
+                                            .show()
+                                    }
+                                })
+                            }
+                            addView(driverRow)
+                        }
+                    }
+                }
+                addView(driversBox)
+
+                // Bottom Actions (Activate as current car / Delete Car)
+                val rowActions = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(8)
+                    layoutParams = lp
+
+                    if (!isActive) {
+                        addView(Button(this@MainActivity).apply {
+                            text = "🔘 تفعيل هذه السيارة كسيارة رئيسية الآن"
+                            textSize = 12f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(Color.WHITE)
+                            setBackgroundColor(Color.rgb(32, 90, 130))
+                            val blp = LinearLayout.LayoutParams(0, dp(40), 1.5f)
+                            blp.rightMargin = dp(4)
+                            layoutParams = blp
+                            setOnClickListener { activateOwnerVehicle(veh) }
+                        })
+                    } else {
+                        addView(Button(this@MainActivity).apply {
+                            text = "📡 متابعة القراءات الحية لهذه السيارة"
+                            textSize = 12f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(Color.rgb(8, 23, 32))
+                            setBackgroundColor(Color.rgb(126, 242, 154))
+                            val blp = LinearLayout.LayoutParams(0, dp(40), 1.5f)
+                            blp.rightMargin = dp(4)
+                            layoutParams = blp
+                            setOnClickListener { switchTab("remote_fleet") }
+                        })
+                    }
+
+                    if (ownerFleetVehicles.size > 1) {
+                        addView(Button(this@MainActivity).apply {
+                            text = "🗑️ حذف"
+                            textSize = 12f
+                            setTextColor(Color.rgb(255, 122, 122))
+                            setBackgroundColor(Color.rgb(55, 20, 25))
+                            val blp = LinearLayout.LayoutParams(0, dp(40), 0.7f)
+                            blp.leftMargin = dp(4)
+                            layoutParams = blp
+                            setOnClickListener {
+                                AlertDialog.Builder(this@MainActivity)
+                                    .setTitle("حذف سيارة من الأسطول")
+                                    .setMessage("هل تريد حذف سيارة (${veh.name}) من أسطولك؟")
+                                    .setPositiveButton("نعم، حذف") { _, _ ->
+                                        ownerFleetVehicles.remove(veh)
+                                        if (isActive && ownerFleetVehicles.isNotEmpty()) {
+                                            ownerFleetVehicles[0].isCurrentActive = true
+                                            activateOwnerVehicle(ownerFleetVehicles[0])
+                                        } else {
+                                            saveOwnerFleetVehicles()
+                                            renderCurrentScreen()
+                                        }
+                                        Toast.makeText(this@MainActivity, "تم حذف السيارة من الأسطول", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .setNegativeButton("إلغاء", null)
+                                    .show()
+                            }
+                        })
+                    }
+                }
+                addView(rowActions)
+            }
+            container.addView(cardCar)
+        }
+
+        return container
+    }
+
+    private fun activateOwnerVehicle(veh: OwnerVehicle) {
+        ownerFleetVehicles.forEach { it.isCurrentActive = (it.id == veh.id) }
+        saveOwnerFleetVehicles()
+
+        preferences.edit()
+            .putString("vehicle_name", veh.name)
+            .putString("vehicle_make", veh.make)
+            .putString("vehicle_year", veh.year)
+            .putString("vehicle_vin", veh.vin)
+            .putString("vehicle_plate", veh.plateNumber)
+            .putFloat("tank_capacity_liters", veh.tankCapacity)
+            .putFloat("engine_displacement_liters", veh.displacement)
+            .putFloat("fuel_rate_baseline", veh.baseRate)
+            .putFloat("vehicle_empty_weight", veh.emptyWeightKg)
+            .putString("fuel_type", veh.fuelType)
+            .putString("vehicle_data_source", "أسطول سيارات المالك 👑")
+            .apply()
+
+        vehicleEmptyWeightKg = veh.emptyWeightKg
+        val firstDriver = veh.assignedDrivers.firstOrNull()
+        if (firstDriver != null) {
+            authorizedDriverName = firstDriver.name
+            authorizedDriverPhone = firstDriver.phone
+        }
+
+        Toast.makeText(this, "👑 تم التبديل إلى سيارتك: [${veh.name}] بنجاح!", Toast.LENGTH_SHORT).show()
+        renderCurrentScreen()
+    }
+
+    private fun toggleVehicleAlerts(veh: OwnerVehicle) {
+        veh.alertsEnabled = !veh.alertsEnabled
+        saveOwnerFleetVehicles()
+        val status = if (veh.alertsEnabled) "مفعّلة 🔔" else "معطّلة 🔕"
+        Toast.makeText(this, "تم تغيير حالة تنبيهات [${veh.name}] إلى: $status", Toast.LENGTH_SHORT).show()
+        renderCurrentScreen()
+    }
+
+    private fun showAddOwnerVehicleDialog() {
+        val dialog = AlertDialog.Builder(this)
+        dialog.setTitle("➕ إضافة سيارة جديدة لأسطول المالك")
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+        }
+
+        val etName = edit("اسم السيارة والموديل (مثال: كيا سيراتو 2022)")
+        val etMake = edit("الماركة المصنعة (مثال: كيا أو تويوتا)")
+        val etYear = edit("سنة الصنع (مثال: 2022)")
+        val etVin = edit("رقم الشاسيه VIN (17 خانة)")
+        val etPlate = edit("رقم اللوحة المرورية (مثال: س ر ق 7812)")
+        val etDriverName = edit("اسم السائق المفوض الأول (اختياري)")
+        val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
+
+        root.addView(text("أدخل مواصفات السيارة ورقم الشاسيه لتثبيتها باسمك:", 13, Color.rgb(167, 203, 226), false))
+        root.addView(etName)
+        root.addView(etMake)
+        root.addView(etYear)
+        root.addView(etVin)
+        root.addView(etPlate)
+        root.addView(text("تفويض سائق أولي (اختياري):", 12, Color.rgb(248, 199, 74), true))
+        root.addView(etDriverName)
+        root.addView(etDriverPhone)
+
+        val scroll = ScrollView(this)
+        scroll.addView(root)
+        dialog.setView(scroll)
+
+        dialog.setPositiveButton("حفظ وتأمين السيارة") { _, _ ->
+            val name = etName.text.toString().trim().ifEmpty { "سيارة المالك الجديدة" }
+            val make = etMake.text.toString().trim().ifEmpty { "عامة" }
+            val year = etYear.text.toString().trim().ifEmpty { "2022" }
+            val vin = etVin.text.toString().trim().uppercase().ifEmpty { "VIN${System.currentTimeMillis()}" }
+            val plate = etPlate.text.toString().trim().ifEmpty { "لوحة جديدة" }
+            val drvName = etDriverName.text.toString().trim()
+            val drvPhone = etDriverPhone.text.toString().trim()
+
+            // Check VIN ownership lock
+            val (canRegister, lockReason) = checkVinOwnershipLock(vin)
+            if (!canRegister) {
+                AlertDialog.Builder(this)
+                    .setTitle("🛑 حظر تسجيل الشاسيه")
+                    .setMessage(lockReason ?: "هذا الشاسيه مقيد لمالك آخر.")
+                    .setPositiveButton("حسناً", null)
+                    .show()
+                return@setPositiveButton
+            }
+
+            val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "المالك الأساسي" }) ?: "المالك الأساسي"
+            val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
+            registerAndLockVin(vin, primaryOwner, primaryPhone)
+
+            val driversList = mutableListOf<AssignedDriver>()
+            if (drvName.isNotEmpty()) {
+                val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+                driversList.add(AssignedDriver(drvName, drvPhone.ifEmpty { "01000000000" }, "سائق مفوض", today))
+            }
+
+            val newCar = OwnerVehicle(
+                id = "own-veh-${System.currentTimeMillis()}",
+                name = name,
+                make = make,
+                year = year,
+                vin = vin,
+                plateNumber = plate,
+                tankCapacity = 50.0f,
+                displacement = 1.6f,
+                baseRate = 6.8f,
+                emptyWeightKg = 1200.0f,
+                fuelType = "gasoline",
+                alertsEnabled = true,
+                isCurrentActive = false,
+                assignedDrivers = driversList
+            )
+
+            ownerFleetVehicles.add(newCar)
+            saveOwnerFleetVehicles()
+
+            addSecurityNotification(
+                "إضافة سيارة جديدة للأسطول",
+                "تمت إضافة السيارة ($name - لوحة $plate) وتأمين شاسيهها باسمك بنجاح.",
+                "car_added",
+                "info"
+            )
+
+            Toast.makeText(this, "✅ تمت إضافة [$name] لأسطولك بنجاح!", Toast.LENGTH_SHORT).show()
+            renderCurrentScreen()
+        }
+        dialog.setNegativeButton("إلغاء", null)
+        dialog.show()
+    }
+
+    private fun showAddDriverToVehicleDialog(veh: OwnerVehicle) {
+        val dialog = AlertDialog.Builder(this)
+        dialog.setTitle("➕ تفويض سائق جديد لـ: ${veh.name}")
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+        }
+
+        val etDriverName = edit("اسم السائق الكامل (مثال: سامح إبراهيم)")
+        val etDriverPhone = edit("رقم موبايل السائق (مثال: 01022334455)")
+        val etDriverRole = edit("صفة / وردية السائق (مثال: سائق نهاري، سائق عائلي)")
+
+        root.addView(text("أدخل بيانات السائق لمنحه تفويض قيادة المركبة واستقبال تقاريره:", 13, Color.rgb(167, 203, 226), false))
+        root.addView(etDriverName)
+        root.addView(etDriverPhone)
+        root.addView(etDriverRole)
+
+        dialog.setView(root)
+        dialog.setPositiveButton("تأكيد التفويض") { _, _ ->
+            val dName = etDriverName.text.toString().trim()
+            val dPhone = etDriverPhone.text.toString().trim()
+            val dRole = etDriverRole.text.toString().trim().ifEmpty { "سائق مفوض" }
+
+            if (dName.isEmpty()) {
+                Toast.makeText(this, "يرجى كتابة اسم السائق", Toast.LENGTH_SHORT).show()
+                return@setPositiveButton
+            }
+
+            val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+            val driver = AssignedDriver(
+                name = dName,
+                phone = dPhone.ifEmpty { "01000000000" },
+                roleType = dRole,
+                assignedDate = today
+            )
+
+            veh.assignedDrivers.add(driver)
+            saveOwnerFleetVehicles()
+
+            addSecurityNotification(
+                "تفويض سائق جديد",
+                "تم تفويض السائق ($dName - هاتف: ${driver.phone}) على سيارتك (${veh.name}).",
+                "driver_assigned",
+                "info"
+            )
+
+            Toast.makeText(this, "✅ تم تفويض السائق [$dName] بنجاح!", Toast.LENGTH_SHORT).show()
+            renderCurrentScreen()
+        }
+        dialog.setNegativeButton("إلغاء", null)
+        dialog.show()
+    }
+
+    private fun showSimulateMultiCarAlertsDialog() {
+        if (ownerFleetVehicles.isEmpty()) {
+            Toast.makeText(this, "لا توجد سيارات بالأسطول حالياً", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val carNames = ownerFleetVehicles.map {
+            val status = if (it.alertsEnabled) "🔔 تنبيهات مفعّلة" else "🔕 معطّلة"
+            "${it.name} (${it.plateNumber}) • $status"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("🚨 تجربة إنذار طارئ لسيارة من الأسطول")
+            .setItems(carNames) { _, which ->
+                val chosen = ownerFleetVehicles[which]
+                if (!chosen.alertsEnabled) {
+                    AlertDialog.Builder(this)
+                        .setTitle("🔕 التنبيهات معطلة لهذه السيارة")
+                        .setMessage("لقد قمت بكتم التنبيهات لسيارة (${chosen.name}).\nيرجى تفعيل زر 'استلام التنبيهات 🔔' من بطاقة السيارة لتصلك إشعاراتها على هاتفك.")
+                        .setPositiveButton("تفعيلها الآن") { _, _ ->
+                            toggleVehicleAlerts(chosen)
+                        }
+                        .setNegativeButton("إغلاق", null)
+                        .show()
+                    return@setItems
+                }
+
+                // Simulate high temperature / fault alert for this specific car
+                val drv = chosen.assignedDrivers.firstOrNull()?.name ?: "السائق المفوض"
+                val alertMsg = "⚠️ إنذار حرارة محرك زائدة: وصلت الحرارة إلى 105°C أثناء قيادة السائق ($drv) على طريق السفر!"
+
+                showSystemSafetyNotification(
+                    "multi_car_alert_${chosen.id}",
+                    "🚨 إنذار لسيارتك [${chosen.name} - ${chosen.plateNumber}]",
+                    alertMsg,
+                    true
+                )
+
+                addSecurityNotification(
+                    "🚨 إنذار طارئ: ${chosen.name}",
+                    alertMsg,
+                    "engine_overheat",
+                    "critical"
+                )
+
+                playAlertSound(true)
+
+                AlertDialog.Builder(this)
+                    .setTitle("✅ تم إطلاق الإنذار وإرسال الإشعار لهاتفك")
+                    .setMessage("تم إرسال إشعار فوري لهاتفك وتشغيل صفارة الإنذار لسيارة:\n[${chosen.name} - لوحة: ${chosen.plateNumber}]\nالسائق: $drv\nالسبب: ارتفاع حرارة المحرك إلى 105°C.")
+                    .setPositiveButton("حسناً") { _, _ ->
+                        switchTab("owner_security")
+                    }
+                    .show()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun saveOwnerFleetVehicles() {
+        val array = org.json.JSONArray()
+        ownerFleetVehicles.forEach { veh ->
+            val obj = org.json.JSONObject().apply {
+                put("id", veh.id)
+                put("name", veh.name)
+                put("make", veh.make)
+                put("year", veh.year)
+                put("vin", veh.vin)
+                put("plateNumber", veh.plateNumber)
+                put("tankCapacity", veh.tankCapacity.toDouble())
+                put("displacement", veh.displacement.toDouble())
+                put("baseRate", veh.baseRate.toDouble())
+                put("emptyWeightKg", veh.emptyWeightKg.toDouble())
+                put("fuelType", veh.fuelType)
+                put("alertsEnabled", veh.alertsEnabled)
+                put("isCurrentActive", veh.isCurrentActive)
+                val drvArray = org.json.JSONArray()
+                veh.assignedDrivers.forEach { drv ->
+                    val dObj = org.json.JSONObject().apply {
+                        put("name", drv.name)
+                        put("phone", drv.phone)
+                        put("roleType", drv.roleType)
+                        put("assignedDate", drv.assignedDate)
+                    }
+                    drvArray.put(dObj)
+                }
+                put("drivers", drvArray)
+            }
+            array.put(obj)
+        }
+        preferences.edit().putString("owner_fleet_vehicles_json", array.toString()).apply()
+    }
+
+    private fun loadOwnerFleetVehicles() {
+        val jsonStr = preferences.getString("owner_fleet_vehicles_json", null)
+        ownerFleetVehicles.clear()
+        if (!jsonStr.isNullOrEmpty()) {
+            try {
+                val array = org.json.JSONArray(jsonStr)
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val drvList = mutableListOf<AssignedDriver>()
+                    val drvArr = obj.optJSONArray("drivers")
+                    if (drvArr != null) {
+                        for (j in 0 until drvArr.length()) {
+                            val dObj = drvArr.getJSONObject(j)
+                            drvList.add(
+                                AssignedDriver(
+                                    name = dObj.optString("name", "سائق"),
+                                    phone = dObj.optString("phone", "01000000000"),
+                                    roleType = dObj.optString("roleType", "سائق مفوض"),
+                                    assignedDate = dObj.optString("assignedDate", "2026/10/20")
+                                )
+                            )
+                        }
+                    }
+                    ownerFleetVehicles.add(
+                        OwnerVehicle(
+                            id = obj.optString("id", "own-veh-$i"),
+                            name = obj.optString("name", "سيارة المالك"),
+                            make = obj.optString("make", "عامة"),
+                            year = obj.optString("year", "2020"),
+                            vin = obj.optString("vin", "KL1TD69E29B123456"),
+                            plateNumber = obj.optString("plateNumber", "س ص ع 1234"),
+                            tankCapacity = obj.optDouble("tankCapacity", 45.0).toFloat(),
+                            displacement = obj.optDouble("displacement", 1.5).toFloat(),
+                            baseRate = obj.optDouble("baseRate", 7.2).toFloat(),
+                            emptyWeightKg = obj.optDouble("emptyWeightKg", 1200.0).toFloat(),
+                            fuelType = obj.optString("fuelType", "gasoline"),
+                            alertsEnabled = obj.optBoolean("alertsEnabled", true),
+                            isCurrentActive = obj.optBoolean("isCurrentActive", (i == 0)),
+                            assignedDrivers = drvList
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+
+        if (ownerFleetVehicles.isEmpty()) {
+            val curName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
+            val curVin = preferences.getString("vehicle_vin", "KL1TD69E29B123456") ?: "KL1TD69E29B123456"
+            val curMake = preferences.getString("vehicle_make", "شيفروليه") ?: "شيفروليه"
+            val curYear = preferences.getString("vehicle_year", "2018") ?: "2018"
+
+            ownerFleetVehicles.add(
+                OwnerVehicle(
+                    id = "own-veh-1",
+                    name = curName,
+                    make = curMake,
+                    year = curYear,
+                    vin = curVin,
+                    plateNumber = "أ ب ج 4589",
+                    tankCapacity = 45.0f,
+                    displacement = 1.5f,
+                    baseRate = 7.2f,
+                    emptyWeightKg = 1070.0f,
+                    fuelType = "gasoline",
+                    alertsEnabled = true,
+                    isCurrentActive = true,
+                    assignedDrivers = mutableListOf(
+                        AssignedDriver("محمد علي (سائق أساسي)", "01012345678", "سائق أساسي", "2026/10/18"),
+                        AssignedDriver("عمر حسن (سائق بديل)", "01198765432", "سائق وردية مسائية", "2026/10/19")
+                    )
+                )
+            )
+
+            ownerFleetVehicles.add(
+                OwnerVehicle(
+                    id = "own-veh-2",
+                    name = "كيا سيراتو (Kia Cerato 1.6L)",
+                    make = "كيا",
+                    year = "2022",
+                    vin = "KNAFK411BF5123456",
+                    plateNumber = "س ر ق 7812",
+                    tankCapacity = 50.0f,
+                    displacement = 1.6f,
+                    baseRate = 6.8f,
+                    emptyWeightKg = 1230.0f,
+                    fuelType = "gasoline",
+                    alertsEnabled = true,
+                    isCurrentActive = false,
+                    assignedDrivers = mutableListOf(
+                        AssignedDriver("أحمد فتحي (سائق الشركة)", "01234567890", "سائق مفوض", "2026/10/19")
+                    )
+                )
+            )
+
+            ownerFleetVehicles.add(
+                OwnerVehicle(
+                    id = "own-veh-3",
+                    name = "تويوتا كورولا (Toyota Corolla 1.6L)",
+                    make = "تويوتا",
+                    year = "2023",
+                    vin = "JTDBR32E12345678",
+                    plateNumber = "ط ن م 3344",
+                    tankCapacity = 50.0f,
+                    displacement = 1.6f,
+                    baseRate = 6.5f,
+                    emptyWeightKg = 1280.0f,
+                    fuelType = "gasoline",
+                    alertsEnabled = false,
+                    isCurrentActive = false,
+                    assignedDrivers = mutableListOf(
+                        AssignedDriver("كابتن إبراهيم محمود", "01511223344", "سائق عائلي", "2026/10/20")
+                    )
+                )
+            )
+            saveOwnerFleetVehicles()
+        }
     }
 
     // ========================================================
