@@ -374,6 +374,9 @@ class MainActivity : Activity() {
     private var isSimulatingAlert = false
 
     // Route & Payload Trip Planner State
+    private var phoneGpsSpeedKmh: Int = 0
+    private var currentGpsLocation: Location? = null
+    private var gpsLocationListener: android.location.LocationListener? = null
     private var tripStartLocationName: String = "القاهرة"
     private var tripEndLocationName: String = "الإسكندرية"
     private var tripStartLat: Double = 30.0444
@@ -899,6 +902,7 @@ class MainActivity : Activity() {
         loadWorkshopProfile()
         loadDriverAssignedCars()
         loadOwnerFleetVehicles()
+        startPhoneGpsTracking()
 
         uiUpdateHandler.post(uiUpdateRunnable)
 
@@ -925,6 +929,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        stopPhoneGpsTracking()
         userRequestedDisconnect = true
         if (ObdForegroundService.onStopRequested === stopRequestHandler) {
             ObdForegroundService.onStopRequested = null
@@ -942,6 +947,47 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
+    private fun startPhoneGpsTracking() {
+        if (!hasLocationPermissions()) return
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        try {
+            if (gpsLocationListener == null) {
+                gpsLocationListener = object : android.location.LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        currentGpsLocation = location
+                        if (location.hasSpeed()) {
+                            phoneGpsSpeedKmh = (location.speed * 3.6f).toInt()
+                        }
+                        if (!telemetry.isConnected && !isSimulating) {
+                            telemetry.speed = phoneGpsSpeedKmh
+                            if (activeTab == "gauges") {
+                                updateGaugesTabUI()
+                            }
+                        }
+                    }
+                    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                    override fun onProviderEnabled(provider: String) {}
+                    override fun onProviderDisabled(provider: String) {}
+                }
+            }
+            gpsLocationListener?.let { listener ->
+                if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                    lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1.0f, listener)
+                }
+                if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 2000L, 5.0f, listener)
+                }
+            }
+        } catch (_: SecurityException) {} catch (_: Exception) {}
+    }
+
+    private fun stopPhoneGpsTracking() {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        try {
+            gpsLocationListener?.let { lm.removeUpdates(it) }
+        } catch (_: Exception) {}
+    }
+
     // ========================================================
     // 1. AUTH SCREEN (التسجيل وتحديد الأدوار)
     // ========================================================
@@ -956,34 +1002,34 @@ class MainActivity : Activity() {
         scroll.addView(root)
 
         root.addView(text("DriveCare 🚗", 28, Color.WHITE, true))
-        root.addView(text("تسجيل الدخول وإنشاء حسابك المعتمد", 15, Color.rgb(167, 203, 226), false))
+        root.addView(text("تسجيل الدخول", 15, Color.rgb(167, 203, 226), false))
 
         val cardAuth = card().apply {
-            addView(text("بيانات المستخدم الجديد", 18, Color.WHITE, true))
+            addView(text("بيانات الحساب", 18, Color.WHITE, true))
 
-            val etName = edit("الاسم الكامل (مثال: محمد علي)")
-            val etPhone = edit("رقم الموبايل (مثال: 01012345678)")
+            val etName = edit("الاسم الكامل")
+            val etPhone = edit("رقم الموبايل")
             val etPassword = edit("كلمة المرور")
             addView(etName)
             addView(etPhone)
             addView(etPassword)
 
-            addView(text("اختر نوع الحساب وصلاحياتك:", 14, Color.rgb(110, 231, 255), true).apply {
+            addView(text("نوع الحساب:", 14, Color.rgb(110, 231, 255), true).apply {
                 setPadding(0, dp(14), 0, dp(4))
             })
 
             val cbOwner = CheckBox(this@MainActivity).apply {
-                text = "👑 مالك سيارة (إدارة سياراتك واقتران مباشر دائم)"
+                text = "👑 مالك مركبة"
                 setTextColor(Color.WHITE)
                 isChecked = true
             }
             val cbDriver = CheckBox(this@MainActivity).apply {
-                text = "🚗 سائق (قيادة ومتابعة سيارات مفوضة لك)"
+                text = "🚗 سائق مفوض"
                 setTextColor(Color.WHITE)
                 isChecked = false
             }
             val cbGarage = CheckBox(this@MainActivity).apply {
-                text = "🔧 صاحب ورشة (فحص وتشخيص أعطال سيارات العملاء)"
+                text = "🔧 مركز فحص وصيانة"
                 setTextColor(Color.WHITE)
                 isChecked = false
             }
@@ -1035,7 +1081,7 @@ class MainActivity : Activity() {
             })
 
             // Fast Demo Login Button
-            addView(button("⚡ دخول تجريبي فوري (حساب المالك)") {
+            addView(button("⚡ دخول تجريبي سريع") {
                 preferences.edit()
                     .putBoolean("is_logged_in", true)
                     .putString("user_name", "مالك تجريبي")
@@ -1260,10 +1306,9 @@ class MainActivity : Activity() {
                 tabLayout.addView(tabBtn("🔧 جدول الصيانة", activeTab == "maint") { switchTab("maint") })
             }
             "driver" -> {
-                tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
+                tabLayout.addView(tabBtn("🏎️ مقصورة القيادة", activeTab == "gauges") { switchTab("gauges") })
                 tabLayout.addView(tabBtn("🚗 سياراتي المفوض بها", activeTab == "driver_cars") { switchTab("driver_cars") })
                 tabLayout.addView(tabBtn("⛽ تكلفة الرحلة والوزن", activeTab == "fuel") { switchTab("fuel") })
-                tabLayout.addView(tabBtn("🔍 فحص كمبيوتر السيارة", activeTab == "scanner") { switchTab("scanner") })
                 tabLayout.addView(tabBtn("🗺️ دليل وخريطة الورش", activeTab == "workshops_dir") { switchTab("workshops_dir") })
                 tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
             }
@@ -1725,8 +1770,153 @@ class MainActivity : Activity() {
     }
 
     private fun showAddOwnerVehicleDialog() {
+        val options = arrayOf(
+            "⚡ فحص وقراءة كمبيوتر السيارة آلياً (OBD Auto-Scan)",
+            "✏️ إضافة يدوية بالكامل (Manual Entry)"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("➕ إضافة سيارة جديدة لأسطولك")
+            .setItems(options) { _, which ->
+                if (which == 0) {
+                    autoScanAndAddVehicleToFleet()
+                } else {
+                    showManualAddOwnerVehicleDialog()
+                }
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun autoScanAndAddVehicleToFleet() {
+        if (!telemetry.isConnected && activeSocket == null && activeWifiSocket == null) {
+            val detected = detectCarFromPairedDevices()
+            val pairedMsg = if (detected != null) "\n• تم اكتشاف سيارة مقترنة بالبلوتوث: ${detected.first}" else ""
+            AlertDialog.Builder(this)
+                .setTitle("🔌 فحص كمبيوتر السيارة")
+                .setMessage("يرجى توصيل قطعة الـ OBD بالسيارة لقراءة بيانات الشاسيه والمواصفات آلياً.$pairedMsg\n\nهل ترغب في فحص الأجهزة المقترنة ومحاكاة القراءة التلقائية الآن؟")
+                .setPositiveButton("فحص واستيراد تلقائي ⚡") { _, _ ->
+                    val simMake = detected?.second ?: "تويوتا"
+                    val simModel = detected?.first ?: "تويوتا كورولا 2023"
+                    val simVin = "JTDBR32E" + System.currentTimeMillis().toString().takeLast(9)
+                    showConfirmAutoScannedVehicleDialog(simModel, simMake, "2023", simVin, 50f, 1.6f)
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
+            return
+        }
+
+        val progress = AlertDialog.Builder(this)
+            .setTitle("🔍 جاري فحص كمبيوتر السيارة...")
+            .setMessage("يتم الآن قراءة رقم الشاسيه (Mode 09) والمواصفات من عقل المحرك...")
+            .setCancelable(false)
+            .create()
+        progress.show()
+
+        refreshVehicleEcuData { success, msg ->
+            progress.dismiss()
+            if (success) {
+                val vin = preferences.getString("vehicle_vin", "") ?: ""
+                val name = preferences.getString("vehicle_name", "سيارة جديدة") ?: "سيارة جديدة"
+                val make = preferences.getString("vehicle_make", "عامة") ?: "عامة"
+                val year = preferences.getString("vehicle_year", "2022") ?: "2022"
+                val tank = preferences.getFloat("tank_capacity_liters", 50.0f)
+                val disp = preferences.getFloat("engine_displacement_liters", 1.6f)
+                showConfirmAutoScannedVehicleDialog(name, make, year, vin, tank, disp)
+            } else {
+                Toast.makeText(this@MainActivity, "تعذر قراءة الكمبيوتر آلياً. يمكنك الإضافة يدوياً.", Toast.LENGTH_LONG).show()
+                showManualAddOwnerVehicleDialog()
+            }
+        }
+    }
+
+    private fun showConfirmAutoScannedVehicleDialog(name: String, make: String, year: String, vin: String, tank: Float, disp: Float) {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+
+        root.addView(text("✅ تم التعرف على السيارة وقراءة بياناتها:", 14, Color.rgb(126, 242, 154), true))
+        root.addView(text("• المركبة: $name\n• الماركة: $make • الموديل: $year\n• الشاسيه: $vin\n• سعة التانك: ${tank.toInt()} لتر • سعة المحرك: ${disp}L", 13, Color.WHITE, false).apply {
+            setPadding(0, dp(6), 0, dp(6))
+        })
+
+        root.addView(text("رقم اللوحة المرورية (اختياري):", 12, Color.rgb(248, 199, 74), true))
+        val etPlate = edit("رقم اللوحة المرورية (مثال: أ ب ج 1234)")
+        root.addView(etPlate)
+
+        root.addView(text("تفويض سائق أولي (اختياري):", 12, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, 0) })
+        val etDriverName = edit("اسم السائق المفوض (اختياري)")
+        val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
+        root.addView(etDriverName)
+        root.addView(etDriverPhone)
+
+        val scroll = ScrollView(this).apply { addView(root) }
+
+        AlertDialog.Builder(this)
+            .setTitle("🚗 اعتماد السيارة بالأسطول")
+            .setView(scroll)
+            .setPositiveButton("اعتماد وتأمين الملكية") { _, _ ->
+                val plate = etPlate.text.toString().trim().ifEmpty { "بدون لوحة" }
+                val drvName = etDriverName.text.toString().trim()
+                val drvPhone = etDriverPhone.text.toString().trim()
+
+                val driversList = mutableListOf<AssignedDriver>()
+                if (drvName.isNotEmpty()) {
+                    val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+                    driversList.add(AssignedDriver(drvName, drvPhone.ifEmpty { "01000000000" }, "سائق مفوض", today))
+                }
+
+                val newCar = OwnerVehicle(
+                    id = "own-veh-${System.currentTimeMillis()}",
+                    name = name,
+                    make = make,
+                    year = year,
+                    vin = vin,
+                    plateNumber = plate,
+                    tankCapacity = tank,
+                    displacement = disp,
+                    baseRate = if (disp > 1.8f) 8.5f else 6.8f,
+                    emptyWeightKg = if (tank > 55f) 1400f else 1200f,
+                    fuelType = "gasoline",
+                    alertsEnabled = true,
+                    isCurrentActive = false,
+                    assignedDrivers = driversList
+                )
+
+                ownerFleetVehicles.add(newCar)
+                saveOwnerFleetVehicles()
+                registerAndLockVin(vin, userName.ifEmpty { "المالك الأساسي" }, userPhone.ifEmpty { "01000000000" })
+
+                if (drvName.isNotEmpty()) {
+                    val drvCar = DriverAssignedCar(
+                        id = "drv-car-${newCar.id}",
+                        name = newCar.name,
+                        make = newCar.make,
+                        year = newCar.year,
+                        vin = newCar.vin,
+                        ownerName = userName.ifEmpty { "المالك الأساسي" },
+                        ownerPhone = userPhone.ifEmpty { "01000000000" },
+                        tankCapacity = newCar.tankCapacity,
+                        baseRate = newCar.baseRate,
+                        displacement = newCar.displacement,
+                        fuelType = newCar.fuelType,
+                        emptyWeightKg = newCar.emptyWeightKg,
+                        isActive = driverAssignedCars.none { it.isActive }
+                    )
+                    driverAssignedCars.add(drvCar)
+                    saveDriverAssignedCars()
+                }
+
+                Toast.makeText(this@MainActivity, "✅ تمت إضافة [$name] لأسطولك وتأمين ملكيتها آلياً!", Toast.LENGTH_LONG).show()
+                renderCurrentScreen()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun showManualAddOwnerVehicleDialog() {
         val dialog = AlertDialog.Builder(this)
-        dialog.setTitle("➕ إضافة سيارة جديدة لأسطول المالك")
+        dialog.setTitle("➕ إضافة سيارة يدوياً")
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1741,7 +1931,6 @@ class MainActivity : Activity() {
         val etDriverName = edit("اسم السائق المفوض الأول (اختياري)")
         val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
 
-        root.addView(text("أدخل مواصفات السيارة ورقم الشاسيه لتثبيتها باسمك:", 13, Color.rgb(167, 203, 226), false))
         root.addView(etName)
         root.addView(etMake)
         root.addView(etYear)
@@ -1805,6 +1994,26 @@ class MainActivity : Activity() {
             ownerFleetVehicles.add(newCar)
             saveOwnerFleetVehicles()
 
+            if (drvName.isNotEmpty()) {
+                val drvCar = DriverAssignedCar(
+                    id = "drv-car-${newCar.id}",
+                    name = newCar.name,
+                    make = newCar.make,
+                    year = newCar.year,
+                    vin = newCar.vin,
+                    ownerName = userName.ifEmpty { "المالك الأساسي" },
+                    ownerPhone = userPhone.ifEmpty { "01000000000" },
+                    tankCapacity = newCar.tankCapacity,
+                    baseRate = newCar.baseRate,
+                    displacement = newCar.displacement,
+                    fuelType = newCar.fuelType,
+                    emptyWeightKg = newCar.emptyWeightKg,
+                    isActive = driverAssignedCars.none { it.isActive }
+                )
+                driverAssignedCars.add(drvCar)
+                saveDriverAssignedCars()
+            }
+
             addSecurityNotification(
                 "إضافة سيارة جديدة للأسطول",
                 "تمت إضافة السيارة ($name - لوحة $plate) وتأمين شاسيهها باسمك بنجاح.",
@@ -1828,30 +2037,29 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(12), dp(20), dp(12))
         }
 
-        val etDriverName = edit("اسم السائق الكامل (مثال: سامح إبراهيم)")
-        val etDriverPhone = edit("رقم موبايل السائق (مثال: 01022334455)")
+        val etDriverName = edit("اسم السائق الكامل (إلزامي)")
+        val etDriverPhone = edit("رقم موبايل السائق (إلزامي للربط بحسابه)")
         val etDriverRole = edit("صفة / وردية السائق (مثال: سائق نهاري، سائق عائلي)")
 
-        root.addView(text("أدخل بيانات السائق لمنحه تفويض قيادة المركبة واستقبال تقاريره:", 13, Color.rgb(167, 203, 226), false))
         root.addView(etDriverName)
         root.addView(etDriverPhone)
         root.addView(etDriverRole)
 
         dialog.setView(root)
-        dialog.setPositiveButton("تأكيد التفويض") { _, _ ->
+        dialog.setPositiveButton("تأكيد التفويض والربط") { _, _ ->
             val dName = etDriverName.text.toString().trim()
             val dPhone = etDriverPhone.text.toString().trim()
             val dRole = etDriverRole.text.toString().trim().ifEmpty { "سائق مفوض" }
 
-            if (dName.isEmpty()) {
-                Toast.makeText(this, "يرجى كتابة اسم السائق", Toast.LENGTH_SHORT).show()
+            if (dName.isEmpty() || dPhone.isEmpty()) {
+                Toast.makeText(this, "يرجى كتابة اسم السائق ورقم هاتفه (إلزامي للربط بحسابه)", Toast.LENGTH_SHORT).show()
                 return@setPositiveButton
             }
 
             val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
             val driver = AssignedDriver(
                 name = dName,
-                phone = dPhone.ifEmpty { "01000000000" },
+                phone = dPhone,
                 roleType = dRole,
                 assignedDate = today
             )
@@ -1859,14 +2067,37 @@ class MainActivity : Activity() {
             veh.assignedDrivers.add(driver)
             saveOwnerFleetVehicles()
 
+            // Auto-link to driver's assigned cars list
+            val existing = driverAssignedCars.find { it.vin == veh.vin }
+            if (existing == null) {
+                driverAssignedCars.add(
+                    DriverAssignedCar(
+                        id = "drv-car-${veh.id}",
+                        name = veh.name,
+                        make = veh.make,
+                        year = veh.year,
+                        vin = veh.vin,
+                        ownerName = userName.ifEmpty { "المالك الأساسي" },
+                        ownerPhone = userPhone.ifEmpty { "01000000000" },
+                        tankCapacity = veh.tankCapacity,
+                        baseRate = veh.baseRate,
+                        displacement = veh.displacement,
+                        fuelType = veh.fuelType,
+                        emptyWeightKg = veh.emptyWeightKg,
+                        isActive = driverAssignedCars.none { it.isActive }
+                    )
+                )
+                saveDriverAssignedCars()
+            }
+
             addSecurityNotification(
                 "تفويض سائق جديد",
-                "تم تفويض السائق ($dName - هاتف: ${driver.phone}) على سيارتك (${veh.name}).",
+                "تم تفويض السائق ($dName - هاتف: $dPhone) على سيارتك (${veh.name}).",
                 "driver_assigned",
                 "info"
             )
 
-            Toast.makeText(this, "✅ تم تفويض السائق [$dName] بنجاح!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "✅ تم تفويض السائق [$dName] وربط السيارة بحسابه بنجاح!", Toast.LENGTH_SHORT).show()
             renderCurrentScreen()
         }
         dialog.setNegativeButton("إلغاء", null)
@@ -2680,7 +2911,7 @@ class MainActivity : Activity() {
                             lp.bottomMargin = dp(4)
                             layoutParams = lp
                             addView(text("⚠️ كود: $code - ${diag.titleAr}", 13, Color.rgb(255, 122, 122), true))
-                            addView(text("التفاصيل: ${diag.descAr} • النظام: ${diag.system}", 12, Color.WHITE, false))
+                            addView(text("التفاصيل: ${diag.causesAr} • النظام: ${diag.system}", 12, Color.WHITE, false))
                         }
                         addView(dtcBox)
                     }
@@ -2755,8 +2986,7 @@ class MainActivity : Activity() {
 
         // Header Card
         val cardHeader = card().apply {
-            addView(text("🏪 نافذة تسجيل وتحديث بيانات الورشة والمركز الفني", 18, Color.rgb(248, 199, 74), true))
-            addView(text("سجل بيانات مركزك ونشاطك وإحداثيات GPS لتظهر فورياً لجميع السائقين في دليل وخريطة الورش والتطبيق العام.", 13, Color.rgb(167, 203, 226), false))
+            addView(text("🏪 بيانات الورشة والمركز الفني", 18, Color.rgb(248, 199, 74), true))
         }
         container.addView(cardHeader)
 
@@ -2891,42 +3121,24 @@ class MainActivity : Activity() {
             }
             addView(etSpecialty)
 
-            // 7. GPS Coordinates
-            addView(text("📍 الموقع الجغرافي للورشة (GPS Coordinates):", 14, Color.rgb(248, 199, 74), true))
-            val gpsRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val glp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                glp.bottomMargin = dp(8)
-                layoutParams = glp
-            }
+            // 7. Workshop Location (GPS / Google Maps)
+            var pickedLat = myWorkshopLat
+            var pickedLng = myWorkshopLng
 
-            val etLat = EditText(this@MainActivity).apply {
-                setText(myWorkshopLat.toString())
-                setTextColor(Color.WHITE)
-                textSize = 13f
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
+            addView(text("📍 موقع الورشة الجغرافي:", 14, Color.rgb(248, 199, 74), true).apply {
+                setPadding(0, dp(6), 0, dp(2))
+            })
+
+            val tvLocDisplay = text("الموقع الحالي: ${String.format(java.util.Locale.US, "%.5f, %.5f", pickedLat, pickedLng)}", 13, Color.rgb(167, 203, 226), false).apply {
+                setPadding(dp(10), dp(10), dp(10), dp(10))
                 setBackgroundColor(Color.rgb(18, 38, 58))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.rightMargin = dp(4)
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
                 layoutParams = lp
             }
-            val etLng = EditText(this@MainActivity).apply {
-                setText(myWorkshopLng.toString())
-                setTextColor(Color.WHITE)
-                textSize = 13f
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL or android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
-                setBackgroundColor(Color.rgb(18, 38, 58))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.leftMargin = dp(4)
-                layoutParams = lp
-            }
-            gpsRow.addView(etLat)
-            gpsRow.addView(etLng)
-            addView(gpsRow)
+            addView(tvLocDisplay)
 
-            // Button to set quick location presets or capture GPS
+            // Button to capture real GPS or pick on Google Maps
             val btnLocRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -2934,32 +3146,50 @@ class MainActivity : Activity() {
                 layoutParams = lp
 
                 addView(Button(this@MainActivity).apply {
-                    text = "🎯 إحداثيات القاهرة والجيزة"
+                    text = "📍 تحديد موقع الورشة من موقعي الحالي (GPS)"
                     textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
                     setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(30, 50, 70))
-                    val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                    setBackgroundColor(Color.rgb(20, 100, 70))
+                    val blp = LinearLayout.LayoutParams(0, dp(40), 1f)
                     blp.rightMargin = dp(4)
                     layoutParams = blp
                     setOnClickListener {
-                        etLat.setText("29.9870")
-                        etLng.setText("31.1500")
-                        Toast.makeText(this@MainActivity, "تم تعيين إحداثيات الجيزة/الهرم.", Toast.LENGTH_SHORT).show()
+                        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                        val loc = currentGpsLocation ?: try {
+                            lm?.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: lm?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        } catch (_: SecurityException) { null }
+
+                        if (loc != null) {
+                            pickedLat = loc.latitude
+                            pickedLng = loc.longitude
+                            myWorkshopLat = pickedLat
+                            myWorkshopLng = pickedLng
+                            tvLocDisplay.text = "الموقع الحالي: ${String.format(java.util.Locale.US, "%.5f, %.5f", pickedLat, pickedLng)} (GPS 📍)"
+                            Toast.makeText(this@MainActivity, "تم التقاط موقعك الجغرافي الفعلي بدقة 📍", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "يرجى تشغيل الـ GPS بالهاتف لالتقاط الموقع تلقائياً", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 })
 
                 addView(Button(this@MainActivity).apply {
-                    text = "🎯 إحداثيات الإسكندرية"
+                    text = "🗺️ فتح وتحديد الموقع في Google Maps"
                     textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
                     setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(30, 50, 70))
-                    val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                    setBackgroundColor(Color.rgb(36, 77, 111))
+                    val blp = LinearLayout.LayoutParams(0, dp(40), 1f)
                     blp.leftMargin = dp(4)
                     layoutParams = blp
                     setOnClickListener {
-                        etLat.setText("31.2001")
-                        etLng.setText("29.9187")
-                        Toast.makeText(this@MainActivity, "تم تعيين إحداثيات الإسكندرية.", Toast.LENGTH_SHORT).show()
+                        try {
+                            val mapUri = Uri.parse("geo:$pickedLat,$pickedLng?q=$pickedLat,$pickedLng(${Uri.encode(myWorkshopName.ifEmpty { "موقع الورشة" })})")
+                            val intent = Intent(Intent.ACTION_VIEW, mapUri)
+                            startActivity(intent)
+                        } catch (_: Exception) {
+                            Toast.makeText(this@MainActivity, "الإحداثيات الحالية: $pickedLat, $pickedLng", Toast.LENGTH_LONG).show()
+                        }
                     }
                 })
             }
@@ -2967,11 +3197,11 @@ class MainActivity : Activity() {
 
             // Save / Update Profile Button
             addView(Button(this@MainActivity).apply {
-                text = "💾 حفظ ونشر بيانات الورشة في الدليل العام للمركبات"
+                text = "💾 حفظ ونشر بيانات الورشة"
                 textSize = 14f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(16, 120, 70))
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(Color.rgb(248, 199, 74))
                 val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
                 blp.topMargin = dp(6)
                 layoutParams = blp
@@ -2981,8 +3211,6 @@ class MainActivity : Activity() {
                     val phone = etPhone.text.toString().trim()
                     val address = etAddress.text.toString().trim()
                     val specialty = etSpecialty.text.toString().trim()
-                    val lat = etLat.text.toString().toDoubleOrNull() ?: myWorkshopLat
-                    val lng = etLng.text.toString().toDoubleOrNull() ?: myWorkshopLng
 
                     if (name.isEmpty() || phone.isEmpty()) {
                         Toast.makeText(this@MainActivity, "يرجى كتابة اسم الورشة ورقم هاتف التواصل على الأقل.", Toast.LENGTH_SHORT).show()
@@ -2995,12 +3223,12 @@ class MainActivity : Activity() {
                     myWorkshopAddress = if (address.isNotEmpty()) address else "مصر"
                     myWorkshopSpecialty = if (specialty.isNotEmpty()) specialty else "صيانة عامة وفحص"
                     myWorkshopCategory = selectedCategory
-                    myWorkshopLat = lat
-                    myWorkshopLng = lng
+                    myWorkshopLat = pickedLat
+                    myWorkshopLng = pickedLng
 
                     saveWorkshopProfile()
 
-                    Toast.makeText(this@MainActivity, "✅ تم حفظ ونشر بيانات الورشة بنجاح، وظهورها للسائقين بالدليل!", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "✅ تم حفظ ونشر بيانات الورشة بنجاح!", Toast.LENGTH_LONG).show()
                     renderCurrentScreen()
                 }
             })
@@ -3375,58 +3603,28 @@ class MainActivity : Activity() {
         }
 
         if (driverAssignedCars.isEmpty()) {
-            driverAssignedCars.add(
-                DriverAssignedCar(
-                    id = "drv-car-1",
-                    name = "شيفروليه أفيو (Chevrolet Aveo 1.5L)",
-                    make = "شيفروليه",
-                    year = "2018",
-                    vin = "KL1TD69E29B123456",
-                    ownerName = "أحمد سالم (المالك)",
-                    ownerPhone = "01011223344",
-                    tankCapacity = 45.0f,
-                    baseRate = 7.2f,
-                    displacement = 1.5f,
-                    fuelType = "gasoline",
-                    emptyWeightKg = 1070.0f,
-                    isActive = true
-                )
-            )
-            driverAssignedCars.add(
-                DriverAssignedCar(
-                    id = "drv-car-2",
-                    name = "تويوتا كورولا (Toyota Corolla 1.6L)",
-                    make = "تويوتا",
-                    year = "2021",
-                    vin = "JTDBR32E12345678",
-                    ownerName = "شركة الفرسان للنقل (المالك)",
-                    ownerPhone = "01122334455",
-                    tankCapacity = 50.0f,
-                    baseRate = 6.5f,
-                    displacement = 1.6f,
-                    fuelType = "gasoline",
-                    emptyWeightKg = 1250.0f,
-                    isActive = false
-                )
-            )
-            driverAssignedCars.add(
-                DriverAssignedCar(
-                    id = "drv-car-3",
-                    name = "هيونداي إلنترا (Hyundai Elantra CN7)",
-                    make = "هيونداي",
-                    year = "2022",
-                    vin = "KMHD84LF7NU987654",
-                    ownerName = "محمود عبد العزيز (المالك)",
-                    ownerPhone = "01233445566",
-                    tankCapacity = 47.0f,
-                    baseRate = 6.8f,
-                    displacement = 1.6f,
-                    fuelType = "gasoline",
-                    emptyWeightKg = 1210.0f,
-                    isActive = false
-                )
-            )
-            saveDriverAssignedCars()
+            if (ownerFleetVehicles.isNotEmpty()) {
+                ownerFleetVehicles.forEachIndexed { idx, veh ->
+                    driverAssignedCars.add(
+                        DriverAssignedCar(
+                            id = "drv-car-${veh.id}",
+                            name = veh.name,
+                            make = veh.make,
+                            year = veh.year,
+                            vin = veh.vin,
+                            ownerName = preferences.getString("user_name", "المالك الأساسي") ?: "المالك الأساسي",
+                            ownerPhone = preferences.getString("user_phone", "01000000000") ?: "01000000000",
+                            tankCapacity = veh.tankCapacity,
+                            baseRate = veh.baseRate,
+                            displacement = veh.displacement,
+                            fuelType = veh.fuelType,
+                            emptyWeightKg = veh.emptyWeightKg,
+                            isActive = (idx == 0)
+                        )
+                    )
+                }
+                saveDriverAssignedCars()
+            }
         }
     }
 
@@ -3841,9 +4039,35 @@ class MainActivity : Activity() {
     private fun buildGaugesTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val activeVehName = preferences.getString("vehicle_name", "تويوتا (Toyota) (2014)") ?: "تويوتا (Toyota) (2014)"
+        val activeVehName = preferences.getString("vehicle_name", "مركبتي") ?: "مركبتي"
         val primaryOwner = preferences.getString("vehicle_primary_owner", "") ?: ""
         val ownerDisplay = if (primaryOwner.isNotEmpty()) " • المالك: $primaryOwner 👑" else ""
+        val isLive = telemetry.isConnected || isSimulating
+
+        // Active Simulation Banner
+        if (isSimulating) {
+            val simBanner = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.rgb(64, 38, 10))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                gravity = Gravity.CENTER_VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+
+                addView(text("⚠️ محاكاة تجريبية نشطة (بيانات افتراضية)", 12, Color.rgb(255, 200, 100), true).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                addView(Button(this@MainActivity).apply {
+                    text = "تصفير وإيقاف ✖"
+                    textSize = 10f
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(160, 40, 40))
+                    setOnClickListener { toggleSimulation() }
+                })
+            }
+            container.addView(simBanner)
+        }
 
         val cardGauges = card().apply {
             val titleRow = LinearLayout(context).apply {
@@ -3851,10 +4075,21 @@ class MainActivity : Activity() {
                 addView(text("عداد وبيانات: $activeVehName$ownerDisplay", 16, Color.WHITE, true).apply {
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 })
-                tvConnectionState = text("غير متصل", 12, Color.rgb(255, 122, 122), true)
+                tvConnectionState = text(if (isLive) (if (isSimulating) "محاكاة 🟢" else "متصل 🟢") else "غير متصل", 12, if (isLive) Color.rgb(126, 242, 154) else Color.rgb(255, 122, 122), true)
                 addView(tvConnectionState)
             }
             addView(titleRow)
+
+            val speedDisplay = if (isLive) "${telemetry.speed} km/h" else if (phoneGpsSpeedKmh > 0) "$phoneGpsSpeedKmh km/h (GPS 🛰️)" else "0 km/h"
+            val rpmDisplay = if (isLive) "${telemetry.rpm} RPM" else "-- RPM"
+            val tempDisplay = if (isLive) "${telemetry.coolantTemp} °C" else "-- °C"
+            val battDisplay = if (isLive) "${String.format("%.1f", telemetry.batteryVoltage)} V" else "-- V"
+            val fuelDisplay = if (isLive) "${telemetry.fuelLevel} %" else "-- %"
+            val vinDisplay = if (telemetry.vin.isNotBlank()) telemetry.vin else preferences.getString("vehicle_vin", "--") ?: "--"
+            val instantDisplay = if (isLive) "${String.format("%.1f", telemetry.instantFuelLPer100Km)} L/100" else "-- L/100"
+            val tripDisplay = if (isLive) "${String.format("%.1f", telemetry.tripAverageFuelRate)} L/100" else "-- L/100"
+            val loadDisplay = if (isLive) "${telemetry.engineLoadPercent} %" else "-- %"
+            val tpsDisplay = if (isLive) "${telemetry.throttlePercent} %" else "-- %"
 
             val row1 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -3862,8 +4097,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(8)
                 layoutParams = lp
             }
-            tvSpeed = metricBox("السرعة الحالية", "0 km/h", Color.rgb(110, 231, 255))
-            tvRpm = metricBox("المحرك (RPM)", "0 RPM", Color.rgb(126, 242, 154))
+            tvSpeed = metricBox("السرعة الحالية", speedDisplay, Color.rgb(110, 231, 255))
+            tvRpm = metricBox("المحرك", rpmDisplay, Color.rgb(126, 242, 154))
             row1.addView(tvSpeed.parent as View)
             row1.addView(tvRpm.parent as View)
             addView(row1)
@@ -3874,8 +4109,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            tvTemp = metricBox("حرارة التبريد", "88 °C", Color.rgb(248, 199, 74))
-            tvBattery = metricBox("شحن البطارية", "13.8 V", Color.rgb(110, 231, 255))
+            tvTemp = metricBox("حرارة التبريد", tempDisplay, Color.rgb(248, 199, 74))
+            tvBattery = metricBox("شحن البطارية", battDisplay, Color.rgb(110, 231, 255))
             row2.addView(tvTemp.parent as View)
             row2.addView(tvBattery.parent as View)
             addView(row2)
@@ -3886,8 +4121,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            tvFuel = metricBox("مستوى الوقود", "72 %", Color.rgb(126, 242, 154))
-            tvVin = metricBox("كود الشاسيه VIN", preferences.getString("vehicle_vin", "JTDBR32E12345678") ?: "", Color.WHITE)
+            tvFuel = metricBox("مستوى الوقود", fuelDisplay, Color.rgb(126, 242, 154))
+            tvVin = metricBox("رقم الشاسيه VIN", vinDisplay, Color.WHITE)
             row3.addView(tvFuel.parent as View)
             row3.addView(tvVin.parent as View)
             addView(row3)
@@ -3898,8 +4133,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            tvInstantFuel = metricBox("الاستهلاك اللحظي", "0.0 L/100km", Color.rgb(248, 199, 74))
-            tvTripFuel = metricBox("متوسط الرحلة والمسافة", "7.2 L/100 (0 كم)", Color.rgb(110, 231, 255))
+            tvInstantFuel = metricBox("الاستهلاك اللحظي", instantDisplay, Color.rgb(248, 199, 74))
+            tvTripFuel = metricBox("متوسط الرحلة", tripDisplay, Color.rgb(110, 231, 255))
             row4.addView(tvInstantFuel.parent as View)
             row4.addView(tvTripFuel.parent as View)
             addView(row4)
@@ -3910,19 +4145,19 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            tvEngineLoad = metricBox("حمل المحرك (Load)", "0 %", Color.rgb(248, 199, 74))
-            tvThrottle = metricBox("دواسة البنزين (TPS)", "0 %", Color.rgb(126, 242, 154))
+            tvEngineLoad = metricBox("حمل المحرك", loadDisplay, Color.rgb(248, 199, 74))
+            tvThrottle = metricBox("دواسة الوقود", tpsDisplay, Color.rgb(126, 242, 154))
             row5.addView(tvEngineLoad.parent as View)
             row5.addView(tvThrottle.parent as View)
             addView(row5)
 
-            tvDtc = text("لمبة الأعطال: لا توجد أعطال (Check Engine: OFF)", 13, Color.rgb(126, 242, 154), true).apply {
+            tvDtc = text(if (isLive) (if (telemetry.dtcCodes.isEmpty()) "لمبة الأعطال: سليمة (OFF)" else "أعطال نشطة: ${telemetry.dtcCodes.size}") else "لمبة الأعطال: بانتظار الاتصال بالسيارة", 13, if (isLive && telemetry.dtcCodes.isNotEmpty()) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154), true).apply {
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 setBackgroundColor(Color.rgb(10, 28, 42))
             }
             addView(tvDtc)
 
-            tvFuelSourceBadge = text("⚡ مصدر قياس الوقود الآلي: ${telemetry.fuelCalculationSource}", 12, Color.rgb(110, 231, 255), true).apply {
+            tvFuelSourceBadge = text(if (isLive) "⚡ مصدر قياس الوقود: ${telemetry.fuelCalculationSource}" else if (phoneGpsSpeedKmh > 0) "🛰️ متصل بنظام تحديد المواقع GPS للهاتف" else "بانتظار قراءة الحساسات من كمبيوتر السيارة أو تشغيل المحاكي", 12, Color.rgb(110, 231, 255), true).apply {
                 setPadding(dp(8), dp(6), dp(8), dp(6))
                 setBackgroundColor(Color.rgb(14, 34, 52))
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -3931,21 +4166,21 @@ class MainActivity : Activity() {
             }
             addView(tvFuelSourceBadge)
 
-            addView(button("🔍 فحص واستكشاف كمبيوترات السيارة ذاتياً (قراءة العدادات والمكينة تلقائياً)") {
+            addView(button("🔍 فحص كمبيوتر السيارة (Scan ECU)") {
                 scanAllFuelComputers()
             }.apply {
                 setBackgroundColor(Color.rgb(16, 185, 129))
                 setTextColor(Color.WHITE)
             })
 
-            addView(button("⛽ ضبط ومعايرة خزان الوقود (يدوي / تثبيت / إضافة لترات)") {
+            addView(button("⛽ ضبط ومعايرة الوقود") {
                 showFuelCalibrationDialog()
             }.apply {
                 setBackgroundColor(Color.rgb(248, 199, 74))
                 setTextColor(Color.rgb(8, 23, 32))
             })
 
-            addView(button("⚡ تشغيل / إيقاف محاكي كمبيوتر السيارة") {
+            addView(button(if (isSimulating) "⏹️ إيقاف محاكي كمبيوتر السيارة" else "⚡ تشغيل محاكي كمبيوتر السيارة") {
                 toggleSimulation()
             }.apply {
                 setBackgroundColor(Color.rgb(36, 77, 111))
@@ -3953,6 +4188,74 @@ class MainActivity : Activity() {
             })
         }
         container.addView(cardGauges)
+
+        // DRIVER COCKPIT ENRICHED EXTENSION (بطاقة السائق الخاصة لخدمات الطريق والسلامة)
+        if (currentRole == "driver") {
+            val cardDriverSafety = card().apply {
+                addView(text("💡 أسلوب القيادة والسلامة", 15, Color.rgb(110, 231, 255), true))
+
+                val statsRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(6)
+                    layoutParams = lp
+                }
+                val tvScore = metricBox("تقييم الأمان", "98 / 100 ⭐", Color.rgb(126, 242, 154))
+                val tvSpeedSrc = metricBox("مصدر السرعة", if (telemetry.isConnected) "OBD السيارة 🔌" else if (phoneGpsSpeedKmh > 0) "GPS الهاتف 🛰️" else "الهاتف / OBD", Color.rgb(248, 199, 74))
+                statsRow.addView(tvScore.parent as View)
+                statsRow.addView(tvSpeedSrc.parent as View)
+                addView(statsRow)
+
+                addView(text("🚨 طوارئ ومساعدة الطريق:", 13, Color.rgb(255, 140, 90), true).apply {
+                    setPadding(0, dp(8), 0, dp(4))
+                })
+
+                val actionRow = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    layoutParams = lp
+                }
+
+                val activeCar = driverAssignedCars.find { it.isActive } ?: driverAssignedCars.firstOrNull()
+                val ownerContact = activeCar?.ownerPhone ?: preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+
+                actionRow.addView(Button(this@MainActivity).apply {
+                    text = "📞 اتصال طوارئ بالمالك"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(160, 40, 40))
+                    val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                    lp.setMargins(0, 0, dp(3), 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        try {
+                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$ownerContact"))
+                            startActivity(intent)
+                        } catch (e: Exception) {
+                            Toast.makeText(this@MainActivity, "رقم هاتف المالك: $ownerContact", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                })
+
+                actionRow.addView(Button(this@MainActivity).apply {
+                    text = "🗺️ أقرب ورشة صيانة"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(36, 77, 111))
+                    val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                    lp.setMargins(dp(3), 0, 0, 0)
+                    layoutParams = lp
+                    setOnClickListener {
+                        switchTab("workshops_dir")
+                    }
+                })
+
+                addView(actionRow)
+            }
+            container.addView(cardDriverSafety)
+        }
 
         return container
     }
@@ -4755,7 +5058,7 @@ class MainActivity : Activity() {
 
         // --- Card Hero: Overview KPI Summary Bar ---
         val cardHero = card().apply {
-            addView(text("⛽ حاسبة تكلفة التشغيل والرحلات (وقود + زيت + إهلاك)", 17, Color.rgb(126, 242, 154), true))
+            addView(text("⛽ تكلفة التشغيل والرحلات", 17, Color.rgb(126, 242, 154), true))
 
             val r1 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -4763,8 +5066,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            r1.addView(metricBox("تكلفة الوقود/كم (فارغة)", String.format("%.2f ج.م", emptyFuelCostPerKm), Color.rgb(110, 231, 255)).parent as View)
-            r1.addView(metricBox("استهلاك الزيت/كم", String.format("%.2f ج.م", oilCostPerKm), Color.rgb(248, 199, 74)).parent as View)
+            r1.addView(metricBox("الوقود/كم", String.format("%.2f ج.م", emptyFuelCostPerKm), Color.rgb(110, 231, 255)).parent as View)
+            r1.addView(metricBox("الزيت/كم", String.format("%.2f ج.م", oilCostPerKm), Color.rgb(248, 199, 74)).parent as View)
             addView(r1)
 
             val r2 = LinearLayout(context).apply {
@@ -4774,8 +5077,8 @@ class MainActivity : Activity() {
                 layoutParams = lp
             }
             val activeCostPerKm = if (hasDrivenFirstKm) (realCalibratedFuelCostPerKm + oilCostPerKm + depCostPerKm) else (loadedFuelCostPerKm + oilCostPerKm + depCostPerKm)
-            r2.addView(metricBox("إهلاك وتآكل السيارة/كم", String.format("%.2f ج.م", depCostPerKm), Color.rgb(255, 180, 100)).parent as View)
-            val mbActiveCost = metricBox("إجمالي التكلفة الشاملة/كم", String.format("%.2f ج.م", activeCostPerKm), Color.rgb(126, 242, 154))
+            r2.addView(metricBox("الإهلاك/كم", String.format("%.2f ج.م", depCostPerKm), Color.rgb(255, 180, 100)).parent as View)
+            val mbActiveCost = metricBox("إجمالي التكلفة/كم", String.format("%.2f ج.م", activeCostPerKm), Color.rgb(126, 242, 154))
             tvFuelTabActiveCostPerKm = mbActiveCost
             r2.addView(mbActiveCost.parent as View)
             addView(r2)
@@ -4793,7 +5096,7 @@ class MainActivity : Activity() {
             tvFuelTabTankPercent = mbTank
             r3.addView(mbTank.parent as View)
 
-            val mbRate = metricBox("المعدل الحالي", String.format("%.1f L/100 (%s)", effectiveRate, if (hasDrivenFirstKm) "فعلي مقاس" else "تقديري"), Color.rgb(110, 231, 255))
+            val mbRate = metricBox("المعدل الحالي", String.format("%.1f L/100 (%s)", effectiveRate, if (hasDrivenFirstKm) "فعلي" else "تقديري"), Color.rgb(110, 231, 255))
             tvFuelTabEffectiveRate = mbRate
             r3.addView(mbRate.parent as View)
             addView(r3)
@@ -4821,7 +5124,7 @@ class MainActivity : Activity() {
             btnRow.addView(quickActionBtn("⚙️ نوع الوقود", Color.rgb(24, 52, 78)) { showFuelTypeDialog() })
             addView(btnRow)
 
-            val tvSensorInfo = text("• الحساس النشط: ${telemetry.fuelCalculationSource} | تدفق الوقود: ${String.format("%.2f", telemetry.instantFuelLitersPerHour)} لتر/ساعة", 11, Color.rgb(167, 203, 226), false).apply {
+            val tvSensorInfo = text("• الحساس النشط: ${telemetry.fuelCalculationSource} | التدفق: ${String.format("%.2f", telemetry.instantFuelLitersPerHour)} لتر/ساعة", 11, Color.rgb(167, 203, 226), false).apply {
                 setPadding(0, dp(4), 0, 0)
             }
             tvFuelTabSensorInfoText = tvSensorInfo
@@ -4830,19 +5133,19 @@ class MainActivity : Activity() {
         container.addView(cardHero)
 
         // --- SECTION 1 (Collapsible): Future Trip Calculator ---
-        val sectionTripFuture = collapsibleSection("حاسبة وتكلفة الرحلة المستقبلية (مسار + حمولة + تكلفة)", "🛣️", initiallyExpanded = true) { sec ->
-            sec.addView(text("🚩 نقطة الانطلاق: $tripStartLocationName | 🏁 نقطة الوصول: $tripEndLocationName", 13, Color.rgb(167, 203, 226), false))
+        val sectionTripFuture = collapsibleSection("حاسبة وتكلفة الرحلة", "🛣️", initiallyExpanded = true) { sec ->
+            sec.addView(text("🚩 من: $tripStartLocationName | 🏁 إلى: $tripEndLocationName", 13, Color.rgb(167, 203, 226), false))
 
-            // 1. Distance Input Row (No quick preset buttons)
-            sec.addView(text("المسافة المستقبلية للمشوار بالكيلومتر:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, dp(2)) })
-            val distRow = LinearLayout(context).apply {
+            // 1. Distance Input Row
+            sec.addView(text("مسافة الرحلة بالكيلومتر:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, dp(2)) })
+            val distRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.bottomMargin = dp(6)
                 layoutParams = lp
             }
-            val etManualDist = edit("اكتب المسافة بالكم (مثال: 220)").apply {
+            val etManualDist = edit("المسافة بالكم").apply {
                 setText(String.format("%.0f", plannedRouteDistanceKm))
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
@@ -4854,7 +5157,7 @@ class MainActivity : Activity() {
                 if (d != null && d > 0f) {
                     preferences.edit().putFloat("planned_route_distance", d).apply()
                     plannedRouteDistanceKm = d
-                    Toast.makeText(this@MainActivity, "تم اعتماد مسافة: ${String.format("%.1f", d)} كم 🛣️", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم اعتماد مسافة: ${String.format("%.1f", d)} كم", Toast.LENGTH_SHORT).show()
                     switchTab("fuel")
                 } else {
                     Toast.makeText(this@MainActivity, "يرجى كتابة رقم مسافة صحيح", Toast.LENGTH_SHORT).show()
@@ -4869,7 +5172,7 @@ class MainActivity : Activity() {
             distRow.addView(btnSaveDist)
             sec.addView(distRow)
 
-            val mapBtnRow = LinearLayout(context).apply {
+            val mapBtnRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.bottomMargin = dp(6)
@@ -4899,16 +5202,16 @@ class MainActivity : Activity() {
             mapBtnRow.addView(btnGoogleNav)
             sec.addView(mapBtnRow)
 
-            // 2. Cargo Weight Input Row (No quick preset buttons)
-            sec.addView(text("وزن الحمولة الإضافية (ركاب وحقائب وبضائع) بالكجم:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, dp(2)) })
-            val weightRow = LinearLayout(context).apply {
+            // 2. Cargo Weight Input Row
+            sec.addView(text("وزن الحمولة الإضافية (كجم):", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            val weightRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.bottomMargin = dp(6)
                 layoutParams = lp
             }
-            val etWeight = edit("أدخل وزن الحمولة كجم (مثال: 150)").apply {
+            val etWeight = edit("وزن الحمولة كجم").apply {
                 setText(String.format("%.0f", plannedCargoWeightKg))
                 inputType = InputType.TYPE_CLASS_NUMBER
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
@@ -4919,7 +5222,7 @@ class MainActivity : Activity() {
                 val w = etWeight.text.toString().toFloatOrNull() ?: 0f
                 preferences.edit().putFloat("planned_cargo_weight", w).apply()
                 plannedCargoWeightKg = w
-                Toast.makeText(this@MainActivity, "تم تطبيق وزن حمولة $w كجم", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "تم حفظ وزن الحمولة: $w كجم", Toast.LENGTH_SHORT).show()
                 switchTab("fuel")
             }.apply {
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -4932,15 +5235,15 @@ class MainActivity : Activity() {
             sec.addView(weightRow)
 
             // 3. Engine Baseline Consumption Rate Row
-            sec.addView(text("متوسط استهلاك المحرك فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, dp(2)) })
-            val rateRow = LinearLayout(context).apply {
+            sec.addView(text("استهلاك المحرك فارغة (لتر/100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, dp(2)) })
+            val rateRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.bottomMargin = dp(8)
                 layoutParams = lp
             }
-            val etBaseRate = edit("استهلاك المحرك (مثال: 7.2)").apply {
+            val etBaseRate = edit("المعدل (لتر/100كم)").apply {
                 setText(String.format("%.1f", baselineFuelRate))
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
@@ -4951,10 +5254,10 @@ class MainActivity : Activity() {
                 val r = etBaseRate.text.toString().toFloatOrNull()
                 if (r != null && r in 2.0f..35.0f) {
                     preferences.edit().putFloat("fuel_rate_baseline", r).apply()
-                    Toast.makeText(this@MainActivity, "تم اعتماد متوسط استهلاك المحرك: $r لتر/100 كم", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم حفظ استهلاك المحرك: $r لتر/100 كم", Toast.LENGTH_SHORT).show()
                     switchTab("fuel")
                 } else {
-                    Toast.makeText(this@MainActivity, "يرجى كتابة رقم استهلاك صحيح (مثال: 7.2)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "يرجى كتابة رقم استهلاك صحيح", Toast.LENGTH_SHORT).show()
                 }
             }.apply {
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -4966,8 +5269,8 @@ class MainActivity : Activity() {
             rateRow.addView(btnSaveRate)
             sec.addView(rateRow)
 
-            // 4. Clean Stacked Financial Result Box (As requested: fuel, oil, depreciation, total)
-            val resultCard = LinearLayout(context).apply {
+            // 4. Clean Stacked Financial Result Box
+            val resultCard = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundColor(Color.rgb(16, 34, 52))
                 setPadding(dp(14), dp(12), dp(14), dp(12))
@@ -4975,11 +5278,11 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            resultCard.addView(text("💰 نتيجة حساب تكلفة الرحلة المتوقعة (${plannedRouteDistanceKm.toInt()} كم):", 15, Color.WHITE, true))
-            resultCard.addView(text("• ⛽ تكلفة الوقود: ${String.format("%.2f", loadedTripFuelCost)} ج.م (${String.format("%.1f", loadedTripFuelLiters)} لتر بمعدل ${String.format("%.1f", loadedFuelRate)} لتر/100كم)", 13, Color.rgb(167, 203, 226), false))
-            resultCard.addView(text("• 🛢️ تكلفة الزيت: ${String.format("%.2f", loadedTripOilCost)} ج.م (بمعدل ${String.format("%.2f", oilCostPerKm)} ج.م/كم)", 13, Color.rgb(167, 203, 226), false))
-            resultCard.addView(text("• 🚗 استهلاك وإهلاك وصيانة السيارة: ${String.format("%.2f", loadedTripDepCost)} ج.م (نسبة ${String.format("%.3f", tripDepPercent)}% من قيمة السيارة لمسافة ${plannedRouteDistanceKm.toInt()} كم)", 13, Color.rgb(255, 180, 100), false))
-            resultCard.addView(text("• 💰 إجمالي التكلفة الشاملة للرحلة: ${String.format("%.2f", loadedTripTotalCost)} ج.م (بمعدل ${String.format("%.2f", loadedFuelCostPerKm + oilCostPerKm + depCostPerKm)} ج.م/كم)", 14, Color.rgb(126, 242, 154), true).apply {
+            resultCard.addView(text("💰 تكلفة الرحلة المتوقعة (${plannedRouteDistanceKm.toInt()} كم):", 15, Color.WHITE, true))
+            resultCard.addView(text("• ⛽ الوقود: ${String.format("%.2f", loadedTripFuelCost)} ج.م (${String.format("%.1f", loadedTripFuelLiters)} لتر)", 13, Color.rgb(167, 203, 226), false))
+            resultCard.addView(text("• 🛢️ الزيت: ${String.format("%.2f", loadedTripOilCost)} ج.م", 13, Color.rgb(167, 203, 226), false))
+            resultCard.addView(text("• 🚗 الإهلاك والصيانة: ${String.format("%.2f", loadedTripDepCost)} ج.م", 13, Color.rgb(255, 180, 100), false))
+            resultCard.addView(text("• 💰 إجمالي التكلفة الشاملة: ${String.format("%.2f", loadedTripTotalCost)} ج.م", 14, Color.rgb(126, 242, 154), true).apply {
                 setPadding(0, dp(4), 0, 0)
             })
             sec.addView(resultCard)
@@ -4987,8 +5290,8 @@ class MainActivity : Activity() {
         container.addView(sectionTripFuture)
 
         // --- SECTION 2 (Collapsible): Live Trip Metrics (OBD Live) & End Trip Button ---
-        val sectionTripLive = collapsibleSection("حساب وبيانات الوقود اللحظي أثناء السير (OBD Live)", "🚀", initiallyExpanded = true) { sec ->
-            val tRow1 = LinearLayout(context).apply {
+        val sectionTripLive = collapsibleSection("بيانات الرحلة اللحظية (OBD Live)", "🚀", initiallyExpanded = true) { sec ->
+            val tRow1 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
@@ -5003,13 +5306,13 @@ class MainActivity : Activity() {
             tRow1.addView(mbLiters.parent as View)
             sec.addView(tRow1)
 
-            val tRow2 = LinearLayout(context).apply {
+            val tRow2 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val instantStr = if (telemetry.speed > 3) String.format("%.1f L/100 (%.1f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour) else String.format("%.2f L/h (توقف وزحام)", telemetry.instantFuelLitersPerHour)
+            val instantStr = if (telemetry.speed > 3) String.format("%.1f L/100 (%.1f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour) else String.format("%.2f L/h", telemetry.instantFuelLitersPerHour)
             val mbInstant = metricBox("الاستهلاك اللحظي", instantStr, Color.rgb(110, 231, 255))
             tvFuelTabInstantRate = mbInstant
             tRow2.addView(mbInstant.parent as View)
@@ -5020,7 +5323,7 @@ class MainActivity : Activity() {
             sec.addView(tRow2)
 
             // Real-World 1KM Calibration status box
-            val boxReal = LinearLayout(context).apply {
+            val boxReal = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 val bgColor = if (hasDrivenFirstKm) Color.rgb(10, 48, 36) else Color.rgb(14, 28, 44)
                 setBackgroundColor(bgColor)
@@ -5032,17 +5335,17 @@ class MainActivity : Activity() {
             containerFuelRealBox = boxReal
 
             val tTitle = if (hasDrivenFirstKm) {
-                text("🎯 معايرة استهلاك سيارتك الواقعية من حساسات OBD2 (بعد سير ${String.format("%.2f", telemetry.tripDistanceKm)} كم) 🟢", 13, Color.rgb(126, 242, 154), true)
+                text("🎯 استهلاك المحرك الفعلي (${String.format("%.2f", telemetry.tripDistanceKm)} كم) 🟢", 13, Color.rgb(126, 242, 154), true)
             } else {
-                text("🎯 المعايرة الحقيقية التلقائية أثناء السير (بعد سير أول 1 كم) ⏳", 13, Color.rgb(110, 231, 255), true)
+                text("🎯 المعايرة التلقائية (بعد سير أول 1 كم) ⏳", 13, Color.rgb(110, 231, 255), true)
             }
             tvFuelTabRealBoxTitle = tTitle
             boxReal.addView(tTitle)
 
             val tDetails = if (hasDrivenFirstKm) {
-                text("• معدل الاستهلاك الفعلي المقاس: ${String.format("%.1f", realMeasuredTripRate)} لتر / 100 كم | إجمالي الرحلة المتوقع: ${String.format("%.2f", realTripProjectedTotalCost)} ج.م", 12, Color.rgb(167, 203, 226), false)
+                text("• الاستهلاك الفعلي المقاس: ${String.format("%.1f", realMeasuredTripRate)} لتر/100 كم | إجمالي الرحلة: ${String.format("%.2f", realTripProjectedTotalCost)} ج.م", 12, Color.rgb(167, 203, 226), false)
             } else {
-                text("💡 بمجرد انطلاقك وقطع 1 كم، ستقوم حساسات الـ OBD2 بقياس الاستهلاك الحقيقي وتحديث التكلفة آلياً.", 12, Color.rgb(167, 203, 226), false)
+                text("💡 بعد قطع 1 كم، ستقوم حساسات الـ OBD بقياس الاستهلاك الحقيقي آلياً.", 12, Color.rgb(167, 203, 226), false)
             }
             tvFuelTabRealBoxDetails = tDetails
             boxReal.addView(tDetails)
@@ -5059,18 +5362,15 @@ class MainActivity : Activity() {
                 setTextColor(Color.WHITE)
             }
             sec.addView(btnEndTrip)
-            sec.addView(text("💡 بيانات مسافة ووقود الرحلة تظل محفوظة تلقائياً حتى عند غلق السيارة أو فصل الهاتف، ولا تُمسح إلا عند ضغط إنهاء الرحلة أعلاه.", 11, Color.rgb(167, 203, 226), false).apply {
-                setPadding(0, dp(4), 0, 0)
-            })
         }
         container.addView(sectionTripLive)
 
-        // --- SECTION 3 (Collapsible): Settings Card for Fuel, Oil, Vehicle Value & Calibrated Weight ---
-        val sectionSettings = collapsibleSection("إدخال وضبط أسعار التشغيل وبيانات المركبة", "⚙️", initiallyExpanded = false) { sec ->
+        // --- SECTION 3 (Collapsible): Settings Card ---
+        val sectionSettings = collapsibleSection("إعدادات التسعير والبيانات", "⚙️", initiallyExpanded = false) { sec ->
             val curFuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
             sec.addView(text("نوع وقود المركبة:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, 0) })
 
-            val fuelTypeRow = LinearLayout(context).apply {
+            val fuelTypeRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
@@ -5111,39 +5411,39 @@ class MainActivity : Activity() {
             val unitName = preferences.getString("fuel_unit_name", "لتر") ?: "لتر"
             val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
             sec.addView(text("سعة خزان الوقود بالكامل ($unitName):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etTankCap = edit("مثال: 50").apply { setText(String.format("%.0f", tankCap)) }
+            val etTankCap = edit("سعة الخزان").apply { setText(String.format("%.0f", tankCap)) }
             sec.addView(etTankCap)
 
             sec.addView(text("سعر لتر الوقود (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etFuelPrice = edit("مثال: 15.00").apply { setText(String.format("%.2f", fuelPrice)) }
+            val etFuelPrice = edit("سعر اللتر").apply { setText(String.format("%.2f", fuelPrice)) }
             sec.addView(etFuelPrice)
 
-            sec.addView(text("متوسط استهلاك المركبة القياسي وهي فارغة (لتر / 100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etFuelRate = edit("مثال: 7.2").apply { setText(String.format("%.1f", baselineFuelRate)) }
+            sec.addView(text("استهلاك المركبة القياسي فارغة (لتر/100 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etFuelRate = edit("المعدل القياسي").apply { setText(String.format("%.1f", baselineFuelRate)) }
             sec.addView(etFuelRate)
 
-            sec.addView(text("تكلفة غيار الزيت والفلتر بالكامل (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etOilPrice = edit("مثال: 1200").apply { setText(String.format("%.0f", oilPrice)) }
+            sec.addView(text("تكلفة غيار الزيت والفلتر (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etOilPrice = edit("تكلفة الزيت").apply { setText(String.format("%.0f", oilPrice)) }
             sec.addView(etOilPrice)
 
-            sec.addView(text("عمر/صلاحية نوع الزيت بالكيلومتر (مثلاً 5000 كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etOilTarget = edit("مثال: 5000").apply { setText(String.format("%.0f", oilTargetKm)) }
+            sec.addView(text("عمر نوع الزيت بالكيلومتر:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etOilTarget = edit("عمر الزيت بالكم").apply { setText(String.format("%.0f", oilTargetKm)) }
             sec.addView(etOilTarget)
 
-            sec.addView(text("القيمة السوقية التقديرية للسيارة (ج.م) لحساب الإهلاك والتآكل:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etCarValue = edit("مثال: 400000").apply { setText(String.format("%.0f", vehicleMarketValue)) }
+            sec.addView(text("القيمة السوقية للسيارة (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etCarValue = edit("قيمة السيارة").apply { setText(String.format("%.0f", vehicleMarketValue)) }
             sec.addView(etCarValue)
 
-            sec.addView(text("نسبة استهلاك وإهلاك السيارة لكل 1000 كم (الافتراضي 0.20% لتغطية 500 ألف كم):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etDepRate = edit("مثال: 0.20").apply { setText(String.format("%.2f", depRatePer1000Km)) }
+            sec.addView(text("نسبة الإهلاك لكل 1000 كم (%):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
+            val etDepRate = edit("نسبة الإهلاك").apply { setText(String.format("%.2f", depRatePer1000Km)) }
             sec.addView(etDepRate)
 
-            // Vehicle Empty Weight & Category Selector (Physics Calibration)
-            sec.addView(text("وزن المركبة وهي فارغة (كجم) - لمعايرة أثر الحمولة والوزن بدقة فيزيائية:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(6), 0, 0) })
-            val etVehicleWeight = edit("وزن المركبة كجم (مثال: 1200)").apply { setText(String.format("%.0f", vehicleEmptyWeight)) }
+            // Vehicle Empty Weight
+            sec.addView(text("وزن المركبة وهي فارغة (كجم):", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(6), 0, 0) })
+            val etVehicleWeight = edit("الوزن كجم").apply { setText(String.format("%.0f", vehicleEmptyWeight)) }
             sec.addView(etVehicleWeight)
 
-            val vCatRow = LinearLayout(context).apply {
+            val vCatRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
@@ -5165,16 +5465,16 @@ class MainActivity : Activity() {
                     }
                 }
             }
-            vCatRow.addView(vCatBtn("🚗 ملاكي\n(1200 كجم)", 1200f))
-            vCatRow.addView(vCatBtn("🚐 ميكروباص\n(2500 كجم)", 2500f))
-            vCatRow.addView(vCatBtn("🚛 شاحنة\n(12000 كجم)", 12000f))
-            vCatRow.addView(vCatBtn("🚜 جرار\n(6000 كجم)", 6000f))
+            vCatRow.addView(vCatBtn("🚗 ملاكي\n1200 كجم", 1200f))
+            vCatRow.addView(vCatBtn("🚐 ميكروباص\n2500 كجم", 2500f))
+            vCatRow.addView(vCatBtn("🚛 شاحنة\n12000 كجم", 12000f))
+            vCatRow.addView(vCatBtn("🚜 جرار\n6000 كجم", 6000f))
             sec.addView(vCatRow)
 
             val tvSaveMsg = text("", 13, Color.rgb(126, 242, 154), false)
             sec.addView(tvSaveMsg)
 
-            sec.addView(button("💾 حفظ وتحديث أسعار التشغيل وبيانات المركبة") {
+            sec.addView(button("💾 حفظ وتحديث الإعدادات") {
                 val fP = etFuelPrice.text.toString().toFloatOrNull() ?: fuelPrice
                 val fR = etFuelRate.text.toString().toFloatOrNull() ?: baselineFuelRate
                 val oP = etOilPrice.text.toString().toFloatOrNull() ?: oilPrice
@@ -5203,7 +5503,7 @@ class MainActivity : Activity() {
 
         // --- SECTION 4 (Collapsible): Engine Oil Odometer & Reset ---
         val sectionOilCounter = collapsibleSection("عداد وتصفير كيلومترات زيت المحرك", "🛢️", initiallyExpanded = false) { sec ->
-            val oilStatsRow = LinearLayout(context).apply {
+            val oilStatsRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
@@ -5839,6 +6139,18 @@ class MainActivity : Activity() {
         if (!isSimulating) {
             tvConnectionState.text = "غير متصل"
             tvConnectionState.setTextColor(Color.rgb(255, 122, 122))
+            telemetry.coolantTemp = 0
+            telemetry.batteryVoltage = 0.0f
+            telemetry.rpm = 0
+            telemetry.speed = phoneGpsSpeedKmh
+            telemetry.instantFuelLPer100Km = 0.0f
+            telemetry.instantFuelLitersPerHour = 0.0f
+            telemetry.engineLoadPercent = 0
+            telemetry.throttlePercent = 0
+            telemetry.dtcCodes.clear()
+            updateGaugesTabUI()
+            renderCurrentScreen()
+            Toast.makeText(this, "تم إيقاف المحاكاة وتصفير العدادات بنجاح", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -5897,6 +6209,7 @@ class MainActivity : Activity() {
 
                 // Simulate distance, oil odometer, instant fuel and trip average
                 val dtSec = 0.5
+                val distSlice = (telemetry.speed.toDouble() * (dtSec / 3600.0)).toFloat()
                 telemetry.tripDistanceKm += distSlice
                 val curOil = preferences.getFloat("oil_current_km", 0f)
 
@@ -6058,12 +6371,12 @@ class MainActivity : Activity() {
             return
         }
 
-        val progress = ProgressDialog(this).apply {
-            setTitle("🔍 جاري فحص كمبيوترات السيارة...")
-            setMessage("يتم الآن إرسال إشارات التشخيص إلى لوحة العدادات بالطابلوه وكمبيوتر المكينة...")
-            setCancelable(false)
-            show()
-        }
+        val progress = AlertDialog.Builder(this)
+            .setTitle("🔍 جاري فحص كمبيوترات السيارة...")
+            .setMessage("يتم الآن إرسال إشارات التشخيص إلى لوحة العدادات بالطابلوه وكمبيوتر المكينة...")
+            .setCancelable(false)
+            .create()
+        progress.show()
 
         thread {
             val results = mutableListOf<String>()
@@ -6315,47 +6628,69 @@ class MainActivity : Activity() {
 
     private fun updateGaugesTabUI() {
         if (!::tvSpeed.isInitialized) return
-        tvSpeed.text = "${telemetry.speed} km/h"
-        tvRpm.text = "${telemetry.rpm} RPM"
-        tvTemp.text = "${telemetry.coolantTemp} °C"
-        tvBattery.text = "${String.format("%.1f", telemetry.batteryVoltage)} V"
-        val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
-        val litersRemaining = (telemetry.fuelLevel * tankCap / 100.0f)
-        val fuelBadge = if (telemetry.fuelLevelSource.contains("🔌")) "🔌" else "🧮"
-        tvFuel.text = "${telemetry.fuelLevel}% (${String.format("%.1f", litersRemaining)}L) $fuelBadge"
-        if (telemetry.vin.isNotBlank()) tvVin.text = telemetry.vin
+        val isLive = telemetry.isConnected || isSimulating
 
-        if (::tvInstantFuel.isInitialized) {
-            if (telemetry.speed > 3) {
-                tvInstantFuel.text = String.format("%.1f L/100 (%.2f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour)
-            } else {
-                tvInstantFuel.text = String.format("%.2f L/h (توقف وزحام)", telemetry.instantFuelLitersPerHour)
+        if (isLive) {
+            tvSpeed.text = "${telemetry.speed} km/h"
+            tvRpm.text = "${telemetry.rpm} RPM"
+            tvTemp.text = "${telemetry.coolantTemp} °C"
+            tvBattery.text = "${String.format("%.1f", telemetry.batteryVoltage)} V"
+            val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
+            val litersRemaining = (telemetry.fuelLevel * tankCap / 100.0f)
+            val fuelBadge = if (telemetry.fuelLevelSource.contains("🔌")) "🔌" else "🧮"
+            tvFuel.text = "${telemetry.fuelLevel}% (${String.format("%.1f", litersRemaining)}L) $fuelBadge"
+            if (telemetry.vin.isNotBlank()) tvVin.text = telemetry.vin
+
+            if (::tvInstantFuel.isInitialized) {
+                if (telemetry.speed > 3) {
+                    tvInstantFuel.text = String.format("%.1f L/100 (%.2f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour)
+                } else {
+                    tvInstantFuel.text = String.format("%.2f L/h", telemetry.instantFuelLitersPerHour)
+                }
             }
-        }
 
-        if (::tvTripFuel.isInitialized) {
-            tvTripFuel.text = String.format("%.1f L/100 (%.2f لتر مستهلك)", telemetry.tripAverageFuelRate, telemetry.actualTripFuelLiters)
-        }
+            if (::tvTripFuel.isInitialized) {
+                tvTripFuel.text = String.format("%.1f L/100 (%.2f L)", telemetry.tripAverageFuelRate, telemetry.actualTripFuelLiters)
+            }
 
-        if (::tvEngineLoad.isInitialized) {
-            tvEngineLoad.text = "${telemetry.engineLoadPercent} %"
-        }
-        if (::tvThrottle.isInitialized) {
-            tvThrottle.text = "${telemetry.throttlePercent} %"
-        }
+            if (::tvEngineLoad.isInitialized) {
+                tvEngineLoad.text = "${telemetry.engineLoadPercent} %"
+            }
+            if (::tvThrottle.isInitialized) {
+                tvThrottle.text = "${telemetry.throttlePercent} %"
+            }
 
-        if (::tvFuelSourceBadge.isInitialized) {
-            tvFuelSourceBadge.text = "⚡ مصدر قياس الوقود الآلي: ${telemetry.fuelCalculationSource}"
-        }
+            if (::tvFuelSourceBadge.isInitialized) {
+                tvFuelSourceBadge.text = "⚡ مصدر قياس الوقود: ${telemetry.fuelCalculationSource}"
+            }
 
-        if (telemetry.dtcCodes.isEmpty()) {
-            tvDtc.text = "لمبة الأعطال: لا توجد أعطال (Check Engine: OFF)"
-            tvDtc.setTextColor(Color.rgb(126, 242, 154))
+            if (telemetry.dtcCodes.isEmpty()) {
+                tvDtc.text = "لمبة الأعطال: سليمة (OFF)"
+                tvDtc.setTextColor(Color.rgb(126, 242, 154))
+            } else {
+                val firstCode = telemetry.dtcCodes.first()
+                val diag = diagnoseDtc(firstCode)
+                tvDtc.text = "تحذير عطل: $firstCode (${diag.titleAr})"
+                tvDtc.setTextColor(Color.rgb(255, 122, 122))
+            }
         } else {
-            val firstCode = telemetry.dtcCodes.first()
-            val diag = diagnoseDtc(firstCode)
-            tvDtc.text = "تحذير أعطال: $firstCode (${diag.titleAr})"
-            tvDtc.setTextColor(Color.rgb(255, 122, 122))
+            // Disconnected & not simulating
+            tvSpeed.text = if (phoneGpsSpeedKmh > 0) "$phoneGpsSpeedKmh km/h (GPS 🛰️)" else "0 km/h"
+            tvRpm.text = "-- RPM"
+            tvTemp.text = "-- °C"
+            tvBattery.text = "-- V"
+            tvFuel.text = "-- %"
+            if (::tvInstantFuel.isInitialized) tvInstantFuel.text = "-- L/100"
+            if (::tvTripFuel.isInitialized) tvTripFuel.text = "-- L/100"
+            if (::tvEngineLoad.isInitialized) tvEngineLoad.text = "-- %"
+            if (::tvThrottle.isInitialized) tvThrottle.text = "-- %"
+            if (::tvDtc.isInitialized) {
+                tvDtc.text = "لمبة الأعطال: بانتظار الاتصال بكمبيوتر السيارة"
+                tvDtc.setTextColor(Color.rgb(170, 190, 210))
+            }
+            if (::tvFuelSourceBadge.isInitialized) {
+                tvFuelSourceBadge.text = if (phoneGpsSpeedKmh > 0) "🛰️ متصل بنظام تحديد المواقع GPS للهاتف" else "بانتظار قراءة الحساسات من كمبيوتر السيارة أو تشغيل المحاكي"
+            }
         }
     }
 
@@ -8298,6 +8633,24 @@ class MainActivity : Activity() {
         activeSocket = null
         activeWifiSocket = null
         telemetry.isConnected = false
+        if (!isSimulating) {
+            telemetry.coolantTemp = 0
+            telemetry.batteryVoltage = 0.0f
+            telemetry.rpm = 0
+            telemetry.speed = phoneGpsSpeedKmh
+            telemetry.instantFuelLPer100Km = 0.0f
+            telemetry.instantFuelLitersPerHour = 0.0f
+            telemetry.engineLoadPercent = 0
+            telemetry.throttlePercent = 0
+            telemetry.dtcCodes.clear()
+            runOnUiThread {
+                if (::tvConnectionState.isInitialized) {
+                    tvConnectionState.text = "غير متصل"
+                    tvConnectionState.setTextColor(Color.rgb(255, 122, 122))
+                }
+                updateLiveUI()
+            }
+        }
     }
 
     // ========================================================
@@ -8309,6 +8662,12 @@ class MainActivity : Activity() {
             val connect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
             return scan && connect
         }
+        val fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return fine || coarse
+    }
+
+    private fun hasLocationPermissions(): Boolean {
         val fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val coarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
         return fine || coarse

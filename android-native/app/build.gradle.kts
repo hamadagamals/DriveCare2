@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.drivecare.app"
-    compileSdk = 36
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.drivecare.app"
