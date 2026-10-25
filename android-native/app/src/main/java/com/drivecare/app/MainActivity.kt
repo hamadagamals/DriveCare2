@@ -137,7 +137,9 @@ class MainActivity : Activity() {
     private var userName: String = ""
     private var userPhone: String = ""
     private var currentRole: String = "owner" // "owner", "driver", "garage"
-    private var activeTab: String = "gauges" // "gauges", "vehicles", "scanner", "fuel", "maint", "remote_fleet", "owner_security", "workshops_dir", "workshop_console", "log_service"
+    private var activeTab: String = "home" // "home", "gauges", "vehicles", "scanner", "fuel", "maint", "remote_fleet", "owner_security", "workshops_dir", "workshop_console", "log_service", "more"
+    private var activeSubScreen: String? = null // When null, displays the sleek 3x3 Home Grid Dashboard matching the reference design
+    private var currentNavTab: String = "home" // "home", "scanner", "gauges", "reports", "more"
 
     // Multi-Persona State
     private var authorizedDriverName: String = "محمد السائق (مفوض)"
@@ -1099,39 +1101,39 @@ class MainActivity : Activity() {
             addView(etPhone)
             addView(etPassword)
 
-            addView(text("نوع الحساب:", 14, Color.rgb(110, 231, 255), true).apply {
-                setPadding(0, dp(14), 0, dp(4))
+            addView(text("اختر نوع الواجهة والحساب (قائمة منسدلة):", 14, Color.rgb(110, 231, 255), true).apply {
+                setPadding(0, dp(14), 0, dp(6))
             })
 
-            val cbOwner = CheckBox(this@MainActivity).apply {
-                text = "👑 مالك مركبة"
-                setTextColor(Color.WHITE)
-                isChecked = true
-            }
-            val cbDriver = CheckBox(this@MainActivity).apply {
-                text = "🚗 سائق مفوض"
-                setTextColor(Color.WHITE)
-                isChecked = false
-            }
-            val cbGarage = CheckBox(this@MainActivity).apply {
-                text = "🔧 مركز فحص وصيانة"
-                setTextColor(Color.WHITE)
-                isChecked = false
-            }
+            val roleOptions = listOf(
+                "👑 واجهة المالك الأساسي (Owner)",
+                "🚗 واجهة السائق المفوض (Driver)",
+                "🔧 واجهة مركز الصيانة والورشة (Workshop)"
+            )
+            val roleKeys = listOf("owner", "driver", "garage")
+            var selectedRoleIndex = 0
 
-            cbOwner.setOnCheckedChangeListener { _, checked ->
-                if (checked) { cbDriver.isChecked = false; cbGarage.isChecked = false }
+            val roleSpinner = Spinner(this@MainActivity).apply {
+                val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, roleOptions)
+                this.adapter = adapter
+                setBackgroundColor(Color.rgb(16, 38, 56))
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                lp.bottomMargin = dp(10)
+                layoutParams = lp
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        selectedRoleIndex = position
+                        (view as? TextView)?.apply {
+                            setTextColor(Color.WHITE)
+                            textSize = 14f
+                            typeface = Typeface.DEFAULT_BOLD
+                        }
+                    }
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
+                }
             }
-            cbDriver.setOnCheckedChangeListener { _, checked ->
-                if (checked) { cbOwner.isChecked = false; cbGarage.isChecked = false }
-            }
-            cbGarage.setOnCheckedChangeListener { _, checked ->
-                if (checked) { cbOwner.isChecked = false; cbDriver.isChecked = false }
-            }
-
-            addView(cbOwner)
-            addView(cbDriver)
-            addView(cbGarage)
+            addView(roleSpinner)
 
             val tvAuthErr = text("", 13, Color.rgb(255, 122, 122), false)
             addView(tvAuthErr)
@@ -1144,12 +1146,7 @@ class MainActivity : Activity() {
                     tvAuthErr.text = "يرجى إدخال الاسم، رقم الموبايل، وكلمة المرور للمتابعة."
                     return@button
                 }
-                val role = when {
-                    cbOwner.isChecked -> "owner"
-                    cbDriver.isChecked -> "driver"
-                    cbGarage.isChecked -> "garage"
-                    else -> "owner"
-                }
+                val role = roleKeys[selectedRoleIndex]
                 preferences.edit()
                     .putBoolean("is_logged_in", true)
                     .putString("user_name", name)
@@ -1203,63 +1200,165 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // 2. MAIN COCKPIT SCREEN (بعد التسجيل مع التابات)
+    // 2. MAIN COCKPIT SCREEN (نظام الواجهات المنظم المستوحى من أجهزة فحص السيارات الاحترافية)
     // ========================================================
     private fun buildMainCockpitScreen(): View {
-        val scroll = ScrollView(this)
-        val root = LinearLayout(this).apply {
+        val mainLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(28))
+            val p = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layoutParams = p
             setBackgroundColor(Color.rgb(8, 23, 32))
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        scroll.addView(root)
 
-        // Top Bar: User info + Logout
-        val topBar = LinearLayout(this).apply {
+        // 1. Top Cockpit Header Bar (مع قائمة اختيار الواجهة المنسدلة والصوت والخروج)
+        mainLayout.addView(buildCockpitTopBar())
+
+        // 2. Scrollable Cockpit Content Area
+        val scroll = ScrollView(this).apply {
+            val sp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutParams = sp
+            isFillViewport = true
+        }
+
+        val contentBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(8), dp(14), dp(16))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+        scroll.addView(contentBox)
+        mainLayout.addView(scroll)
+
+        // 3. Fixed Bottom Navigation Dock (5 تابات ثابتة أسفل الشاشة)
+        mainLayout.addView(buildBottomNavDock())
+
+        // Render Dynamic Content in Scroll Area
+        if (activeSubScreen != null) {
+            // شاشة فرعية متفرعة من الـ 9 بطاقات مع شريط رجوع فوري
+            contentBox.addView(buildSubScreenHeader(activeSubScreen!!))
+
+            val banner = buildAlertBanner()
+            alertBanner = banner
+            contentBox.addView(banner)
+            updateAlertBannerUI()
+
+            val subView = when (activeSubScreen) {
+                "owner_fleet" -> buildOwnerFleetTabContent()
+                "remote_fleet" -> buildRemoteFleetTabContent()
+                "vehicles" -> buildVehiclesTabContent()
+                "owner_security" -> buildOwnerSecurityTabContent()
+                "workshops_dir" -> buildWorkshopsDirectoryTabContent()
+                "workshop_console" -> buildWorkshopConsoleTabContent()
+                "workshop_profile" -> buildWorkshopProfileTabContent()
+                "driver_cars" -> buildDriverCarsTabContent()
+                "log_service" -> buildLogServiceTabContent()
+                "gauges" -> buildGaugesTabContent()
+                "scanner" -> buildScannerTabContent()
+                "fuel" -> buildFuelTabContent()
+                "maint" -> buildMaintenanceTabContent()
+                "more" -> buildMoreSettingsTabContent()
+                else -> buildGaugesTabContent()
+            }
+            contentBox.addView(subView)
+        } else {
+            // واجهة التحكم الرئيسية (لوحة الـ 9 بطاقات المنظمة المطابقة لتصميم شاشات فحص السيارات)
+            // 1. بطاقة معلومات السيارة والاتصال
+            contentBox.addView(buildVehicleHeaderCard())
+
+            // 2. بطاقة الفحص المباشر والمؤشر الدائري
+            contentBox.addView(buildHeroHealthCard())
+
+            // 3. شريط التنبيهات والأمان الطارئ
+            val banner = buildAlertBanner()
+            alertBanner = banner
+            contentBox.addView(banner)
+            updateAlertBannerUI()
+
+            // 4. إشعارات وتصاريح الورش والسائقين المعلقة
+            if (currentRole == "owner") {
+                buildOwnerAccessRequestsBanner()?.let { contentBox.addView(it) }
+            } else if (currentRole == "driver") {
+                buildDriverDelegationRequestsBanner()?.let { contentBox.addView(it) }
+            }
+
+            // 5. شبكة الخدمات المنظمة 3×3 (9 بطاقات محددة وغير مكررة)
+            contentBox.addView(build3x3ServiceGrid())
+        }
+
+        return mainLayout
+    }
+
+    // ========================================================
+    // TOP COCKPIT BAR (مع القائمة المنسدلة لاختيار الواجهة)
+    // ========================================================
+    private fun buildCockpitTopBar(): View {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            val p = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            p.bottomMargin = dp(8)
-            layoutParams = p
+            setPadding(dp(14), dp(10), dp(14), dp(8))
+            setBackgroundColor(Color.rgb(10, 25, 38))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
 
             val userInfo = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(text("مرحباً بك، $userName 👋", 16, Color.WHITE, true))
-                val roleTitle = when(currentRole) {
-                    "owner" -> "👑 المالك الأساسي"
-                    "driver" -> "🚗 سائق مفوض"
-                    else -> "🔧 صاحب ورشة"
-                }
-                addView(text(roleTitle, 12, Color.rgb(110, 231, 255), false))
+                addView(text("مرحباً، $userName 👋", 15, Color.WHITE, true))
             }
             addView(userInfo)
 
-            val btnAudioToggle = Button(this@MainActivity).apply {
-                text = if (isAudioMuted) "🔇 صامت" else "🔊 إنذار"
+            val roleBtnLabel = when (currentRole) {
+                "owner" -> "👑 واجهة المالك ▼"
+                "driver" -> "🚗 واجهة السائق ▼"
+                else -> "🔧 واجهة الورشة ▼"
+            }
+            val roleAccent = when (currentRole) {
+                "owner" -> Color.rgb(248, 199, 74)
+                "driver" -> Color.rgb(110, 231, 255)
+                else -> Color.rgb(255, 140, 90)
+            }
+            val btnRoleDropdown = Button(this@MainActivity).apply {
+                text = roleBtnLabel
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(roleAccent)
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(34))
+                blp.setMargins(dp(4), 0, dp(4), 0)
+                layoutParams = blp
+                setOnClickListener {
+                    showRoleSelectionDialog()
+                }
+            }
+            addView(btnRoleDropdown)
+
+            val btnAudio = Button(this@MainActivity).apply {
+                text = if (isAudioMuted) "🔇" else "🔊"
                 textSize = 12f
                 setTextColor(if (isAudioMuted) Color.rgb(255, 180, 100) else Color.rgb(126, 242, 154))
-                setBackgroundColor(Color.rgb(16, 32, 46))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(dp(4), 0, dp(4), 0)
-                layoutParams = lp
+                setBackgroundColor(Color.rgb(16, 36, 52))
+                val blp = LinearLayout.LayoutParams(dp(40), dp(34))
+                blp.setMargins(dp(2), 0, dp(2), 0)
+                layoutParams = blp
                 setOnClickListener {
                     isAudioMuted = !isAudioMuted
                     preferences.edit().putBoolean("is_audio_alert_muted", isAudioMuted).apply()
-                    text = if (isAudioMuted) "🔇 صامت" else "🔊 إنذار"
+                    text = if (isAudioMuted) "🔇" else "🔊"
                     setTextColor(if (isAudioMuted) Color.rgb(255, 180, 100) else Color.rgb(126, 242, 154))
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
                     updateAlertBannerUI()
                 }
             }
-            addView(btnAudioToggle)
+            addView(btnAudio)
 
             val btnLogout = Button(this@MainActivity).apply {
-                text = "خروج 🚪"
+                text = "🚪"
                 textSize = 12f
                 setTextColor(Color.rgb(255, 122, 122))
-                setBackgroundColor(Color.rgb(32, 15, 20))
+                setBackgroundColor(Color.rgb(36, 16, 22))
+                val blp = LinearLayout.LayoutParams(dp(38), dp(34))
+                blp.setMargins(dp(2), 0, 0, 0)
+                layoutParams = blp
                 setOnClickListener {
                     preferences.edit().putBoolean("is_logged_in", false).apply()
                     isLoggedIn = false
@@ -1270,56 +1369,322 @@ class MainActivity : Activity() {
             }
             addView(btnLogout)
         }
-        root.addView(topBar)
-
-        // Internal Role Switcher Bar (3 أزرار تنقل فوري واضحة وأنيقة بين واجهات الأدوار)
-        root.addView(buildRoleSwitcherBar())
-
-        // Quick Vehicle Switcher Bar (شريط التبديل الفوري بين سيارات المالك بنقرة زر واحدة)
-        if (currentRole == "owner") {
-            root.addView(buildOwnerVehiclePillBar())
-        }
-
-        // Navigation Tabs Bar (الأقسام المخصصة للدور الحالي)
-        root.addView(buildTabBar())
-
-        // Safety Alert Banner (شريط التحذيرات والإنذارات الطارئة)
-        val banner = buildAlertBanner()
-        alertBanner = banner
-        root.addView(banner)
-        updateAlertBannerUI()
-
-        // Delegation and Access Requests Notice Banners
-        if (currentRole == "owner") {
-            buildOwnerAccessRequestsBanner()?.let { root.addView(it) }
-        } else if (currentRole == "driver") {
-            buildDriverDelegationRequestsBanner()?.let { root.addView(it) }
-        }
-
-        // Tab Content Container
-        when (activeTab) {
-            "owner_fleet" -> root.addView(buildOwnerFleetTabContent())
-            "remote_fleet" -> root.addView(buildRemoteFleetTabContent())
-            "vehicles" -> root.addView(buildVehiclesTabContent())
-            "owner_security" -> root.addView(buildOwnerSecurityTabContent())
-            "workshops_dir" -> root.addView(buildWorkshopsDirectoryTabContent())
-            "workshop_console" -> root.addView(buildWorkshopConsoleTabContent())
-            "workshop_profile" -> root.addView(buildWorkshopProfileTabContent())
-            "driver_cars" -> root.addView(buildDriverCarsTabContent())
-            "log_service" -> root.addView(buildLogServiceTabContent())
-            "gauges" -> root.addView(buildGaugesTabContent())
-            "scanner" -> root.addView(buildScannerTabContent())
-            "fuel" -> root.addView(buildFuelTabContent())
-            "maint" -> root.addView(buildMaintenanceTabContent())
-            else -> {
-                if (currentRole == "owner") root.addView(buildOwnerFleetTabContent())
-                else root.addView(buildGaugesTabContent())
-            }
-        }
-
-        return scroll
     }
 
+    // ========================================================
+    // ROLE SELECTION DROPDOWN DIALOG (قائمة منسدلة لاختيار وتحديد الدور)
+    // ========================================================
+    private fun showRoleSelectionDialog() {
+        val roleKeys = arrayOf("owner", "driver", "garage")
+        val roleLabels = arrayOf(
+            "👑 واجهة المالك الأساسي (Owner) - إدارة الأسطول والتفويض والمراقبة",
+            "🚗 واجهة السائق المفوض (Driver) - مقصورة القيادة والحساسات والرحلات",
+            "🔧 واجهة مركز الصيانة والورشة (Workshop) - فحص الكمبيوتر وأذونات الصيانة"
+        )
+        val currentIndex = roleKeys.indexOf(currentRole).let { if (it >= 0) it else 0 }
+
+        AlertDialog.Builder(this)
+            .setTitle("اختر واجهة المستخدم (تحديد الدور):")
+            .setSingleChoiceItems(roleLabels, currentIndex) { dialog, which ->
+                val selectedRole = roleKeys[which]
+                if (currentRole != selectedRole) {
+                    currentRole = selectedRole
+                    preferences.edit().putString("active_role", currentRole).apply()
+                    activeSubScreen = null
+                    currentNavTab = "home"
+                    activeTab = "home"
+                    Toast.makeText(this, "تم التبديل بنجاح إلى: ${roleLabels[which]}", Toast.LENGTH_SHORT).show()
+                    renderCurrentScreen()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    // ========================================================
+    // SWITCH OWNER ACTIVE VEHICLE DIALOG (تبديل سيارة المالك النشطة)
+    // ========================================================
+    private fun showSwitchOwnerVehicleDialog() {
+        if (ownerFleetVehicles.isEmpty()) {
+            loadOwnerFleetVehicles()
+        }
+        val names = ownerFleetVehicles.map { veh ->
+            val activeMark = if (veh.isCurrentActive) " (النشطة حالياً ✓)" else ""
+            "🚗 ${veh.name} [لوحة: ${veh.plateNumber}]$activeMark"
+        }.toTypedArray() + arrayOf("➕ إضافة سيارة جديدة للأسطول")
+
+        AlertDialog.Builder(this)
+            .setTitle("تبديل سيارة المالك النشطة:")
+            .setItems(names) { _, which ->
+                if (which < ownerFleetVehicles.size) {
+                    val targetVeh = ownerFleetVehicles[which]
+                    activateOwnerVehicle(targetVeh)
+                } else {
+                    showAddOwnerVehicleDialog()
+                }
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    // ========================================================
+    // DIRECT CALL OWNER DIALOG (اتصال مباشر بمالك السيارة للسائق)
+    // ========================================================
+    private fun showCallOwnerDialog() {
+        val ownerPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+        val ownerName = preferences.getString("vehicle_primary_owner", "مالك السيارة") ?: "مالك السيارة"
+        AlertDialog.Builder(this)
+            .setTitle("📞 اتصال مباشر بمالك السيارة:")
+            .setMessage("المالك: $ownerName\nرقم الهاتف: $ownerPhone\n\nهل ترغب في الاتصال المباشر به الآن؟")
+            .setPositiveButton("📞 اتصال هاتفي") { _, _ ->
+                try {
+                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$ownerPhone"))
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "تعذر فتح لوحة الاتصال: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNeutralButton("💬 مراسلة واتساب") { _, _ ->
+                try {
+                    val cleanPhone = ownerPhone.replace("+", "").replace(" ", "").trim()
+                    val waUrl = "https://api.whatsapp.com/send?phone=$cleanPhone&text=" + Uri.encode("السلام عليكم، رسالة من سائق سيارتك عبر تطبيق DriveCare.")
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(waUrl)))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "تعذر فتح تطبيق واتساب: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    // ========================================================
+    // VEHICLE HEADER CARD (بطاقة معلومات السيارة المستوحاة من الصورة المرفقة)
+    // ========================================================
+    private fun buildVehicleHeaderCard(): View {
+        if (ownerFleetVehicles.isEmpty()) {
+            loadOwnerFleetVehicles()
+        }
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerFleetVehicle(
+            id = "default_car",
+            name = "شيفروليه أفيو 2015",
+            make = "Chevrolet",
+            model = "Aveo",
+            year = "2015",
+            plateNumber = "أ ب ج 123",
+            chassisVin = "KL1TA69...2015",
+            engineSpec = "1.5L 4-Cyl",
+            currentDriverName = authorizedDriverName,
+            currentDriverPhone = authorizedDriverPhone,
+            alertsEnabled = true,
+            isCurrentActive = true,
+            assignedAt = "2026/01/01"
+        )
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(14, 30, 46))
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(10)
+            layoutParams = lp
+        }
+
+        // Row 1: Vehicle Title, Brand Icon, Switch button
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
+
+            val carIcon = text("🚗", 24, Color.WHITE, false).apply {
+                val clp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                clp.leftMargin = dp(8)
+                layoutParams = clp
+            }
+            addView(carIcon)
+
+            val infoCol = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                addView(text(activeVeh.name, 16, Color.WHITE, true))
+                addView(text("${activeVeh.engineSpec} • ${activeVeh.year} • لوحة: ${activeVeh.plateNumber}", 11, Color.rgb(150, 195, 225), false))
+            }
+            addView(infoCol)
+
+            if (currentRole == "owner") {
+                val btnSwitchCar = Button(this@MainActivity).apply {
+                    text = "تبديل السيارة ▼"
+                    textSize = 10f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(12, 30, 46))
+                    setBackgroundColor(Color.rgb(248, 199, 74))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32))
+                    layoutParams = blp
+                    setOnClickListener {
+                        showSwitchOwnerVehicleDialog()
+                    }
+                }
+                addView(btnSwitchCar)
+            }
+        }
+        card.addView(titleRow)
+
+        // Divider
+        card.addView(View(this).apply {
+            setBackgroundColor(Color.rgb(25, 48, 70))
+            val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
+            dlp.topMargin = dp(8)
+            dlp.bottomMargin = dp(8)
+            layoutParams = dlp
+        })
+
+        // Row 2: Status Indicators (WiFi, GPS, Engine, OBD) + Connection Pill
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
+
+            val indicators = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+                fun miniIcon(symbol: String, active: Boolean): TextView {
+                    return text(symbol, 13, if (active) Color.rgb(0, 229, 255) else Color.rgb(100, 125, 145), false).apply {
+                        val mlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        mlp.setMargins(dp(4), 0, dp(4), 0)
+                        layoutParams = mlp
+                    }
+                }
+
+                addView(miniIcon("📶", true))
+                addView(miniIcon("📍", currentGpsLocation != null || phoneGpsSpeedKmh > 0))
+                addView(miniIcon("⚙️", telemetry.isConnected || isSimulating))
+                addView(miniIcon("🔌", telemetry.isConnected || isSimulating))
+            }
+            addView(indicators)
+
+            val (connText, connBg, connFg) = when {
+                telemetry.isConnected -> Triple("🟢 متصل Bluetooth", Color.rgb(18, 60, 45), Color.rgb(126, 242, 154))
+                isSimulating -> Triple("🟡 وضع المحاكاة", Color.rgb(65, 50, 18), Color.rgb(255, 210, 100))
+                else -> Triple("⚪ غير متصل", Color.rgb(38, 20, 25), Color.rgb(240, 150, 150))
+            }
+            val connPill = TextView(this@MainActivity).apply {
+                text = connText
+                textSize = 11f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(connFg)
+                setBackgroundColor(connBg)
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+            }
+            addView(connPill)
+        }
+        card.addView(statusRow)
+
+        return card
+    }
+
+    // ========================================================
+    // HERO DIAGNOSTIC HEALTH CARD (البطاقة الكبرى مع المؤشر الدائري وزر الفحص)
+    // ========================================================
+    private fun buildHeroHealthCard(): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(12, 28, 44))
+            setPadding(dp(14), dp(14), dp(14), dp(12))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(10)
+            layoutParams = lp
+        }
+
+        val dtcCount = detectedDtcCodes.size
+        val isHealthy = (dtcCount == 0)
+
+        // Upper row: Live Diagnostics Status + Circular Score Widget
+        val topSection = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = lp
+
+            val infoCol = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+                addView(text("‹ فحص مباشر ›", 12, Color.rgb(120, 185, 220), false))
+
+                val statusLabel = if (isHealthy) "سليمة ✓" else "⚠️ $dtcCount أعطال مسجلة"
+                val statusColor = if (isHealthy) Color.rgb(46, 213, 115) else Color.rgb(255, 107, 107)
+                addView(text(statusLabel, 20, statusColor, true))
+
+                val tempStr = if (telemetry.isConnected || isSimulating) "${telemetry.coolantTemp}°C" else "طبيعي"
+                val voltStr = if (telemetry.isConnected || isSimulating) "${String.format(java.util.Locale.US, "%.1f", telemetry.batteryVoltage)}V" else "12.6V"
+                val summaryText = "حرارة: $tempStr • بطارية: $voltStr • فحص المحرك مستقر"
+                addView(text(summaryText, 11, Color.rgb(150, 190, 215), false))
+            }
+            addView(infoCol)
+
+            val scoreVal = if (isHealthy) "86" else "${maxOf(45, 95 - dtcCount * 15)}"
+            val circleLayout = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                val circleSize = dp(64)
+                val clp = LinearLayout.LayoutParams(circleSize, circleSize)
+                clp.rightMargin = dp(6)
+                layoutParams = clp
+
+                val circleDrawable = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.rgb(8, 22, 34))
+                    setStroke(dp(3), if (isHealthy) Color.rgb(0, 229, 255) else Color.rgb(255, 140, 60))
+                }
+                background = circleDrawable
+
+                addView(text(scoreVal, 20, Color.WHITE, true).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, 0)
+                })
+            }
+            addView(circleLayout)
+        }
+        card.addView(topSection)
+
+        // Lower row: Rounded Cyan Action Button
+        val btnHeroAction = Button(this).apply {
+            val isConn = telemetry.isConnected || isSimulating
+            text = if (isConn) "⚡ قطع الاتصال بقارئ السيارة" else "🔌 بدء فحص كمبيوتر السيارة الآن"
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            if (isConn) {
+                setTextColor(Color.rgb(110, 231, 255))
+                setBackgroundColor(Color.rgb(16, 42, 60))
+            } else {
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(Color.rgb(0, 229, 255))
+            }
+            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+            blp.topMargin = dp(10)
+            layoutParams = blp
+            setOnClickListener {
+                if (telemetry.isConnected || isSimulating) {
+                    disconnectObd()
+                    stopSimulation()
+                    Toast.makeText(this@MainActivity, "تم قطع الاتصال بقارئ الكمبيوتر.", Toast.LENGTH_SHORT).show()
+                    renderCurrentScreen()
+                } else {
+                    openSubScreen("scanner")
+                }
+            }
+        }
+        card.addView(btnHeroAction)
+
+        return card
+    }
+
+    // ========================================================
+    // OWNER & DRIVER ACCESS / DELEGATION BANNERS
+    // ========================================================
     private fun buildOwnerAccessRequestsBanner(): View? {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1330,7 +1695,6 @@ class MainActivity : Activity() {
 
         var hasItems = false
 
-        // 1. Active Workshop Session Alert & Instant Kill-Switch
         if (isWorkshopSessionUnlocked && activeWorkshopSessionRequest != null) {
             hasItems = true
             val activeBox = LinearLayout(this).apply {
@@ -1362,7 +1726,6 @@ class MainActivity : Activity() {
             container.addView(activeBox)
         }
 
-        // 2. Pending Workshop Access Requests
         val pendingWs = workshopAccessRequests.filter { it.status == "pending" }
         if (pendingWs.isNotEmpty()) {
             hasItems = true
@@ -1489,204 +1852,394 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // ROLE SWITCHER BAR (التبديل الداخلي الفوري بين الأدوار)
+    // UNIFIED 3x3 SERVICE GRID (شبكة الخدمات والوظائف التسع المنظمة بدقة لكل دور)
     // ========================================================
-    private fun buildRoleSwitcherBar(): View {
+    private fun build3x3ServiceGrid(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(8)
+            lp.bottomMargin = dp(10)
             layoutParams = lp
         }
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.rgb(12, 28, 42))
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            layoutParams = lp
+        val titleText = when(currentRole) {
+            "owner" -> "لوحة تحكم خدمات المالك 👑"
+            "driver" -> "لوحة أدوات ومقصورة السائق 🚗"
+            else -> "منظومة فحص وتشخيص الورشة 🔧"
+        }
+        container.addView(text(titleText, 14, Color.rgb(160, 205, 235), true).apply {
+            setPadding(dp(2), dp(2), dp(2), dp(6))
+        })
+
+        data class GridItem(val title: String, val icon: String, val key: String, val badge: String = "")
+
+        val items: List<GridItem> = when(currentRole) {
+            "owner" -> listOf(
+                GridItem("فحص وحذف الأعطال", "🔍", "scanner", "DTC"),
+                GridItem("البيانات الحية", "📊", "gauges", "Live"),
+                GridItem("فحص السيارة بالـ AI", "🤖", "scanner", "AI"),
+                GridItem("أسطول سياراتي", "🚗", "owner_fleet", "${ownerFleetVehicles.size}"),
+                GridItem("المراقبة والتتبع", "📡", "remote_fleet", "GPS"),
+                GridItem("أمان وتفويض الورش", "🚨", "owner_security", if (workshopAccessRequests.any { it.status == "pending" }) "جديد" else ""),
+                GridItem("ملكية الشاسيه", "👑", "vehicles", "VIN"),
+                GridItem("التكلفة والوقود", "⛽", "fuel", "EGP"),
+                GridItem("جدول الصيانة", "🔧", "maint", "سجل")
+            )
+            "driver" -> listOf(
+                GridItem("مقصورة القيادة", "🏎️", "gauges", "HUD"),
+                GridItem("فحص الأعطال السريع", "🔍", "scanner", "DTC"),
+                GridItem("مستشار القيادة AI", "🤖", "scanner", "AI"),
+                GridItem("سياراتي المفوض بها", "🚗", "driver_cars", "نشطة"),
+                GridItem("تكلفة الرحلة والوزن", "⛽", "fuel", "حمولة"),
+                GridItem("دليل وخريطة الورش", "🗺️", "workshops_dir", "طوارئ"),
+                GridItem("سجل وبلاغ الأعطال", "🔧", "maint", "ملاحظات"),
+                GridItem("اتصال بالمالك", "📞", "call_owner", "مباشر"),
+                GridItem("تقرير الرحلة", "📋", "remote_fleet", "رحلة")
+            )
+            else -> listOf(
+                GridItem("طلب إذن الفحص", "🔑", "workshop_console", if (isWorkshopSessionUnlocked) "مصرح" else "إذن"),
+                GridItem("فحص ومسح الأعطال", "🔍", "scanner", "DTC"),
+                GridItem("تشخيص الأعطال بالـ AI", "🤖", "scanner", "AI"),
+                GridItem("الحساسات الحية", "📊", "gauges", "PIDs"),
+                GridItem("تسجيل صيانة وفاتورة", "📝", "log_service", "فاتورة"),
+                GridItem("ملف الورشة وبياناتي", "🏪", "workshop_profile", "بياناتي"),
+                GridItem("جاهزية الفحص I/M", "📋", "gauges", "I/M"),
+                GridItem("اختبار الحساسات", "🧪", "scanner", "O2"),
+                GridItem("سجل الفحوصات السابقة", "📜", "workshop_console", "أرشيف")
+            )
         }
 
-        val roles = listOf(
-            Triple("owner", "👑 واجهة المالك", Color.rgb(248, 199, 74)),
-            Triple("driver", "🚗 واجهة السائق", Color.rgb(110, 231, 255)),
-            Triple("garage", "🔧 واجهة الورشة", Color.rgb(255, 140, 90))
-        )
-
-        for ((roleKey, roleTitle, roleAccent) in roles) {
-            val isActive = (currentRole == roleKey)
-            val btn = Button(this).apply {
-                text = roleTitle
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                lp.setMargins(dp(2), 0, dp(2), 0)
-                layoutParams = lp
-                if (isActive) {
-                    setBackgroundColor(roleAccent)
-                    setTextColor(Color.rgb(8, 23, 32))
-                } else {
-                    setBackgroundColor(Color.rgb(18, 38, 56))
-                    setTextColor(Color.rgb(180, 210, 235))
-                }
-                setOnClickListener {
-                    if (currentRole != roleKey) {
-                        currentRole = roleKey
-                        preferences.edit().putString("active_role", currentRole).apply()
-                        activeTab = when(currentRole) {
-                            "owner" -> "owner_fleet"
-                            "driver" -> "gauges"
-                            "garage" -> "workshop_console"
-                            else -> "gauges"
+        for (rowIndex in 0 until 3) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.bottomMargin = dp(6)
+                layoutParams = rlp
+            }
+            for (colIndex in 0 until 3) {
+                val itemIndex = rowIndex * 3 + colIndex
+                if (itemIndex < items.size) {
+                    val item = items[itemIndex]
+                    val tile = buildGridTile(item.title, item.icon, item.badge) {
+                        if (item.key == "call_owner") {
+                            showCallOwnerDialog()
+                        } else {
+                            openSubScreen(item.key)
                         }
-                        Toast.makeText(this@MainActivity, "تم التبديل بنجاح إلى: $roleTitle", Toast.LENGTH_SHORT).show()
-                        renderCurrentScreen()
                     }
+                    row.addView(tile)
                 }
             }
-            row.addView(btn)
+            container.addView(row)
         }
-        container.addView(row)
+
         return container
     }
 
     // ========================================================
-    // TABS BAR (مخصصة حسب الدور الحالي بتصميم سلس ومنظم)
+    // SQUIRCLE GRID TILE (بطاقة الخدمة المربعة ذات الأيقونة الدائرية المتوهجة)
     // ========================================================
-    private fun buildTabBar(): View {
-        val hscroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            val p = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            layoutParams = p
+    private fun buildGridTile(title: String, iconEmoji: String, badgeText: String, onClick: () -> Unit): View {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.rgb(13, 29, 45))
+            setPadding(dp(6), dp(8), dp(6), dp(8))
+            val lp = LinearLayout.LayoutParams(0, dp(98), 1f)
+            lp.setMargins(dp(3), 0, dp(3), 0)
+            layoutParams = lp
+
+            if (badgeText.isNotEmpty()) {
+                val badgeView = TextView(this@MainActivity).apply {
+                    text = badgeText
+                    textSize = 8f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(if (badgeText == "AI" || badgeText == "جديد") Color.rgb(220, 60, 60) else Color.rgb(0, 150, 200))
+                    setPadding(dp(5), dp(1), dp(5), dp(1))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    blp.bottomMargin = dp(2)
+                    layoutParams = blp
+                }
+                addView(badgeView)
+            }
+
+            val iconBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                val iconSize = dp(38)
+                val ilp = LinearLayout.LayoutParams(iconSize, iconSize)
+                layoutParams = ilp
+
+                val circleBg = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(Color.rgb(18, 45, 68))
+                }
+                background = circleBg
+
+                addView(text(iconEmoji, 16, Color.rgb(0, 229, 255), false).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, 0)
+                })
+            }
+            addView(iconBox)
+
+            val tvTitle = TextView(this@MainActivity).apply {
+                text = title
+                textSize = 10f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                maxLines = 2
+                setPadding(0, dp(4), 0, 0)
+            }
+            addView(tvTitle)
+
+            setOnClickListener { onClick() }
         }
-        val tabLayout = LinearLayout(this).apply {
+    }
+
+    // ========================================================
+    // SUB-SCREEN DRILL-DOWN HEADER (شريط العودة للرئيسية مع العنوان)
+    // ========================================================
+    private fun buildSubScreenHeader(key: String): View {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(2), 0, dp(10))
-        }
-        hscroll.addView(tabLayout)
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(12, 30, 46))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
 
-        when (currentRole) {
-            "owner" -> {
-                tabLayout.addView(tabBtn("🚗 أسطول سياراتي والسائقين", activeTab == "owner_fleet") { switchTab("owner_fleet") })
-                tabLayout.addView(tabBtn("📡 المراقبة عن بعد", activeTab == "remote_fleet") { switchTab("remote_fleet") })
-                val unread = getUnreadSecurityNotificationsCount()
-                val notifLabel = if (unread > 0) "🚨 إشعارات الورش ($unread)" else "🚨 إشعارات الورش"
-                tabLayout.addView(tabBtn(notifLabel, activeTab == "owner_security") { switchTab("owner_security") })
-                tabLayout.addView(tabBtn("👑 ملكية الشاسيه", activeTab == "vehicles") { switchTab("vehicles") })
-                tabLayout.addView(tabBtn("🏎️ عداد OBD", activeTab == "gauges") { switchTab("gauges") })
-                tabLayout.addView(tabBtn("⛽ التكلفة والوقود", activeTab == "fuel") { switchTab("fuel") })
-                tabLayout.addView(tabBtn("🔧 جدول الصيانة", activeTab == "maint") { switchTab("maint") })
+            val btnBack = Button(this@MainActivity).apply {
+                text = "⬅️ الرئيسية"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(Color.rgb(0, 229, 255))
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+                blp.leftMargin = dp(8)
+                layoutParams = blp
+                setOnClickListener {
+                    activeSubScreen = null
+                    activeTab = "home"
+                    currentNavTab = "home"
+                    renderCurrentScreen()
+                }
             }
-            "driver" -> {
-                tabLayout.addView(tabBtn("🏎️ مقصورة القيادة", activeTab == "gauges") { switchTab("gauges") })
-                tabLayout.addView(tabBtn("🚗 سياراتي المفوض بها", activeTab == "driver_cars") { switchTab("driver_cars") })
-                tabLayout.addView(tabBtn("⛽ تكلفة الرحلة والوزن", activeTab == "fuel") { switchTab("fuel") })
-                tabLayout.addView(tabBtn("🗺️ دليل وخريطة الورش", activeTab == "workshops_dir") { switchTab("workshops_dir") })
-                tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
-            }
-            else -> { // "garage"
-                val wsTabLabel = if (isWorkshopSessionUnlocked) "🟢 فحص كمبيوتر السيارة (مصرح)" else "🔑 طلب إذن فحص السيارة"
-                tabLayout.addView(tabBtn(wsTabLabel, activeTab == "workshop_console") { switchTab("workshop_console") })
-                tabLayout.addView(tabBtn("🏪 ملف الورشة وبياناتي", activeTab == "workshop_profile") { switchTab("workshop_profile") })
-                tabLayout.addView(tabBtn("🏎️ الحساسات الحية", activeTab == "gauges") { switchTab("gauges") })
-                tabLayout.addView(tabBtn("🔍 فحص ومسح الأعطال", activeTab == "scanner") { switchTab("scanner") })
-                tabLayout.addView(tabBtn("📝 تسجيل صيانة جديدة", activeTab == "log_service") { switchTab("log_service") })
-            }
-        }
+            addView(btnBack)
 
-        return hscroll
-    }
-
-    private fun tabBtn(label: String, active: Boolean, action: () -> Unit): Button {
-        return Button(this).apply {
-            text = label
-            isAllCaps = false
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            val bg = if (active) Color.rgb(110, 231, 255) else Color.rgb(20, 42, 64)
-            val fg = if (active) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245)
-            setBackgroundColor(bg)
-            setTextColor(fg)
-            setOnClickListener { action() }
-            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40))
-            params.setMargins(dp(3), 0, dp(3), 0)
-            layoutParams = params
+            addView(text(getSubScreenTitle(key), 13, Color.WHITE, true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            })
         }
     }
 
-    private fun switchTab(tab: String) {
-        activeTab = tab
+    private fun openSubScreen(key: String) {
+        activeSubScreen = key
+        activeTab = key
+        currentNavTab = when(key) {
+            "scanner" -> "scanner"
+            "gauges" -> "gauges"
+            "owner_fleet", "driver_cars", "log_service" -> "reports"
+            "more" -> "more"
+            else -> "home"
+        }
         renderCurrentScreen()
     }
 
-    // ========================================================
-    // OWNER MULTI-VEHICLE PILL BAR (شريط التبديل السريع بين سيارات المالك)
-    // ========================================================
-    private fun buildOwnerVehiclePillBar(): View {
-        val hscroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            val p = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            p.bottomMargin = dp(8)
-            layoutParams = p
+    private fun getSubScreenTitle(key: String): String {
+        return when(key) {
+            "scanner" -> "🔍 فحص ومسح أعطال الكمبيوتر (DTC)"
+            "gauges" -> "📊 عدادات وحساسات السيارة الحية (PIDs)"
+            "owner_fleet" -> "🚗 أسطول سيارات المالك وتفويض السائقين"
+            "remote_fleet" -> "📡 التتبع الحي والمراقبة عن بعد (GPS)"
+            "owner_security" -> "🚨 أمان السيارة وأذونات الورشة (Kill-Switch)"
+            "vehicles" -> "👑 ملكية الشاسيه والقيد القانوني (VIN)"
+            "workshops_dir" -> "🗺️ دليل وخريطة مراكز الصيانة والورش"
+            "workshop_console" -> "🔧 لوحة فحص الورشة وإذن الدخول"
+            "workshop_profile" -> "🏪 ملف الورشة وبيانات الاتصال"
+            "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
+            "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
+            "fuel" -> "⛽ تكلفة الوقود والرحلات والوزن"
+            "maint" -> "🔧 جدول وتذكيرات الصيانة الدورية"
+            "more" -> "⚙️ إعدادات التطبيق والحساب"
+            else -> "شاشة فرعية"
         }
+    }
 
-        val row = LinearLayout(this).apply {
+    // ========================================================
+    // FIXED BOTTOM NAVIGATION DOCK (شريط التنقل السفلي الثابت بخمسة خيارات)
+    // ========================================================
+    private fun buildBottomNavDock(): View {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(2), 0, dp(4))
-        }
-        hscroll.addView(row)
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(10, 22, 34))
+            setPadding(0, dp(4), 0, dp(6))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56))
+            layoutParams = lp
 
-        if (ownerFleetVehicles.isEmpty()) {
-            loadOwnerFleetVehicles()
-        }
+            val tabs = listOf(
+                Triple("home", "🏠", "الرئيسية"),
+                Triple("scanner", "🔍", "الفحص"),
+                Triple("gauges", "📊", "البيانات"),
+                Triple("reports", "📋", "التقارير"),
+                Triple("more", "⚙️", "المزيد")
+            )
 
-        ownerFleetVehicles.forEach { veh ->
-            val isActive = veh.isCurrentActive
-            val alertIcon = if (veh.alertsEnabled) "🔔" else "🔕"
-            val btn = Button(this).apply {
-                text = if (isActive) "🚗 ${veh.name} (النشطة حالياً)" else "🚙 ${veh.name} $alertIcon"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40))
-                lp.setMargins(dp(3), 0, dp(3), 0)
-                layoutParams = lp
-                if (isActive) {
-                    setBackgroundColor(Color.rgb(248, 199, 74))
-                    setTextColor(Color.rgb(8, 23, 32))
-                } else {
-                    setBackgroundColor(Color.rgb(18, 38, 56))
-                    setTextColor(Color.rgb(180, 215, 245))
-                }
-                setOnClickListener {
-                    if (!veh.isCurrentActive) {
-                        activateOwnerVehicle(veh)
-                    } else {
-                        switchTab("owner_fleet")
+            for ((tabKey, tabIcon, tabTitle) in tabs) {
+                val isActive = (currentNavTab == tabKey)
+                val navItem = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    val itemLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    layoutParams = itemLp
+
+                    val activeColor = Color.rgb(0, 229, 255)
+                    val inactiveColor = Color.rgb(130, 165, 190)
+                    val tint = if (isActive) activeColor else inactiveColor
+
+                    addView(text(tabIcon, 16, tint, isActive).apply {
+                        gravity = Gravity.CENTER
+                        setPadding(0, 0, 0, 0)
+                    })
+                    addView(text(tabTitle, 9, tint, isActive).apply {
+                        gravity = Gravity.CENTER
+                        setPadding(0, dp(1), 0, 0)
+                    })
+
+                    setOnClickListener {
+                        currentNavTab = tabKey
+                        when (tabKey) {
+                            "home" -> {
+                                activeSubScreen = null
+                                activeTab = "home"
+                            }
+                            "scanner" -> {
+                                activeSubScreen = "scanner"
+                                activeTab = "scanner"
+                            }
+                            "gauges" -> {
+                                activeSubScreen = "gauges"
+                                activeTab = "gauges"
+                            }
+                            "reports" -> {
+                                val target = when(currentRole) {
+                                    "owner" -> "owner_fleet"
+                                    "driver" -> "driver_cars"
+                                    else -> "log_service"
+                                }
+                                activeSubScreen = target
+                                activeTab = target
+                            }
+                            "more" -> {
+                                activeSubScreen = "more"
+                                activeTab = "more"
+                            }
+                        }
+                        renderCurrentScreen()
                     }
                 }
-            }
-            row.addView(btn)
-        }
-
-        // Add car quick button
-        val btnAdd = Button(this).apply {
-            text = "➕ إضافة سيارة"
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
-            setBackgroundColor(Color.rgb(22, 68, 48))
-            setTextColor(Color.rgb(126, 242, 154))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40))
-            lp.setMargins(dp(3), 0, dp(3), 0)
-            layoutParams = lp
-            setOnClickListener {
-                showAddOwnerVehicleDialog()
+                addView(navItem)
             }
         }
-        row.addView(btnAdd)
+    }
 
-        return hscroll
+    // ========================================================
+    // TAB: MORE SETTINGS & PROFILE (شاشة المزيد والإعدادات والحساب)
+    // ========================================================
+    private fun buildMoreSettingsTabContent(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        val cardProfile = card().apply {
+            addView(text("👤 ملف الحساب والواجهة الحالية", 16, Color.rgb(0, 229, 255), true))
+            addView(text("• الاسم: $userName", 13, Color.WHITE, false))
+            addView(text("• رقم الموبايل: $userPhone", 13, Color.WHITE, false))
+            val roleDesc = when(currentRole) {
+                "owner" -> "👑 واجهة المالك الأساسي (تحكم كامل بالأسطول)"
+                "driver" -> "🚗 واجهة السائق المفوض (مقصورة القيادة والرحلات)"
+                else -> "🔧 واجهة الورشة ومركز الصيانة (فحص الكمبيوتر)"
+            }
+            addView(text("• الدور الحالي: $roleDesc", 13, Color.rgb(248, 199, 74), true))
+
+            addView(button("🔄 تبديل واجهة المستخدم (تحديد الدور) ▼") {
+                showRoleSelectionDialog()
+            }.apply {
+                setBackgroundColor(Color.rgb(20, 52, 78))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(cardProfile)
+
+        if (currentRole == "owner") {
+            val cardVeh = card().apply {
+                addView(text("🚗 إدارة سيارات الأسطول", 16, Color.rgb(248, 199, 74), true))
+                addView(text("يمكنك التبديل بين سياراتك المسجلة أو إضافة سيارة جديدة:", 12, Color.rgb(170, 205, 230), false))
+
+                addView(button("🚗 تبديل السيارة النشطة للأسطول ▼") {
+                    showSwitchOwnerVehicleDialog()
+                })
+
+                addView(button("➕ إضافة سيارة جديدة للأسطول") {
+                    showAddOwnerVehicleDialog()
+                }.apply {
+                    setBackgroundColor(Color.rgb(22, 68, 48))
+                    setTextColor(Color.rgb(126, 242, 154))
+                })
+            }
+            container.addView(cardVeh)
+        }
+
+        val cardConn = card().apply {
+            addView(text("🔌 قارئ فحص السيارة (OBD-II Adapter)", 16, Color.rgb(110, 231, 255), true))
+            val connStatus = if (telemetry.isConnected) "متصل بنجاح 🟢" else if (isSimulating) "وضع المحاكاة نشط 🟡" else "غير متصل ⚪"
+            addView(text("• حالة الاتصال: $connStatus", 13, Color.WHITE, false))
+
+            addView(button("🔍 فتح شاشة فحص الكمبيوتر والأعطال") {
+                openSubScreen("scanner")
+            })
+        }
+        container.addView(cardConn)
+
+        val cardLogout = card().apply {
+            addView(text("🚪 إدارة الجلسة", 16, Color.rgb(255, 122, 122), true))
+            addView(button("تسجيل الخروج من الحساب") {
+                preferences.edit().putBoolean("is_logged_in", false).apply()
+                isLoggedIn = false
+                stopDiscovery()
+                disconnectObd()
+                renderCurrentScreen()
+            }.apply {
+                setBackgroundColor(Color.rgb(55, 20, 25))
+                setTextColor(Color.rgb(255, 122, 122))
+            })
+        }
+        container.addView(cardLogout)
+
+        return container
+    }
+
+    private fun switchTab(tab: String) {
+        if (tab == "home") {
+            activeSubScreen = null
+            activeTab = "home"
+            currentNavTab = "home"
+        } else {
+            activeSubScreen = tab
+            activeTab = tab
+            currentNavTab = when(tab) {
+                "scanner" -> "scanner"
+                "gauges" -> "gauges"
+                "owner_fleet", "driver_cars", "log_service" -> "reports"
+                "more" -> "more"
+                else -> "home"
+            }
+        }
+        renderCurrentScreen()
     }
 
     // ========================================================
