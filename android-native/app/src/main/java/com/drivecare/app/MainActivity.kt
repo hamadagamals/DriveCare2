@@ -1203,7 +1203,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // 2. MAIN COCKPIT SCREEN (نظام الواجهات المنظم المستوحى من أجهزة فحص السيارات الاحترافية)
+    // 2. MAIN COCKPIT SCREEN (واجهة نظيفة، بدون بيانات وهمية، وبدون تكرار للأيقونات)
     // ========================================================
     private fun buildMainCockpitScreen(): View {
         val mainLayout = LinearLayout(this).apply {
@@ -1214,10 +1214,10 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
-        // 1. Top Cockpit Header Bar (مع قائمة اختيار الواجهة المنسدلة والصوت والخروج)
+        // 1. الشريط العلوي (اسم المستخدم + قائمة اختيار الواجهة المنسدلة + زر الصوت والخروج)
         mainLayout.addView(buildCockpitTopBar())
 
-        // 2. Scrollable Cockpit Content Area
+        // 2. المحتوى القابل للتمرير
         val scroll = ScrollView(this).apply {
             val sp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             layoutParams = sp
@@ -1232,12 +1232,11 @@ class MainActivity : Activity() {
         scroll.addView(contentBox)
         mainLayout.addView(scroll)
 
-        // 3. Fixed Bottom Navigation Dock (5 تابات ثابتة أسفل الشاشة)
+        // 3. شريط التنقل السفلي الثابت (خيارين فقط: الرئيسية والإعدادات لمنع التكرار مع بطاقات الشاشة)
         mainLayout.addView(buildBottomNavDock())
 
-        // Render Dynamic Content in Scroll Area
         if (activeSubScreen != null) {
-            // شاشة فرعية متفرعة من الـ 9 بطاقات مع شريط رجوع فوري
+            // شاشة الخدمة المفتوحة مع زر العودة للرئيسية بالأعلى
             contentBox.addView(buildSubScreenHeader(activeSubScreen!!))
 
             val banner = buildAlertBanner()
@@ -1264,35 +1263,32 @@ class MainActivity : Activity() {
             }
             contentBox.addView(subView)
         } else {
-            // واجهة التحكم الرئيسية (لوحة الـ 9 بطاقات المنظمة المطابقة لتصميم شاشات فحص السيارات)
-            // 1. بطاقة معلومات السيارة والاتصال
+            // لوحة التحكم الرئيسية المنظمة (بيانات حقيقية 100% وبدون تكرار)
+            // 1. بطاقة السيارة المضغوطة (الاسم واللوحة بجوار بعض مباشرة وبدون مسافة متباعدة)
             contentBox.addView(buildVehicleHeaderCard())
 
-            // 2. بطاقة الفحص المباشر والمؤشر الدائري
-            contentBox.addView(buildHeroHealthCard())
-
-            // 3. شريط التنبيهات والأمان الطارئ
+            // 2. شريط التنبيهات والأمان الطارئ
             val banner = buildAlertBanner()
             alertBanner = banner
             contentBox.addView(banner)
             updateAlertBannerUI()
 
-            // 4. إشعارات وتصاريح الورش والسائقين المعلقة
+            // 3. إشعارات تصاريح الورش أو دعوات السائقين الحقيقية
             if (currentRole == "owner") {
                 buildOwnerAccessRequestsBanner()?.let { contentBox.addView(it) }
             } else if (currentRole == "driver") {
                 buildDriverDelegationRequestsBanner()?.let { contentBox.addView(it) }
             }
 
-            // 5. شبكة الخدمات المنظمة 3×3 (9 بطاقات محددة وغير مكررة)
-            contentBox.addView(build3x3ServiceGrid())
+            // 4. شبكة الخدمات المباشرة والواضحة (بدون تكرار أو AI أو بيانات وهمية)
+            contentBox.addView(buildCleanServiceGrid())
         }
 
         return mainLayout
     }
 
     // ========================================================
-    // TOP COCKPIT BAR (مع القائمة المنسدلة لاختيار الواجهة)
+    // TOP COCKPIT BAR (مع القائمة المنسدلة لاختيار وتحديد الواجهة)
     // ========================================================
     private fun buildCockpitTopBar(): View {
         return LinearLayout(this).apply {
@@ -1306,7 +1302,9 @@ class MainActivity : Activity() {
             val userInfo = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(text("مرحباً، $userName 👋", 15, Color.WHITE, true))
+                addView(text("مرحباً، $userName 👋", 15, Color.WHITE, true).apply {
+                    setPadding(0, 0, 0, 0)
+                })
             }
             addView(userInfo)
 
@@ -1462,7 +1460,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // VEHICLE HEADER CARD (بطاقة معلومات السيارة المستوحاة من الصورة المرفقة)
+    // VEHICLE HEADER CARD (مضغوطة وأنيقة: الاسم واللوحة بجوار بعض وحالة الاتصال الحقيقية)
     // ========================================================
     private fun buildVehicleHeaderCard(): View {
         if (ownerFleetVehicles.isEmpty()) {
@@ -1487,38 +1485,33 @@ class MainActivity : Activity() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.rgb(14, 30, 46))
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(14), dp(10), dp(14), dp(10))
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             lp.bottomMargin = dp(10)
             layoutParams = lp
         }
 
-        // Row 1: Vehicle Title, Brand Icon, Switch button
+        // السطر الأول: اسم السيارة واللوحة ملتصقان بجوار بعض مباشرة وبدون أي تباعد
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             layoutParams = lp
 
-            val carIcon = text("🚗", 24, Color.WHITE, false).apply {
-                val clp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                clp.leftMargin = dp(8)
-                layoutParams = clp
-            }
-            addView(carIcon)
-
-            val infoCol = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
+            val carInfo = TextView(this@MainActivity).apply {
+                text = "🚗 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber}"
+                textSize = 15f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(Color.WHITE)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                addView(text(activeVeh.name, 16, Color.WHITE, true))
-                addView(text("${activeVeh.displacement.toString() + "L"} • ${activeVeh.year} • لوحة: ${activeVeh.plateNumber}", 11, Color.rgb(150, 195, 225), false))
+                setPadding(0, 0, 0, 0)
             }
-            addView(infoCol)
+            addView(carInfo)
 
             if (currentRole == "owner") {
                 val btnSwitchCar = Button(this@MainActivity).apply {
                     text = "تبديل السيارة ▼"
-                    textSize = 10f
+                    textSize = 11f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(Color.rgb(12, 30, 46))
                     setBackgroundColor(Color.rgb(248, 199, 74))
@@ -1533,154 +1526,64 @@ class MainActivity : Activity() {
         }
         card.addView(titleRow)
 
-        // Divider
-        card.addView(View(this).apply {
-            setBackgroundColor(Color.rgb(25, 48, 70))
-            val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-            dlp.topMargin = dp(8)
-            dlp.bottomMargin = dp(8)
-            layoutParams = dlp
-        })
-
-        // Row 2: Status Indicators (WiFi, GPS, Engine, OBD) + Connection Pill
+        // السطر الثاني: حالة الاتصال الحقيقية مع زر توصيل/فصل مباشر
         val statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = dp(6)
             layoutParams = lp
 
-            val indicators = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            val isConn = telemetry.isConnected
+            val (statusText, statusColor) = when {
+                isConn -> Pair("🟢 متصل بقارئ OBD (Bluetooth)", Color.rgb(126, 242, 154))
+                isSimulating -> Pair("🟡 وضع المحاكاة نشط", Color.rgb(255, 210, 100))
+                else -> Pair("⚪ غير متصل بقارئ OBD", Color.rgb(200, 160, 160))
+            }
 
-                fun miniIcon(symbol: String, active: Boolean): TextView {
-                    return text(symbol, 13, if (active) Color.rgb(0, 229, 255) else Color.rgb(100, 125, 145), false).apply {
-                        val mlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                        mlp.setMargins(dp(4), 0, dp(4), 0)
-                        layoutParams = mlp
+            val tvStatus = TextView(this@MainActivity).apply {
+                text = statusText
+                textSize = 12f
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(statusColor)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                setPadding(0, 0, 0, 0)
+            }
+            addView(tvStatus)
+
+            if (!isConn && !isSimulating) {
+                val btnConnect = Button(this@MainActivity).apply {
+                    text = "🔌 توصيل القارئ"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(8, 23, 32))
+                    setBackgroundColor(Color.rgb(0, 229, 255))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30))
+                    layoutParams = blp
+                    setOnClickListener {
+                        openSubScreen("scanner")
                     }
                 }
-
-                addView(miniIcon("📶", true))
-                addView(miniIcon("📍", currentGpsLocation != null || phoneGpsSpeedKmh > 0))
-                addView(miniIcon("⚙️", telemetry.isConnected || isSimulating))
-                addView(miniIcon("🔌", telemetry.isConnected || isSimulating))
+                addView(btnConnect)
+            } else {
+                val btnDisconnect = Button(this@MainActivity).apply {
+                    text = "قطع الاتصال"
+                    textSize = 11f
+                    setTextColor(Color.rgb(255, 122, 122))
+                    setBackgroundColor(Color.rgb(40, 20, 25))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(30))
+                    layoutParams = blp
+                    setOnClickListener {
+                        disconnectObd()
+                        if (isSimulating) toggleSimulation()
+                        Toast.makeText(this@MainActivity, "تم قطع الاتصال.", Toast.LENGTH_SHORT).show()
+                        renderCurrentScreen()
+                    }
+                }
+                addView(btnDisconnect)
             }
-            addView(indicators)
-
-            val (connText, connBg, connFg) = when {
-                telemetry.isConnected -> Triple("🟢 متصل Bluetooth", Color.rgb(18, 60, 45), Color.rgb(126, 242, 154))
-                isSimulating -> Triple("🟡 وضع المحاكاة", Color.rgb(65, 50, 18), Color.rgb(255, 210, 100))
-                else -> Triple("⚪ غير متصل", Color.rgb(38, 20, 25), Color.rgb(240, 150, 150))
-            }
-            val connPill = TextView(this@MainActivity).apply {
-                text = connText
-                textSize = 11f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(connFg)
-                setBackgroundColor(connBg)
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-            }
-            addView(connPill)
         }
         card.addView(statusRow)
-
-        return card
-    }
-
-    // ========================================================
-    // HERO DIAGNOSTIC HEALTH CARD (البطاقة الكبرى مع المؤشر الدائري وزر الفحص)
-    // ========================================================
-    private fun buildHeroHealthCard(): View {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.rgb(12, 28, 44))
-            setPadding(dp(14), dp(14), dp(14), dp(12))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(10)
-            layoutParams = lp
-        }
-
-        val dtcCount = telemetry.dtcCodes.size
-        val isHealthy = (dtcCount == 0)
-
-        // Upper row: Live Diagnostics Status + Circular Score Widget
-        val topSection = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            layoutParams = lp
-
-            val infoCol = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-
-                addView(text("‹ فحص مباشر ›", 12, Color.rgb(120, 185, 220), false))
-
-                val statusLabel = if (isHealthy) "سليمة ✓" else "⚠️ $dtcCount أعطال مسجلة"
-                val statusColor = if (isHealthy) Color.rgb(46, 213, 115) else Color.rgb(255, 107, 107)
-                addView(text(statusLabel, 20, statusColor, true))
-
-                val tempStr = if (telemetry.isConnected || isSimulating) "${telemetry.coolantTemp}°C" else "طبيعي"
-                val voltStr = if (telemetry.isConnected || isSimulating) "${String.format(java.util.Locale.US, "%.1f", telemetry.batteryVoltage)}V" else "12.6V"
-                val summaryText = "حرارة: $tempStr • بطارية: $voltStr • فحص المحرك مستقر"
-                addView(text(summaryText, 11, Color.rgb(150, 190, 215), false))
-            }
-            addView(infoCol)
-
-            val scoreVal = if (isHealthy) "86" else "${maxOf(45, 95 - dtcCount * 15)}"
-            val circleLayout = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                val circleSize = dp(64)
-                val clp = LinearLayout.LayoutParams(circleSize, circleSize)
-                clp.rightMargin = dp(6)
-                layoutParams = clp
-
-                val circleDrawable = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.OVAL
-                    setColor(Color.rgb(8, 22, 34))
-                    setStroke(dp(3), if (isHealthy) Color.rgb(0, 229, 255) else Color.rgb(255, 140, 60))
-                }
-                background = circleDrawable
-
-                addView(text(scoreVal, 20, Color.WHITE, true).apply {
-                    gravity = Gravity.CENTER
-                    setPadding(0, 0, 0, 0)
-                })
-            }
-            addView(circleLayout)
-        }
-        card.addView(topSection)
-
-        // Lower row: Rounded Cyan Action Button
-        val btnHeroAction = Button(this).apply {
-            val isConn = telemetry.isConnected || isSimulating
-            text = if (isConn) "⚡ قطع الاتصال بقارئ السيارة" else "🔌 بدء فحص كمبيوتر السيارة الآن"
-            textSize = 13f
-            typeface = Typeface.DEFAULT_BOLD
-            if (isConn) {
-                setTextColor(Color.rgb(110, 231, 255))
-                setBackgroundColor(Color.rgb(16, 42, 60))
-            } else {
-                setTextColor(Color.rgb(8, 23, 32))
-                setBackgroundColor(Color.rgb(0, 229, 255))
-            }
-            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
-            blp.topMargin = dp(10)
-            layoutParams = blp
-            setOnClickListener {
-                if (telemetry.isConnected || isSimulating) {
-                    disconnectObd()
-                    if (isSimulating) toggleSimulation()
-                    Toast.makeText(this@MainActivity, "تم قطع الاتصال بقارئ الكمبيوتر.", Toast.LENGTH_SHORT).show()
-                    renderCurrentScreen()
-                } else {
-                    openSubScreen("scanner")
-                }
-            }
-        }
-        card.addView(btnHeroAction)
 
         return card
     }
@@ -1708,9 +1611,8 @@ class MainActivity : Activity() {
                 lp.bottomMargin = dp(6)
                 layoutParams = lp
 
-                addView(text("⚠️ تنبيه أمني مباشر: ورشة (${activeWorkshopSessionRequest?.workshopName}) متصلة بالسيارة الآن!", 14, Color.rgb(255, 122, 122), true))
-                addView(text("الورشة تقرأ الحساسات وأكواد الكمبيوتر لغرض: (${activeWorkshopSessionRequest?.serviceReason}) • هاتف الورشة: ${activeWorkshopSessionRequest?.workshopPhone}", 12, Color.WHITE, false))
-                addView(text("لديك الصلاحية الكاملة لإنهاء الجلسة وطرد الورشة وإلغاء الدخول فوراً بضغطة زر:", 11, Color.rgb(248, 199, 74), false))
+                addView(text("⚠️ تنبيه أمني: ورشة (${activeWorkshopSessionRequest?.workshopName}) متصلة بالسيارة الآن!", 14, Color.rgb(255, 122, 122), true))
+                addView(text("الورشة تقرأ الحساسات لفحص: (${activeWorkshopSessionRequest?.serviceReason}) • هاتف: ${activeWorkshopSessionRequest?.workshopPhone}", 12, Color.WHITE, false))
 
                 addView(Button(this@MainActivity).apply {
                     text = "⛔ إنهاء جلسة الورشة وإلغاء الدخول فوراً"
@@ -1743,8 +1645,7 @@ class MainActivity : Activity() {
 
                     addView(text("📡 طلب إذن فحص من ورشة صيانة (بدون أرقام سرية):", 14, Color.rgb(248, 199, 74), true))
                     addView(text("• اسم الورشة: ${req.workshopName} (هاتف: ${req.workshopPhone})", 13, Color.rgb(110, 231, 255), true))
-                    addView(text("• السيارة المطلوبة: ${req.targetVehicleName} • الغرض: ${req.serviceReason}", 12, Color.WHITE, false))
-                    addView(text("• التصريح يمنح الورشة دخولاً لمرة واحدة فقط وينتهي تلقائياً عند خروجها أو إلغائك له.", 11, Color.rgb(170, 205, 230), false))
+                    addView(text("• السيارة: ${req.targetVehicleName} • الغرض: ${req.serviceReason}", 12, Color.WHITE, false))
 
                     val btnRow = LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.HORIZONTAL
@@ -1767,7 +1668,7 @@ class MainActivity : Activity() {
                         })
 
                         addView(Button(this@MainActivity).apply {
-                            text = "❌ رفض الطلب"
+                            text = "❌ رفض"
                             textSize = 12f
                             setTextColor(Color.rgb(255, 122, 122))
                             setBackgroundColor(Color.rgb(55, 20, 25))
@@ -1812,7 +1713,6 @@ class MainActivity : Activity() {
                 addView(text("🚗 وصلتك دعوة تفويض استلام سيارة جديدة!", 15, Color.rgb(248, 199, 74), true))
                 addView(text("• السيارة: ${req.vehicleName} (${req.vehicleMake} - ${req.vehicleYear}) - لوحة: ${req.vehiclePlate}", 13, Color.WHITE, true))
                 addView(text("• المالك: ${req.ownerName} (هاتف: ${req.ownerPhone})", 12, Color.rgb(180, 215, 240), false))
-                addView(text("• اسمك لدى المالك: ${req.driverCustomName} • الصفة: ${req.driverRole}", 12, Color.rgb(126, 242, 154), false))
 
                 val btnRow = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -1821,7 +1721,7 @@ class MainActivity : Activity() {
                     layoutParams = blp
 
                     addView(Button(this@MainActivity).apply {
-                        text = "✅ قبول واستلام السيارة"
+                        text = "✅ قبول واستلام"
                         textSize = 12f
                         typeface = Typeface.DEFAULT_BOLD
                         setTextColor(Color.WHITE)
@@ -1835,7 +1735,7 @@ class MainActivity : Activity() {
                     })
 
                     addView(Button(this@MainActivity).apply {
-                        text = "❌ اعتذار / رفض"
+                        text = "❌ رفض"
                         textSize = 12f
                         setTextColor(Color.rgb(255, 122, 122))
                         setBackgroundColor(Color.rgb(55, 20, 25))
@@ -1855,9 +1755,9 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // UNIFIED 3x3 SERVICE GRID (شبكة الخدمات والوظائف التسع المنظمة بدقة لكل دور)
+    // CLEAN SERVICE GRID (بطاقات واضحة بدون تكرار وبدون بيانات وهمية وبدون AI)
     // ========================================================
-    private fun build3x3ServiceGrid(): View {
+    private fun buildCleanServiceGrid(): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -1867,70 +1767,69 @@ class MainActivity : Activity() {
 
         val titleText = when(currentRole) {
             "owner" -> "لوحة تحكم خدمات المالك 👑"
-            "driver" -> "لوحة أدوات ومقصورة السائق 🚗"
-            else -> "منظومة فحص وتشخيص الورشة 🔧"
+            "driver" -> "لوحة مقصورة وخدمات السائق 🚗"
+            else -> "لوحة فحص وتشخيص الورشة 🔧"
         }
         container.addView(text(titleText, 14, Color.rgb(160, 205, 235), true).apply {
-            setPadding(dp(2), dp(2), dp(2), dp(6))
+            setPadding(dp(2), dp(2), dp(2), dp(8))
         })
 
-        data class GridItem(val title: String, val icon: String, val key: String, val badge: String = "")
+        data class ServiceCard(val title: String, val subtitle: String, val icon: String, val key: String)
 
-        val items: List<GridItem> = when(currentRole) {
+        val cards: List<ServiceCard> = when(currentRole) {
             "owner" -> listOf(
-                GridItem("فحص وحذف الأعطال", "🔍", "scanner", "DTC"),
-                GridItem("البيانات الحية", "📊", "gauges", "Live"),
-                GridItem("فحص السيارة بالـ AI", "🤖", "scanner", "AI"),
-                GridItem("أسطول سياراتي", "🚗", "owner_fleet", "${ownerFleetVehicles.size}"),
-                GridItem("المراقبة والتتبع", "📡", "remote_fleet", "GPS"),
-                GridItem("أمان وتفويض الورش", "🚨", "owner_security", if (workshopAccessRequests.any { it.status == "pending" }) "جديد" else ""),
-                GridItem("ملكية الشاسيه", "👑", "vehicles", "VIN"),
-                GridItem("التكلفة والوقود", "⛽", "fuel", "EGP"),
-                GridItem("جدول الصيانة", "🔧", "maint", "سجل")
+                ServiceCard("فحص وحذف الأعطال", "قراءة أكواد الكمبيوتر ومسحها", "🔍", "scanner"),
+                ServiceCard("البيانات والحساسات", "السرعة والحرارة والشحن الحية", "📊", "gauges"),
+                ServiceCard("أسطول سياراتي", "إدارة وتفويض السائقين بالهاتف", "🚗", "owner_fleet"),
+                ServiceCard("المراقبة والتتبع", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
+                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص والطرد الفوري", "🚨", "owner_security"),
+                ServiceCard("ملكية الشاسيه", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
+                ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
+                ServiceCard("جدول الصيانة", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
             )
             "driver" -> listOf(
-                GridItem("مقصورة القيادة", "🏎️", "gauges", "HUD"),
-                GridItem("فحص الأعطال السريع", "🔍", "scanner", "DTC"),
-                GridItem("مستشار القيادة AI", "🤖", "scanner", "AI"),
-                GridItem("سياراتي المفوض بها", "🚗", "driver_cars", "نشطة"),
-                GridItem("تكلفة الرحلة والوزن", "⛽", "fuel", "حمولة"),
-                GridItem("دليل وخريطة الورش", "🗺️", "workshops_dir", "طوارئ"),
-                GridItem("سجل وبلاغ الأعطال", "🔧", "maint", "ملاحظات"),
-                GridItem("اتصال بالمالك", "📞", "call_owner", "مباشر"),
-                GridItem("تقرير الرحلة", "📋", "remote_fleet", "رحلة")
+                ServiceCard("مقصورة العدادات", "السرعة والحرارة والشحن الحية", "🏎️", "gauges"),
+                ServiceCard("فحص أعطال السيارة", "فحص سريع للمبة Check Engine", "🔍", "scanner"),
+                ServiceCard("سياراتي المفوض بها", "السيارات المصرح بقيادتها", "🚗", "driver_cars"),
+                ServiceCard("حاسبة الحمولة والوقود", "توزيع الوزن وتكلفة المسار", "⛽", "fuel"),
+                ServiceCard("دليل وأرقام الورش", "أرقام الورش وأوناش الإنقاذ", "🗺️", "workshops_dir"),
+                ServiceCard("اتصال بمالك السيارة", "مكالمة هاتفية أو واتساب مباشر", "📞", "call_owner")
             )
             else -> listOf(
-                GridItem("طلب إذن الفحص", "🔑", "workshop_console", if (isWorkshopSessionUnlocked) "مصرح" else "إذن"),
-                GridItem("فحص ومسح الأعطال", "🔍", "scanner", "DTC"),
-                GridItem("تشخيص الأعطال بالـ AI", "🤖", "scanner", "AI"),
-                GridItem("الحساسات الحية", "📊", "gauges", "PIDs"),
-                GridItem("تسجيل صيانة وفاتورة", "📝", "log_service", "فاتورة"),
-                GridItem("ملف الورشة وبياناتي", "🏪", "workshop_profile", "بياناتي"),
-                GridItem("جاهزية الفحص I/M", "📋", "gauges", "I/M"),
-                GridItem("اختبار الحساسات", "🧪", "scanner", "O2"),
-                GridItem("سجل الفحوصات السابقة", "📜", "workshop_console", "أرشيف")
+                ServiceCard("طلب إذن الفحص", "إرسال طلب للمالك بدون أرقام سرية", "🔑", "workshop_console"),
+                ServiceCard("فحص ومسح الأعطال", "قراءة ومسح أعطال الكمبيوتر ECU", "🔍", "scanner"),
+                ServiceCard("الحساسات الحية", "قراءة الحساسات و Freeze Frame", "📊", "gauges"),
+                ServiceCard("تسجيل صيانة وفاتورة", "توثيق القطع وتكلفة الصيانة", "📝", "log_service"),
+                ServiceCard("ملف الورشة وبياناتي", "اسم الورشة والهاتف للعملاء", "🏪", "workshop_profile"),
+                ServiceCard("جاهزية الفحص I/M", "فحص جاهزية انبعاثات العادم", "📋", "gauges")
             )
         }
 
-        for (rowIndex in 0 until 3) {
+        val rowCount = (cards.size + 1) / 2
+        for (r in 0 until rowCount) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.bottomMargin = dp(6)
+                rlp.bottomMargin = dp(8)
                 layoutParams = rlp
             }
-            for (colIndex in 0 until 3) {
-                val itemIndex = rowIndex * 3 + colIndex
-                if (itemIndex < items.size) {
-                    val item = items[itemIndex]
-                    val tile = buildGridTile(item.title, item.icon, item.badge) {
-                        if (item.key == "call_owner") {
+
+            for (c in 0 until 2) {
+                val idx = r * 2 + c
+                if (idx < cards.size) {
+                    val cardItem = cards[idx]
+                    val tile = buildServiceTile(cardItem.title, cardItem.subtitle, cardItem.icon) {
+                        if (cardItem.key == "call_owner") {
                             showCallOwnerDialog()
                         } else {
-                            openSubScreen(item.key)
+                            openSubScreen(cardItem.key)
                         }
                     }
                     row.addView(tile)
+                } else {
+                    row.addView(View(this).apply {
+                        layoutParams = LinearLayout.LayoutParams(0, dp(74), 1f)
+                    })
                 }
             }
             container.addView(row)
@@ -1940,38 +1839,24 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // SQUIRCLE GRID TILE (بطاقة الخدمة المربعة ذات الأيقونة الدائرية المتوهجة)
+    // SERVICE TILE (بطاقة خدمة أفقية أنيقة ومريحة للعين)
     // ========================================================
-    private fun buildGridTile(title: String, iconEmoji: String, badgeText: String, onClick: () -> Unit): View {
+    private fun buildServiceTile(title: String, subtitle: String, iconEmoji: String, onClick: () -> Unit): View {
         return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.rgb(13, 29, 45))
-            setPadding(dp(6), dp(8), dp(6), dp(8))
-            val lp = LinearLayout.LayoutParams(0, dp(98), 1f)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            val lp = LinearLayout.LayoutParams(0, dp(74), 1f)
             lp.setMargins(dp(3), 0, dp(3), 0)
             layoutParams = lp
-
-            if (badgeText.isNotEmpty()) {
-                val badgeView = TextView(this@MainActivity).apply {
-                    text = badgeText
-                    textSize = 8f
-                    setTypeface(typeface, Typeface.BOLD)
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(if (badgeText == "AI" || badgeText == "جديد") Color.rgb(220, 60, 60) else Color.rgb(0, 150, 200))
-                    setPadding(dp(5), dp(1), dp(5), dp(1))
-                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    blp.bottomMargin = dp(2)
-                    layoutParams = blp
-                }
-                addView(badgeView)
-            }
 
             val iconBox = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 val iconSize = dp(38)
                 val ilp = LinearLayout.LayoutParams(iconSize, iconSize)
+                ilp.leftMargin = dp(8)
                 layoutParams = ilp
 
                 val circleBg = android.graphics.drawable.GradientDrawable().apply {
@@ -1987,16 +1872,26 @@ class MainActivity : Activity() {
             }
             addView(iconBox)
 
-            val tvTitle = TextView(this@MainActivity).apply {
-                text = title
-                textSize = 10f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                maxLines = 2
-                setPadding(0, dp(4), 0, 0)
+            val textCol = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 12f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(Color.WHITE)
+                    maxLines = 1
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = subtitle
+                    textSize = 9f
+                    setTextColor(Color.rgb(140, 180, 210))
+                    maxLines = 1
+                    setPadding(0, dp(2), 0, 0)
+                })
             }
-            addView(tvTitle)
+            addView(textCol)
 
             setOnClickListener { onClick() }
         }
@@ -2042,13 +1937,7 @@ class MainActivity : Activity() {
     private fun openSubScreen(key: String) {
         activeSubScreen = key
         activeTab = key
-        currentNavTab = when(key) {
-            "scanner" -> "scanner"
-            "gauges" -> "gauges"
-            "owner_fleet", "driver_cars", "log_service" -> "reports"
-            "more" -> "more"
-            else -> "home"
-        }
+        currentNavTab = if (key == "more") "more" else "home"
         renderCurrentScreen()
     }
 
@@ -2065,7 +1954,7 @@ class MainActivity : Activity() {
             "workshop_profile" -> "🏪 ملف الورشة وبيانات الاتصال"
             "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
             "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
-            "fuel" -> "⛽ تكلفة الوقود والرحلات والوزن"
+            "fuel" -> "⛽ تكلفة الوقود وحساب الاستهلاك"
             "maint" -> "🔧 جدول وتذكيرات الصيانة الدورية"
             "more" -> "⚙️ إعدادات التطبيق والحساب"
             else -> "شاشة فرعية"
@@ -2073,7 +1962,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // FIXED BOTTOM NAVIGATION DOCK (شريط التنقل السفلي الثابت بخمسة خيارات)
+    // FIXED BOTTOM NAVIGATION DOCK (شريط التنقل السفلي الثابت - بدون أي تكرار مع البطاقات)
     // ========================================================
     private fun buildBottomNavDock(): View {
         return LinearLayout(this).apply {
@@ -2081,66 +1970,43 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.rgb(10, 22, 34))
             setPadding(0, dp(4), 0, dp(6))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52))
             layoutParams = lp
 
             val tabs = listOf(
-                Triple("home", "🏠", "الرئيسية"),
-                Triple("scanner", "🔍", "الفحص"),
-                Triple("gauges", "📊", "البيانات"),
-                Triple("reports", "📋", "التقارير"),
-                Triple("more", "⚙️", "المزيد")
+                Pair("home", "🏠 الرئيسية (لوحة الخدمات)"),
+                Pair("more", "⚙️ الحساب والإعدادات")
             )
 
-            for ((tabKey, tabIcon, tabTitle) in tabs) {
+            for ((tabKey, tabTitle) in tabs) {
                 val isActive = (currentNavTab == tabKey)
                 val navItem = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
+                    orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER
                     val itemLp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
                     layoutParams = itemLp
 
                     val activeColor = Color.rgb(0, 229, 255)
-                    val inactiveColor = Color.rgb(130, 165, 190)
+                    val inactiveColor = Color.rgb(140, 175, 200)
                     val tint = if (isActive) activeColor else inactiveColor
 
-                    addView(text(tabIcon, 16, tint, isActive).apply {
+                    if (isActive) {
+                        setBackgroundColor(Color.rgb(16, 38, 58))
+                    }
+
+                    addView(text(tabTitle, 12, tint, isActive).apply {
                         gravity = Gravity.CENTER
                         setPadding(0, 0, 0, 0)
-                    })
-                    addView(text(tabTitle, 9, tint, isActive).apply {
-                        gravity = Gravity.CENTER
-                        setPadding(0, dp(1), 0, 0)
                     })
 
                     setOnClickListener {
                         currentNavTab = tabKey
-                        when (tabKey) {
-                            "home" -> {
-                                activeSubScreen = null
-                                activeTab = "home"
-                            }
-                            "scanner" -> {
-                                activeSubScreen = "scanner"
-                                activeTab = "scanner"
-                            }
-                            "gauges" -> {
-                                activeSubScreen = "gauges"
-                                activeTab = "gauges"
-                            }
-                            "reports" -> {
-                                val target = when(currentRole) {
-                                    "owner" -> "owner_fleet"
-                                    "driver" -> "driver_cars"
-                                    else -> "log_service"
-                                }
-                                activeSubScreen = target
-                                activeTab = target
-                            }
-                            "more" -> {
-                                activeSubScreen = "more"
-                                activeTab = "more"
-                            }
+                        if (tabKey == "home") {
+                            activeSubScreen = null
+                            activeTab = "home"
+                        } else {
+                            activeSubScreen = "more"
+                            activeTab = "more"
                         }
                         renderCurrentScreen()
                     }
@@ -2151,7 +2017,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // TAB: MORE SETTINGS & PROFILE (شاشة المزيد والإعدادات والحساب)
+    // TAB: MORE SETTINGS & PROFILE (شاشة الحساب والإعدادات)
     // ========================================================
     private fun buildMoreSettingsTabContent(): View {
         val container = LinearLayout(this).apply {
@@ -2181,12 +2047,9 @@ class MainActivity : Activity() {
         if (currentRole == "owner") {
             val cardVeh = card().apply {
                 addView(text("🚗 إدارة سيارات الأسطول", 16, Color.rgb(248, 199, 74), true))
-                addView(text("يمكنك التبديل بين سياراتك المسجلة أو إضافة سيارة جديدة:", 12, Color.rgb(170, 205, 230), false))
-
                 addView(button("🚗 تبديل السيارة النشطة للأسطول ▼") {
                     showSwitchOwnerVehicleDialog()
                 })
-
                 addView(button("➕ إضافة سيارة جديدة للأسطول") {
                     showAddOwnerVehicleDialog()
                 }.apply {
@@ -2202,7 +2065,7 @@ class MainActivity : Activity() {
             val connStatus = if (telemetry.isConnected) "متصل بنجاح 🟢" else if (isSimulating) "وضع المحاكاة نشط 🟡" else "غير متصل ⚪"
             addView(text("• حالة الاتصال: $connStatus", 13, Color.WHITE, false))
 
-            addView(button("🔍 فتح شاشة فحص الكمبيوتر والأعطال") {
+            addView(button("🔍 فتح شاشة فحص وتوصيل الكمبيوتر") {
                 openSubScreen("scanner")
             })
         }
@@ -2234,13 +2097,7 @@ class MainActivity : Activity() {
         } else {
             activeSubScreen = tab
             activeTab = tab
-            currentNavTab = when(tab) {
-                "scanner" -> "scanner"
-                "gauges" -> "gauges"
-                "owner_fleet", "driver_cars", "log_service" -> "reports"
-                "more" -> "more"
-                else -> "home"
-            }
+            currentNavTab = if (tab == "more") "more" else "home"
         }
         renderCurrentScreen()
     }
