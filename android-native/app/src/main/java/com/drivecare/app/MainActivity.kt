@@ -39,7 +39,10 @@ import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.Spinner
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.HorizontalScrollView
@@ -1114,7 +1117,7 @@ class MainActivity : Activity() {
             var selectedRoleIndex = 0
 
             val roleSpinner = Spinner(this@MainActivity).apply {
-                val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, roleOptions)
+                val adapter = ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, roleOptions)
                 this.adapter = adapter
                 setBackgroundColor(Color.rgb(16, 38, 56))
                 setPadding(dp(12), dp(12), dp(12), dp(12))
@@ -1465,20 +1468,20 @@ class MainActivity : Activity() {
         if (ownerFleetVehicles.isEmpty()) {
             loadOwnerFleetVehicles()
         }
-        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerFleetVehicle(
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerVehicle(
             id = "default_car",
             name = "شيفروليه أفيو 2015",
             make = "Chevrolet",
-            model = "Aveo",
             year = "2015",
+            vin = "KL1TA69...2015",
             plateNumber = "أ ب ج 123",
-            chassisVin = "KL1TA69...2015",
-            engineSpec = "1.5L 4-Cyl",
-            currentDriverName = authorizedDriverName,
-            currentDriverPhone = authorizedDriverPhone,
+            tankCapacity = 45.0f,
+            displacement = 1.5f,
+            baseRate = 7.2f,
+            emptyWeightKg = 1200.0f,
+            fuelType = "gasoline",
             alertsEnabled = true,
-            isCurrentActive = true,
-            assignedAt = "2026/01/01"
+            isCurrentActive = true
         )
 
         val card = LinearLayout(this).apply {
@@ -1508,7 +1511,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 addView(text(activeVeh.name, 16, Color.WHITE, true))
-                addView(text("${activeVeh.engineSpec} • ${activeVeh.year} • لوحة: ${activeVeh.plateNumber}", 11, Color.rgb(150, 195, 225), false))
+                addView(text("${activeVeh.displacement.toString() + "L"} • ${activeVeh.year} • لوحة: ${activeVeh.plateNumber}", 11, Color.rgb(150, 195, 225), false))
             }
             addView(infoCol)
 
@@ -1598,7 +1601,7 @@ class MainActivity : Activity() {
             layoutParams = lp
         }
 
-        val dtcCount = detectedDtcCodes.size
+        val dtcCount = telemetry.dtcCodes.size
         val isHealthy = (dtcCount == 0)
 
         // Upper row: Live Diagnostics Status + Circular Score Widget
@@ -1669,7 +1672,7 @@ class MainActivity : Activity() {
             setOnClickListener {
                 if (telemetry.isConnected || isSimulating) {
                     disconnectObd()
-                    stopSimulation()
+                    if (isSimulating) toggleSimulation()
                     Toast.makeText(this@MainActivity, "تم قطع الاتصال بقارئ الكمبيوتر.", Toast.LENGTH_SHORT).show()
                     renderCurrentScreen()
                 } else {
