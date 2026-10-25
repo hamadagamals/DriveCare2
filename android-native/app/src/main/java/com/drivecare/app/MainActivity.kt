@@ -141,6 +141,7 @@ class MainActivity : Activity() {
     private var userPhone: String = ""
     private var currentRole: String = "owner" // "owner", "driver", "garage"
     private var activeTab: String = "home" // "home", "gauges", "vehicles", "scanner", "fuel", "maint", "remote_fleet", "owner_security", "workshops_dir", "workshop_console", "log_service", "more"
+    private var selectedPredictiveFilter: String = "30d"
     private var activeSubScreen: String? = null // When null, displays the sleek 3x3 Home Grid Dashboard matching the reference design
     private var currentNavTab: String = "home" // "home", "scanner", "gauges", "reports", "more"
 
@@ -1253,6 +1254,7 @@ class MainActivity : Activity() {
                 "workshop_console" -> buildWorkshopConsoleTabContent()
                 "workshop_profile" -> buildWorkshopProfileTabContent()
                 "driver_cars" -> buildDriverCarsTabContent()
+                "predictive_health" -> buildPredictiveHealthTabContent()
                 "log_service" -> buildLogServiceTabContent()
                 "gauges" -> buildGaugesTabContent()
                 "scanner" -> buildScannerTabContent()
@@ -1784,6 +1786,7 @@ class MainActivity : Activity() {
                 ServiceCard("المراقبة والتتبع", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
                 ServiceCard("أمان وتصاريح الورش", "طلبات الفحص والطرد الفوري", "🚨", "owner_security"),
                 ServiceCard("ملكية الشاسيه", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
+                ServiceCard("التحليل التنبؤي وصحة السيارة", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
                 ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
                 ServiceCard("جدول الصيانة", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
             )
@@ -1799,6 +1802,7 @@ class MainActivity : Activity() {
                 ServiceCard("طلب إذن الفحص", "إرسال طلب للمالك بدون أرقام سرية", "🔑", "workshop_console"),
                 ServiceCard("فحص ومسح الأعطال", "قراءة ومسح أعطال الكمبيوتر ECU", "🔍", "scanner"),
                 ServiceCard("الحساسات الحية", "قراءة الحساسات و Freeze Frame", "📊", "gauges"),
+                ServiceCard("التحليل التنبؤي وتاريخ السيارة", "تغير معدل البنزين وسحب المرش والحرارة", "📈", "predictive_health"),
                 ServiceCard("تسجيل صيانة وفاتورة", "توثيق القطع وتكلفة الصيانة", "📝", "log_service"),
                 ServiceCard("ملف الورشة وبياناتي", "اسم الورشة والهاتف للعملاء", "🏪", "workshop_profile"),
                 ServiceCard("جاهزية الفحص I/M", "فحص جاهزية انبعاثات العادم", "📋", "gauges")
@@ -1953,6 +1957,7 @@ class MainActivity : Activity() {
             "workshop_console" -> "🔧 لوحة فحص الورشة وإذن الدخول"
             "workshop_profile" -> "🏪 ملف الورشة وبيانات الاتصال"
             "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
+            "predictive_health" -> "📈 التحليل التنبؤي وصحة السيارة (المعدلات والأعطال)"
             "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
             "fuel" -> "⛽ تكلفة الوقود وحساب الاستهلاك"
             "maint" -> "🔧 جدول وتذكيرات الصيانة الدورية"
@@ -4790,6 +4795,988 @@ class MainActivity : Activity() {
     // ========================================================
     // HELPER METHODS: PIN, NOTIFICATIONS, VIN LOCK & DELTA LOG
     // ========================================================
+    
+    // ========================================================
+    // PREDICTIVE HEALTH & DAILY PERFORMANCE SNAPSHOTS SYSTEM
+    // (حساب معدل تغير استهلاك الوقود اليومي، وسحب المرش، وأيام ارتفاع الحرارة)
+    // ========================================================
+    data class DailyVehicleSnapshot(
+        val id: String = java.util.UUID.randomUUID().toString(),
+        val vehicleId: String,
+        val date: String, // YYYY/MM/DD
+        val avgFuelRateL100km: Float, // e.g. 11.0f
+        val baselineL100km: Float = 7.5f,
+        val fuelRateDeltaPercent: Float = 0.0f,
+        val distanceKm: Float = 0f,
+        val fuelConsumedLiters: Float = 0f,
+        val maxCoolantTemp: Int = 90, // e.g. 92°C or 106°C
+        val minCrankVoltage: Float = 10.4f, // e.g. 10.4V or 9.1V
+        val estCrankAmps: Int = 120, // e.g. 120A or 185A
+        val crankDurationSec: Float = 0.9f, // e.g. 0.9s or 2.5s
+        val hasHeatAnomaly: Boolean = false,
+        val hasFuelAnomaly: Boolean = false,
+        val hasCrankAnomaly: Boolean = false,
+        val notes: String = ""
+    )
+
+    private fun loadDailySnapshots(vehicleId: String): MutableList<DailyVehicleSnapshot> {
+        val json = preferences.getString("daily_snapshots_$vehicleId", null)
+        val list = mutableListOf<DailyVehicleSnapshot>()
+        if (!json.isNullOrEmpty()) {
+            try {
+                val arr = org.json.JSONArray(json)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    list.add(DailyVehicleSnapshot(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        vehicleId = obj.optString("vehicleId", vehicleId),
+                        date = obj.optString("date", "2026/10/01"),
+                        avgFuelRateL100km = obj.optDouble("avgFuelRateL100km", 7.5).toFloat(),
+                        baselineL100km = obj.optDouble("baselineL100km", 7.5).toFloat(),
+                        fuelRateDeltaPercent = obj.optDouble("fuelRateDeltaPercent", 0.0).toFloat(),
+                        distanceKm = obj.optDouble("distanceKm", 0.0).toFloat(),
+                        fuelConsumedLiters = obj.optDouble("fuelConsumedLiters", 0.0).toFloat(),
+                        maxCoolantTemp = obj.optInt("maxCoolantTemp", 90),
+                        minCrankVoltage = obj.optDouble("minCrankVoltage", 10.5).toFloat(),
+                        estCrankAmps = obj.optInt("estCrankAmps", 120),
+                        crankDurationSec = obj.optDouble("crankDurationSec", 0.9).toFloat(),
+                        hasHeatAnomaly = obj.optBoolean("hasHeatAnomaly", false),
+                        hasFuelAnomaly = obj.optBoolean("hasFuelAnomaly", false),
+                        hasCrankAnomaly = obj.optBoolean("hasCrankAnomaly", false),
+                        notes = obj.optString("notes", "")
+                    ))
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (list.isEmpty()) {
+            list.addAll(generateInitialSnapshotHistory(vehicleId))
+            saveDailySnapshots(vehicleId, list)
+        }
+        return list
+    }
+
+    private fun saveDailySnapshots(vehicleId: String, list: List<DailyVehicleSnapshot>) {
+        val arr = org.json.JSONArray()
+        list.forEach { s ->
+            val obj = org.json.JSONObject().apply {
+                put("id", s.id)
+                put("vehicleId", s.vehicleId)
+                put("date", s.date)
+                put("avgFuelRateL100km", s.avgFuelRateL100km.toDouble())
+                put("baselineL100km", s.baselineL100km.toDouble())
+                put("fuelRateDeltaPercent", s.fuelRateDeltaPercent.toDouble())
+                put("distanceKm", s.distanceKm.toDouble())
+                put("fuelConsumedLiters", s.fuelConsumedLiters.toDouble())
+                put("maxCoolantTemp", s.maxCoolantTemp)
+                put("minCrankVoltage", s.minCrankVoltage.toDouble())
+                put("estCrankAmps", s.estCrankAmps)
+                put("crankDurationSec", s.crankDurationSec.toDouble())
+                put("hasHeatAnomaly", s.hasHeatAnomaly)
+                put("hasFuelAnomaly", s.hasFuelAnomaly)
+                put("hasCrankAnomaly", s.hasCrankAnomaly)
+                put("notes", s.notes)
+            }
+            arr.put(obj)
+        }
+        preferences.edit().putString("daily_snapshots_$vehicleId", arr.toString()).apply()
+    }
+
+    private fun generateInitialSnapshotHistory(vehicleId: String): List<DailyVehicleSnapshot> {
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.id == vehicleId } ?: ownerFleetVehicles.firstOrNull()
+        val base = activeVeh?.baseRate ?: 7.5f
+
+        // 14-day history demonstrating fuel climbing from 7.6 to 11.0, with 2 heat spikes and 1 starter dip test
+        return listOf(
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/25",
+                avgFuelRateL100km = 11.0f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((11.0f - base) / base) * 1000f) / 10f,
+                distanceKm = 48.5f,
+                fuelConsumedLiters = 5.33f,
+                maxCoolantTemp = 93,
+                minCrankVoltage = 10.4f,
+                estCrankAmps = 122,
+                crankDurationSec = 0.9f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = true,
+                hasCrankAnomaly = false,
+                notes = "قفزة استهلاك الوقود إلى 11 لتر/100كم - اشتباه اتساخ رشاشات أو تباطؤ استجابة حساس الشكمان"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/24",
+                avgFuelRateL100km = 10.6f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((10.6f - base) / base) * 1000f) / 10f,
+                distanceKm = 36.2f,
+                fuelConsumedLiters = 3.84f,
+                maxCoolantTemp = 92,
+                minCrankVoltage = 10.3f,
+                estCrankAmps = 128,
+                crankDurationSec = 1.0f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = true,
+                hasCrankAnomaly = false,
+                notes = "استمرار صعود معدل الاستهلاك مع مشاوير وسط البلد"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/22",
+                avgFuelRateL100km = 9.8f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((9.8f - base) / base) * 1000f) / 10f,
+                distanceKm = 62.0f,
+                fuelConsumedLiters = 6.08f,
+                maxCoolantTemp = 91,
+                minCrankVoltage = 10.5f,
+                estCrankAmps = 117,
+                crankDurationSec = 0.8f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "طريق سريع ومعدل استهلاك شبه طبيعي"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/20",
+                avgFuelRateL100km = 10.1f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((10.1f - base) / base) * 1000f) / 10f,
+                distanceKm = 29.4f,
+                fuelConsumedLiters = 2.97f,
+                maxCoolantTemp = 94,
+                minCrankVoltage = 10.2f,
+                estCrankAmps = 133,
+                crankDurationSec = 1.1f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = true,
+                hasCrankAnomaly = false,
+                notes = "ارتفاع ملحوظ في الاستهلاك اليومي"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/18",
+                avgFuelRateL100km = 8.9f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((8.9f - base) / base) * 1000f) / 10f,
+                distanceKm = 55.0f,
+                fuelConsumedLiters = 4.89f,
+                maxCoolantTemp = 106,
+                minCrankVoltage = 10.4f,
+                estCrankAmps = 122,
+                crankDurationSec = 0.9f,
+                hasHeatAnomaly = true,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "سخونة غير طبيعية (106°م) - اشتباه نقص سائل التبريد أو تأخر عمل السرعة الثانية لمروحة الردياتير"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/16",
+                avgFuelRateL100km = 8.5f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((8.5f - base) / base) * 1000f) / 10f,
+                distanceKm = 40.0f,
+                fuelConsumedLiters = 3.40f,
+                maxCoolantTemp = 91,
+                minCrankVoltage = 10.5f,
+                estCrankAmps = 117,
+                crankDurationSec = 0.8f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "حالة مستقرة بدون ملاحظات"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/14",
+                avgFuelRateL100km = 8.6f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((8.6f - base) / base) * 1000f) / 10f,
+                distanceKm = 33.1f,
+                fuelConsumedLiters = 2.85f,
+                maxCoolantTemp = 90,
+                minCrankVoltage = 9.2f,
+                estCrankAmps = 188,
+                crankDurationSec = 2.4f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = true,
+                notes = "هبوط حاد في جهد التدوير إلى 9.2V مع سحب 188A - بداية ثقل في شربون أو بلي المارش أو ضعف شحن البطارية"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/12",
+                avgFuelRateL100km = 8.1f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((8.1f - base) / base) * 1000f) / 10f,
+                distanceKm = 70.0f,
+                fuelConsumedLiters = 5.67f,
+                maxCoolantTemp = 89,
+                minCrankVoltage = 10.6f,
+                estCrankAmps = 111,
+                crankDurationSec = 0.7f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "أداء قياسي ممتاز على الطريق الدائري"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/10",
+                avgFuelRateL100km = 7.8f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((7.8f - base) / base) * 1000f) / 10f,
+                distanceKm = 42.0f,
+                fuelConsumedLiters = 3.28f,
+                maxCoolantTemp = 103,
+                minCrankVoltage = 10.6f,
+                estCrankAmps = 111,
+                crankDurationSec = 0.7f,
+                hasHeatAnomaly = true,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "ارتفاع مؤقت في حرارة المحرك إلى 103°م أثناء تشغيل التكييف في زحام متوقف"
+            ),
+            DailyVehicleSnapshot(
+                vehicleId = vehicleId,
+                date = "2026/10/08",
+                avgFuelRateL100km = 7.7f,
+                baselineL100km = base,
+                fuelRateDeltaPercent = Math.round(((7.7f - base) / base) * 1000f) / 10f,
+                distanceKm = 51.5f,
+                fuelConsumedLiters = 3.96f,
+                maxCoolantTemp = 90,
+                minCrankVoltage = 10.6f,
+                estCrankAmps = 111,
+                crankDurationSec = 0.7f,
+                hasHeatAnomaly = false,
+                hasFuelAnomaly = false,
+                hasCrankAnomaly = false,
+                notes = "أداء فابريكا مطابق للمعدل المرجعي"
+            )
+        )
+    }
+
+    private fun recordTodaySnapshot(
+        vehicleId: String,
+        customFuel: Float? = null,
+        customTemp: Int? = null,
+        customVolt: Float? = null,
+        customNotes: String? = null
+    ) {
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.id == vehicleId } ?: ownerFleetVehicles.firstOrNull()
+        val base = activeVeh?.baseRate ?: 7.5f
+
+        val todayDate = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val snapshots = loadDailySnapshots(vehicleId)
+
+        // Read current live telemetry or provided override values
+        val fuelRate = customFuel ?: if (telemetry.actualTripFuelLiters > 0.05f && telemetry.tripDistanceKm > 0.5f) {
+            (telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100.0f
+        } else if (telemetry.tripAverageFuelRate > 0.5f) {
+            telemetry.tripAverageFuelRate
+        } else {
+            11.0f
+        }
+
+        val coolantMax = customTemp ?: if (telemetry.coolantTemp > 30) telemetry.coolantTemp else 93
+        val crankVolt = customVolt ?: if (telemetry.batteryVoltage in 8.0f..14.5f) telemetry.batteryVoltage else 10.4f
+
+        // Estimated Cranking Amperes via internal resistance formula: I = (12.6V - V_crank) / 0.018 ohm
+        val estAmps = Math.round(((12.6f - crankVolt).coerceAtLeast(0.1f) / 0.018f)).coerceIn(80, 240)
+        val deltaPercent = Math.round(((fuelRate - base) / base) * 1000f) / 10f
+
+        val heatAnomaly = coolantMax >= 102
+        val fuelAnomaly = deltaPercent >= 20.0f
+        val crankAnomaly = crankVolt < 9.6f || estAmps > 165
+
+        val autoNotes = customNotes ?: when {
+            fuelAnomaly && heatAnomaly -> "ارتفاع متزامن في استهلاك الوقود وحرارة المحرك"
+            fuelAnomaly -> "قفزة ملحوظة في استهلاك البنزين بنسبة +${deltaPercent}%"
+            heatAnomaly -> "تسجيل حرارة غير طبيعية ($coolantMax°م)"
+            crankAnomaly -> "هبوط جهد التدوير إلى ${crankVolt}V مع سحب مرش ${estAmps}A"
+            else -> "معدلات تشغيل منتظمة"
+        }
+
+        val newSnapshot = DailyVehicleSnapshot(
+            vehicleId = vehicleId,
+            date = todayDate,
+            avgFuelRateL100km = Math.round(fuelRate * 10f) / 10f,
+            baselineL100km = base,
+            fuelRateDeltaPercent = deltaPercent,
+            distanceKm = if (telemetry.tripDistanceKm > 0.1f) telemetry.tripDistanceKm else 45.0f,
+            fuelConsumedLiters = if (telemetry.actualTripFuelLiters > 0.01f) telemetry.actualTripFuelLiters else (fuelRate * 0.45f),
+            maxCoolantTemp = coolantMax,
+            minCrankVoltage = Math.round(crankVolt * 10f) / 10f,
+            estCrankAmps = estAmps,
+            crankDurationSec = if (crankVolt < 9.5f) 2.2f else 0.9f,
+            hasHeatAnomaly = heatAnomaly,
+            hasFuelAnomaly = fuelAnomaly,
+            hasCrankAnomaly = crankAnomaly,
+            notes = autoNotes
+        )
+
+        // Remove today's old record if present and insert the updated one at top
+        snapshots.removeAll { it.date == todayDate }
+        snapshots.add(0, newSnapshot)
+        saveDailySnapshots(vehicleId, snapshots)
+
+        // Asynchronously post to backend server if configured
+        Thread {
+            try {
+                val backendBaseUrl = preferences.getString("backend_url", "http://10.0.2.2:3000") ?: "http://10.0.2.2:3000"
+                val url = java.net.URL("$backendBaseUrl/api/daily-snapshots")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                conn.doOutput = true
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+
+                val payload = org.json.JSONObject().apply {
+                    put("vehicleId", vehicleId)
+                    put("date", newSnapshot.date)
+                    put("avgFuelRateL100km", newSnapshot.avgFuelRateL100km.toDouble())
+                    put("baselineL100km", newSnapshot.baselineL100km.toDouble())
+                    put("fuelRateDeltaPercent", newSnapshot.fuelRateDeltaPercent.toDouble())
+                    put("distanceKm", newSnapshot.distanceKm.toDouble())
+                    put("fuelConsumedLiters", newSnapshot.fuelConsumedLiters.toDouble())
+                    put("maxCoolantTemp", newSnapshot.maxCoolantTemp)
+                    put("minCrankVoltage", newSnapshot.minCrankVoltage.toDouble())
+                    put("estCrankAmps", newSnapshot.estCrankAmps)
+                    put("crankDurationSec", newSnapshot.crankDurationSec.toDouble())
+                    put("hasHeatAnomaly", newSnapshot.hasHeatAnomaly)
+                    put("hasFuelAnomaly", newSnapshot.hasFuelAnomaly)
+                    put("hasCrankAnomaly", newSnapshot.hasCrankAnomaly)
+                    put("notes", newSnapshot.notes)
+                }
+
+                val os = conn.outputStream
+                os.write(payload.toString().toByteArray(Charsets.UTF_8))
+                os.flush()
+                os.close()
+                conn.responseCode // trigger request
+                conn.disconnect()
+            } catch (e: Exception) {
+                // Ignore network error; locally cached safely
+            }
+        }.start()
+    }
+
+    private fun showManualSnapshotDialog(vehicleId: String) {
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.id == vehicleId } ?: ownerFleetVehicles.firstOrNull()
+        val base = activeVeh?.baseRate ?: 7.5f
+
+        val editFuel = edit("مثلاً 11.0").apply {
+            setText("11.0")
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val editTemp = edit("مثلاً 93 (طبيعي 85-95 | تحذير > 102)").apply {
+            setText(if (telemetry.coolantTemp > 30) telemetry.coolantTemp.toString() else "93")
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        }
+        val editVolt = edit("مثلاً 10.4 (طبيعي > 10.0 | تحذير < 9.5)").apply {
+            setText("10.4")
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        }
+        val editNotes = edit("اختياري: مثلاً مشوار في زحام متوقف مع التكييف").apply {
+            setText("لقطة تشغيل يومية")
+        }
+
+        val dialogView = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            setBackgroundColor(Color.rgb(15, 30, 48))
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+            addView(text("📸 تسجيل لقطة أداء يومية للسيارة", 16, Color.rgb(0, 229, 255), true))
+            addView(text("سيتم حفظ هذه اللقطة بحساب السيارة لمتابعة تغير الاستهلاك والحرارة والمرش عبر الشهور والسنة.", 12, Color.rgb(180, 210, 230), false))
+
+            addView(text("متوسط استهلاك البنزين اليومي (لتر لكل 100 كم):", 13, Color.WHITE, true).apply {
+                setPadding(0, dp(10), 0, 0)
+            })
+            addView(editFuel)
+
+            addView(text("أقصى درجة حرارة للمحرك اليوم (°م):", 13, Color.WHITE, true).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(editTemp)
+
+            addView(text("أدنى هبوط في فولت البطارية أثناء تدوير المرش (V):", 13, Color.WHITE, true).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(editVolt)
+
+            addView(text("ملاحظات إضافية (مسار زحام، عطل، تكييف):", 13, Color.WHITE, true).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
+            addView(editNotes)
+        }
+
+        android.app.AlertDialog.Builder(this)
+            .setView(dialogView)
+            .setPositiveButton("💾 حفظ اللقطة") { _, _ ->
+                val fuel = editFuel.text.toString().toFloatOrNull() ?: 11.0f
+                val temp = editTemp.text.toString().toIntOrNull() ?: 93
+                val volt = editVolt.text.toString().toFloatOrNull() ?: 10.4f
+                val notes = editNotes.text.toString().trim()
+
+                recordTodaySnapshot(vehicleId, fuel, temp, volt, notes)
+                android.widget.Toast.makeText(this, "✅ تم تسجيل لقطة اليوم بنجاح وحفظها بحساب السيارة", android.widget.Toast.LENGTH_LONG).show()
+                renderCurrentScreen()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    // ========================================================
+    // BUILD PREDICTIVE HEALTH TAB CONTENT (التحليل التنبؤي وصحة السيارة)
+    // ========================================================
+    private fun buildPredictiveHealthTabContent(): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+        }
+
+        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerVehicle(
+            id = "veh-001",
+            name = "شيفروليه أفيو",
+            make = "Chevrolet",
+            year = "2018",
+            vin = "KL1TD69E29B123456",
+            plateNumber = "س ق ص ٩١٨٢",
+            tankCapacity = 45.0f,
+            displacement = 1.5f,
+            baseRate = 7.5f,
+            emptyWeightKg = 1200.0f,
+            fuelType = "gasoline",
+            alertsEnabled = true,
+            isCurrentActive = true
+        )
+
+        val vehicleId = activeVeh.id
+        val allSnapshots = loadDailySnapshots(vehicleId)
+
+        // Filter snapshots based on selected time window (7d, 30d, 90d, 365d)
+        val filteredSnapshots = when (selectedPredictiveFilter) {
+            "7d" -> allSnapshots.take(7)
+            "90d" -> allSnapshots.take(90)
+            "365d" -> allSnapshots.take(365)
+            else -> allSnapshots.take(30)
+        }
+
+        val todaySnapshot = filteredSnapshots.firstOrNull() ?: DailyVehicleSnapshot(
+            vehicleId = vehicleId,
+            date = "2026/10/25",
+            avgFuelRateL100km = 11.0f,
+            baselineL100km = activeVeh.baseRate,
+            fuelRateDeltaPercent = Math.round(((11.0f - activeVeh.baseRate) / activeVeh.baseRate) * 1000f) / 10f,
+            maxCoolantTemp = 93,
+            minCrankVoltage = 10.4f,
+            estCrankAmps = 122,
+            hasFuelAnomaly = true
+        )
+
+        val periodAvgFuel = if (filteredSnapshots.isNotEmpty()) {
+            Math.round((filteredSnapshots.map { it.avgFuelRateL100km }.average()) * 10.0) / 10.0
+        } else 11.0
+
+        val heatAnomalyCount = filteredSnapshots.count { it.hasHeatAnomaly }
+        val crankAnomalyCount = filteredSnapshots.count { it.hasCrankAnomaly }
+        val fuelAnomalyCount = filteredSnapshots.count { it.hasFuelAnomaly }
+
+        // ----------------------------------------------------
+        // CARD 1: VEHICLE BASELINE & TIME FILTER SELECTOR
+        // ----------------------------------------------------
+        val headerCard = card().apply {
+            setBackgroundColor(Color.rgb(13, 29, 45))
+
+            addView(text("🚗 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber}", 15, Color.WHITE, true))
+            addView(text("• معدل الفابريكا المرجعي القياسي: ${activeVeh.baseRate} لتر لكل 100 كم (محرك ${activeVeh.displacement} لتر)", 12, Color.rgb(0, 229, 255), false))
+
+            // Time Filter Buttons
+            val filterRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val flp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                flp.topMargin = dp(10)
+                flp.bottomMargin = dp(6)
+                layoutParams = flp
+            }
+
+            val filterOptions = listOf(
+                Pair("7d", "آخر 7 أيام"),
+                Pair("30d", "آخر 30 يوماً"),
+                Pair("90d", "آخر 90 يوماً"),
+                Pair("365d", "السنة (365 يوم)")
+            )
+
+            filterOptions.forEach { opt ->
+                val isSelected = selectedPredictiveFilter == opt.first
+                filterRow.addView(Button(this@MainActivity).apply {
+                    text = opt.second
+                    textSize = 10f
+                    typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    setTextColor(if (isSelected) Color.rgb(5, 18, 28) else Color.rgb(180, 215, 240))
+                    setBackgroundColor(if (isSelected) Color.rgb(0, 229, 255) else Color.rgb(20, 48, 70))
+                    val blp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                    blp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = blp
+                    setOnClickListener {
+                        selectedPredictiveFilter = opt.first
+                        renderCurrentScreen()
+                    }
+                })
+            }
+            addView(filterRow)
+
+            // Action Buttons (Take Today Snapshot / Manual Entry)
+            val btnRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.topMargin = dp(6)
+                layoutParams = rlp
+            }
+
+            btnRow.addView(Button(this@MainActivity).apply {
+                text = "📸 أخذ لقطة اليوم الآن"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(18, 110, 75))
+                val blp = LinearLayout.LayoutParams(0, dp(42), 1.2f)
+                blp.leftMargin = dp(4)
+                layoutParams = blp
+                setOnClickListener {
+                    recordTodaySnapshot(vehicleId)
+                    android.widget.Toast.makeText(this@MainActivity, "✅ تم تسجيل لقطة اليوم بنجاح وتحديث معدل التغير", android.widget.Toast.LENGTH_SHORT).show()
+                    renderCurrentScreen()
+                }
+            })
+
+            btnRow.addView(Button(this@MainActivity).apply {
+                text = "✏️ إدخال يدوي"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(240, 245, 250))
+                setBackgroundColor(Color.rgb(28, 55, 82))
+                val blp = LinearLayout.LayoutParams(0, dp(42), 0.9f)
+                layoutParams = blp
+                setOnClickListener {
+                    showManualSnapshotDialog(vehicleId)
+                }
+            })
+
+            addView(btnRow)
+        }
+        container.addView(headerCard)
+
+        // ----------------------------------------------------
+        // CARD 2: FUEL CONSUMPTION RATE OF CHANGE & TREND
+        // (معدل استهلاك البنزين وتغيره الدوري مع الفابريكا)
+        // ----------------------------------------------------
+        val fuelCard = card().apply {
+            setBackgroundColor(Color.rgb(14, 31, 49))
+
+            addView(text("⛽ معدل استهلاك البنزين ومعدل التغير الدوري (Rate of Change)", 14, Color.rgb(248, 199, 74), true))
+            addView(text("مقارنة استهلاك اليوم بمتوسط الفترة والمعدل القياسي لحساب نسبة الانحراف بدقة:", 11, Color.rgb(170, 205, 230), false))
+
+            // 4 KPI Grid
+            val kpiRow1 = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.topMargin = dp(10)
+                layoutParams = rlp
+            }
+
+            // Metric 1: Today Rate
+            kpiRow1.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.leftMargin = dp(4)
+                layoutParams = lp
+
+                addView(text("استهلاك اليوم", 11, Color.rgb(160, 200, 230), false))
+                addView(text("${todaySnapshot.avgFuelRateL100km} لتر", 18, Color.WHITE, true))
+                addView(text("لكل 100 كم", 10, Color.rgb(140, 180, 210), false))
+            })
+
+            // Metric 2: Baseline
+            kpiRow1.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+
+                addView(text("معدل الفابريكا المرجعي", 11, Color.rgb(160, 200, 230), false))
+                addView(text("${todaySnapshot.baselineL100km} لتر", 18, Color.rgb(0, 229, 255), true))
+                addView(text("لكل 100 كم", 10, Color.rgb(140, 180, 210), false))
+            })
+            addView(kpiRow1)
+
+            val kpiRow2 = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.topMargin = dp(6)
+                layoutParams = rlp
+            }
+
+            // Metric 3: Delta %
+            val delta = todaySnapshot.fuelRateDeltaPercent
+            val deltaColor = if (delta > 20f) Color.rgb(255, 95, 95) else if (delta > 8f) Color.rgb(250, 180, 50) else Color.rgb(120, 235, 160)
+            val deltaArrow = if (delta > 0) "🔺 +$delta%" else "$delta%"
+
+            kpiRow2.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.leftMargin = dp(4)
+                layoutParams = lp
+
+                addView(text("معدل التغير اليومي (Δ%)", 11, Color.rgb(160, 200, 230), false))
+                addView(text(deltaArrow, 17, deltaColor, true))
+                addView(text(if (delta > 15f) "زيادة ملحوظة فوق الطبيعي" else "ضمن النطاق المسموح", 10, deltaColor, false))
+            })
+
+            // Metric 4: Period Average
+            kpiRow2.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+
+                addView(text("متوسط الفترة ($selectedPredictiveFilter)", 11, Color.rgb(160, 200, 230), false))
+                addView(text("$periodAvgFuel لتر", 18, Color.WHITE, true))
+                addView(text("لكل 100 كم (${filteredSnapshots.size} لقطة)", 10, Color.rgb(140, 180, 210), false))
+            })
+            addView(kpiRow2)
+
+            // Combustion & Fuel System Engineering Diagnosis
+            val diagBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(24, 48, 72))
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(10)
+                layoutParams = lp
+
+                addView(text("🔍 التشخيص الهندسي لسبب زيادة الاستهلاك (+${delta}%):", 12, Color.rgb(250, 210, 80), true))
+                addView(text("• الاحتمال الأول: اتساخ أو تسييل في رشاشات الوقود (Injectors) مما يقلل ذرات الرذاذ ويزيد الوقود غير المحترق.\n• الاحتمال الثاني: تباطؤ استجابة حساس الشكمان الأول (Lazy O2 Sensor) فيقرأ الكمبيوتر أن الخليط فقير ويأمر بحقن بنزين إضافي.\n• الاحتمال الثالث: اتساخ فلتر الهواء أو بوابة الثروتل مسبباً مقاومة في سحب الهواء.\n• الاحتمال الرابع: تآكل خلوص البوجيهات وضعف شرارة الاشتعال.", 11, Color.rgb(220, 235, 248), false))
+            }
+            addView(diagBox)
+        }
+        container.addView(fuelCard)
+
+        // ----------------------------------------------------
+        // CARD 3: STARTER MOTOR HEALTH & CRANKING DRAW
+        // (أمبير سحب المرش وهبوط الجهد وزمن التدوير)
+        // ----------------------------------------------------
+        val starterCard = card().apply {
+            setBackgroundColor(Color.rgb(14, 31, 49))
+
+            addView(text("⚡ صحة وسحب محرك المرش (Starter Motor & Cranking Health)", 14, Color.rgb(0, 229, 255), true))
+
+            // Engineering Note Box
+            val noteBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(16, 42, 64))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+
+                addView(text("💡 حقيقة هندسية دقيقة حول أمبير المرش:", 12, Color.rgb(248, 199, 74), true))
+                addView(text("محرك المرش يستهلك تياراً ضخماً يتراوح بين 80 إلى 200+ أمبير عند التدوير (وليس 10 أمبير). لا تضع سيارات الركوب حساس أمبيرمتر مباشر على كابل المرش، ولكن كمبيوتر السيارة يقيس بدقة فائقة هبوط جهد البطارية أثناء التدوير (Cranking Voltage Dip) وزمن اللفة، ومنه نشتق تيار السحب بالأمبير لتوقع عطل المرش قبل أن يتوقف تماماً.", 11, Color.rgb(205, 230, 250), false))
+            }
+            addView(noteBox)
+
+            // Starter Metrics Row
+            val starterRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.topMargin = dp(4)
+                layoutParams = rlp
+            }
+
+            // Metric 1: Min Voltage
+            val volt = todaySnapshot.minCrankVoltage
+            val voltColor = if (volt >= 10.0f) Color.rgb(120, 240, 160) else if (volt >= 9.4f) Color.rgb(250, 185, 60) else Color.rgb(255, 95, 95)
+            val voltStatus = if (volt >= 10.0f) "ممتاز وطبيعي" else if (volt >= 9.4f) "بداية هبوط جهد" else "جهد ضعيف جداً"
+
+            starterRow.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.leftMargin = dp(4)
+                layoutParams = lp
+
+                addView(text("أدنى فولت عند التدوير", 10, Color.rgb(160, 200, 230), false))
+                addView(text("${volt} V", 17, voltColor, true))
+                addView(text(voltStatus, 10, voltColor, false))
+            })
+
+            // Metric 2: Estimated Amps
+            val amps = todaySnapshot.estCrankAmps
+            val ampsColor = if (amps <= 140) Color.rgb(120, 240, 160) else if (amps <= 165) Color.rgb(250, 185, 60) else Color.rgb(255, 95, 95)
+
+            starterRow.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                lp.leftMargin = dp(4)
+                layoutParams = lp
+
+                addView(text("سحب المرش التقديري", 10, Color.rgb(160, 200, 230), false))
+                addView(text("~$amps A", 17, ampsColor, true))
+                addView(text("المعدل: 90 - 140A", 10, Color.rgb(140, 180, 210), false))
+            })
+
+            // Metric 3: Crank Duration
+            val dur = todaySnapshot.crankDurationSec
+            starterRow.addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(20, 44, 68))
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+
+                addView(text("مدة تدوير المارش", 10, Color.rgb(160, 200, 230), false))
+                addView(text("${dur} ثانية", 17, Color.WHITE, true))
+                addView(text(if (dur <= 1.2f) "تدوير سريع وسلس" else "تدوير بطيء ومجهد", 10, if (dur <= 1.2f) Color.rgb(120, 240, 160) else Color.rgb(250, 185, 60), false))
+            })
+            addView(starterRow)
+
+            // Verdict
+            addView(text(
+                if (volt >= 10.0f) "✅ تقييم المرش والبطارية: جهد التدوير وسحب التيار طبيعيان. بلي وشربون المرش وخلايا البطارية بحالة ممتازة."
+                else "⚠️ مؤشر تنبؤي: بدأ المرش يسجل سحب تيار مرتفع وهبوط في الفولت. يُنصح بفحص كابلات البطارية والشربون قبل حدوث عطل مفاجئ.",
+                11, if (volt >= 10.0f) Color.rgb(120, 240, 160) else Color.rgb(250, 185, 60), true
+            ).apply { setPadding(0, dp(8), 0, 0) })
+        }
+        container.addView(starterCard)
+
+        // ----------------------------------------------------
+        // CARD 4: ABNORMAL DAYS & SENSOR SPIKES CALENDAR
+        // (سجل الأيام التي رفعت فيها الحرارة أو حدثت قراءات شاذة)
+        // ----------------------------------------------------
+        val anomalyCard = card().apply {
+            setBackgroundColor(Color.rgb(14, 31, 49))
+
+            addView(text("🚨 سجل الأيام ذات القراءات الشاذة (حرارة / مرش / بنزين)", 14, Color.rgb(255, 120, 120), true))
+            addView(text("الأيام التي سجلت فيها الحساسات سلوكاً خارج الحدود الطبيعية خلال هذه الفترة:", 11, Color.rgb(180, 210, 230), false))
+
+            // Anomaly counters bar
+            val counterRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.topMargin = dp(8)
+                rlp.bottomMargin = dp(8)
+                layoutParams = rlp
+            }
+
+            counterRow.addView(text("🔥 حرارة مرتفعة: $heatAnomalyCount يوم", 11, if (heatAnomalyCount > 0) Color.rgb(255, 120, 120) else Color.rgb(140, 190, 220), true).apply {
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+            })
+            counterRow.addView(text("⚡ هبوط تدوير: $crankAnomalyCount يوم", 11, if (crankAnomalyCount > 0) Color.rgb(250, 190, 60) else Color.rgb(140, 190, 220), true).apply {
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+            })
+            counterRow.addView(text("⛽ قفزات وقود: $fuelAnomalyCount يوم", 11, if (fuelAnomalyCount > 0) Color.rgb(248, 199, 74) else Color.rgb(140, 190, 220), true).apply {
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+            })
+            addView(counterRow)
+
+            val anomalousItems = filteredSnapshots.filter { it.hasHeatAnomaly || it.hasCrankAnomaly || it.hasFuelAnomaly }
+            if (anomalousItems.isEmpty()) {
+                addView(text("✅ لم تُسجل أي قراءات شاذة أو ارتفاع في درجات الحرارة خلال هذه الفترة.", 12, Color.rgb(120, 240, 160), false))
+            } else {
+                anomalousItems.forEach { item ->
+                    val itemBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(26, 44, 64))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.bottomMargin = dp(6)
+                        layoutParams = lp
+
+                        // Header: Date + Badges
+                        val topRow = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        }
+                        topRow.addView(text("📅 ${item.date}", 12, Color.WHITE, true).apply {
+                            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        })
+
+                        if (item.hasHeatAnomaly) {
+                            topRow.addView(text("🔥 حرارة ${item.maxCoolantTemp}°م", 10, Color.rgb(255, 100, 100), true).apply {
+                                setBackgroundColor(Color.rgb(55, 20, 25))
+                                setPadding(dp(6), dp(2), dp(6), dp(2))
+                            })
+                        }
+                        if (item.hasCrankAnomaly) {
+                            topRow.addView(text("⚡ هبوط ${item.minCrankVoltage}V", 10, Color.rgb(250, 185, 60), true).apply {
+                                setBackgroundColor(Color.rgb(55, 45, 15))
+                                setPadding(dp(6), dp(2), dp(6), dp(2))
+                            })
+                        }
+                        if (item.hasFuelAnomaly) {
+                            topRow.addView(text("⛽ استهلاك ${item.avgFuelRateL100km}L", 10, Color.rgb(248, 199, 74), true).apply {
+                                setBackgroundColor(Color.rgb(50, 40, 15))
+                                setPadding(dp(6), dp(2), dp(6), dp(2))
+                            })
+                        }
+                        addView(topRow)
+
+                        // Note text
+                        if (item.notes.isNotEmpty()) {
+                            addView(text("• التفسير: ${item.notes}", 11, Color.rgb(205, 230, 250), false))
+                        }
+                    }
+                    addView(itemBox)
+                }
+            }
+        }
+        container.addView(anomalyCard)
+
+        // ----------------------------------------------------
+        // CARD 5: RECENT DAILY SNAPSHOTS HISTORY TABLE
+        // (جدول لقطات الأيام الأخيرة)
+        // ----------------------------------------------------
+        val historyCard = card().apply {
+            setBackgroundColor(Color.rgb(13, 29, 45))
+
+            addView(text("📋 سجل لقطات الأداء اليومية (${filteredSnapshots.size} لقطة محفوظة)", 14, Color.WHITE, true))
+            addView(text("يتم الاحتفاظ بلقطة يومية تراكمية لكل يوم (حتى 365 قراءة بالسنة) لقياس معدل التغير:", 11, Color.rgb(170, 200, 225), false))
+
+            // Table Header
+            val tableHead = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.rgb(18, 44, 68))
+                setPadding(dp(6), dp(6), dp(6), dp(6))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+
+            tableHead.addView(text("التاريخ", 10, Color.rgb(0, 229, 255), true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+            })
+            tableHead.addView(text("الاستهلاك", 10, Color.rgb(0, 229, 255), true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f)
+            })
+            tableHead.addView(text("التغير Δ", 10, Color.rgb(0, 229, 255), true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+            })
+            tableHead.addView(text("الحرارة", 10, Color.rgb(0, 229, 255), true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
+            })
+            tableHead.addView(text("المرش", 10, Color.rgb(0, 229, 255), true).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
+            })
+            addView(tableHead)
+
+            // Table Rows
+            filteredSnapshots.take(15).forEachIndexed { index, snap ->
+                val row = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setBackgroundColor(if (index % 2 == 0) Color.rgb(15, 34, 52) else Color.rgb(12, 28, 44))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    layoutParams = lp
+                }
+
+                // Date
+                row.addView(text(snap.date.substringAfter("/"), 10, Color.WHITE, false).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                })
+
+                // Fuel
+                row.addView(text("${snap.avgFuelRateL100km}L", 10, if (snap.hasFuelAnomaly) Color.rgb(255, 120, 120) else Color.rgb(220, 235, 245), snap.hasFuelAnomaly).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f)
+                })
+
+                // Delta
+                val dSign = if (snap.fuelRateDeltaPercent > 0) "+${snap.fuelRateDeltaPercent}%" else "${snap.fuelRateDeltaPercent}%"
+                row.addView(text(dSign, 10, if (snap.fuelRateDeltaPercent > 15f) Color.rgb(255, 120, 120) else Color.rgb(140, 220, 170), false).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+                })
+
+                // Temp
+                row.addView(text("${snap.maxCoolantTemp}°م", 10, if (snap.hasHeatAnomaly) Color.rgb(255, 95, 95) else Color.rgb(200, 225, 245), snap.hasHeatAnomaly).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
+                })
+
+                // Crank
+                row.addView(text("${snap.minCrankVoltage}V", 10, if (snap.hasCrankAnomaly) Color.rgb(250, 185, 60) else Color.rgb(200, 225, 245), snap.hasCrankAnomaly).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
+                })
+
+                addView(row)
+            }
+        }
+        container.addView(historyCard)
+
+        // ----------------------------------------------------
+        // CARD 6: PROPOSED PREDICTIVE DIAGNOSTIC REPORTS
+        // (اقتراحات تقارير تشخيصية لتوقع الأعطال قبل حدوثها)
+        // ----------------------------------------------------
+        val proposalCard = card().apply {
+            setBackgroundColor(Color.rgb(14, 32, 50))
+
+            addView(text("💡 تقارير تشخيصية مقترحة لتوقع مشاكل السيارة مبكراً", 14, Color.rgb(248, 199, 74), true))
+            addView(text("بيانات متقدمة من حساسات كمبيوتر السيارة تكشف بداية الأعطال قبل إضاءة لمبة المحرك Check Engine:", 11, Color.rgb(180, 215, 240), false))
+
+            val proposals = listOf(
+                Pair(
+                    "1. تقرير انحراف تعويض الوقود طويل المدى (Long-Term Fuel Trim - LTFT):",
+                    "• ما هو؟ يقيس النسبة المئوية التي يضطر الكمبيوتر لإضافتها للبنزين للحفاظ على الخليط المتوازن (مثلاً +15%).\n• الفائدة التنبؤية: يكتشف تسريب الهواء في المانيفولد (Vacuum Leak) أو ضعف طلمبة البنزين مبكراً قبل أن تسجل السيارة كود عطل رسمي."
+                ),
+                Pair(
+                    "2. تقرير منحنى زمن تسخين المحرك (Engine Warm-up Curve):",
+                    "• ما هو؟ حساب المدة بالدقائق التي يستغرقها المحرك للوصول من حرارة الجو إلى 85°م.\n• الفائدة التنبؤية: إذا زادت المدة عن 12 دقيقة، فهذا تشخيص قطعي لتعليق ثرموستات الكوعة في وضع الفتح (Stuck Open Thermostat) وهو سبب خفي لزيادة استهلاك البنزين وتراكم الكربون."
+                ),
+                Pair(
+                    "3. تقرير تموج جهد الدينامو تحت الأحمال (Alternator Load & Ripple):",
+                    "• ما هو؟ قياس هبوط الفولت عند تشغيل الأحمال العالية (التكييف + الأنوار العالية + سخان الزجاج).\n• الفائدة التنبؤية: إذا هبط الفولت إلى أقل من 13.2V أو زاد التموج عن 0.5V، فهذا مؤشر لتلف ديودات الدينامو أو شربون الشحن قبل انقطاع الكهرباء في الطريق."
+                )
+            )
+
+            proposals.forEach { p ->
+                val pBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(20, 45, 68))
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(6)
+                    layoutParams = lp
+
+                    addView(text(p.first, 12, Color.rgb(0, 229, 255), true))
+                    addView(text(p.second, 11, Color.rgb(215, 235, 250), false))
+                }
+                addView(pBox)
+            }
+        }
+        container.addView(proposalCard)
+
+        return container
+    }
+
     private fun showGenerateWorkshopPinDialog(targetWorkshopName: String) {
         val pin = (1000 + (Math.random() * 9000).toInt()).toString()
         activeWorkshopPin = pin

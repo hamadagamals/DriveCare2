@@ -174,6 +174,28 @@ def init_db():
           created_at TEXT DEFAULT CURRENT_TIMESTAMP,
           FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
         );
+        CREATE TABLE IF NOT EXISTS daily_vehicle_snapshots (
+          id TEXT PRIMARY KEY,
+          vehicle_id TEXT NOT NULL,
+          date TEXT NOT NULL,
+          avg_fuel_rate_l100km REAL NOT NULL,
+          baseline_l100km REAL NOT NULL,
+          fuel_delta_percent REAL NOT NULL,
+          distance_km REAL DEFAULT 0,
+          fuel_consumed_liters REAL DEFAULT 0,
+          max_coolant_temp INTEGER DEFAULT 90,
+          min_crank_voltage REAL DEFAULT 10.5,
+          est_crank_amps INTEGER DEFAULT 120,
+          crank_duration_sec REAL DEFAULT 0.9,
+          has_heat_anomaly INTEGER DEFAULT 0,
+          has_fuel_anomaly INTEGER DEFAULT 0,
+          has_crank_anomaly INTEGER DEFAULT 0,
+          notes TEXT,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(vehicle_id, date),
+          FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
+        );
+
     ''')
     existing_workshops = conn.execute('SELECT COUNT(*) AS count FROM workshops').fetchone()['count']
     if existing_workshops == 0:
@@ -1316,6 +1338,27 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             self._send_json(200, protected_vehicle_routes[path](selected_vehicle_id))
             return
+
+        if path == '/api/daily-snapshots':
+            user_id = require_auth(self)
+            if not user_id:
+                self._send_json(401, {'error': 'Unauthorized'})
+                return
+            target_veh = requested_vehicle_id or resolve_user_vehicle_id(user_id)
+            with get_connection() as conn:
+                rows = conn.execute('''
+                    SELECT id, vehicle_id, date, avg_fuel_rate_l100km, baseline_l100km,
+                           fuel_delta_percent, distance_km, fuel_consumed_liters,
+                           max_coolant_temp, min_crank_voltage, est_crank_amps,
+                           crank_duration_sec, has_heat_anomaly, has_fuel_anomaly,
+                           has_crank_anomaly, notes, created_at
+                    FROM daily_vehicle_snapshots
+                    WHERE vehicle_id = ?
+                    ORDER BY date DESC
+                    LIMIT 365
+                ''', (target_veh,)).fetchall()
+                self._send_json(200, {'vehicleId': target_veh, 'snapshots': [dict(r) for r in rows]})
+                return
 
         if path == '/api/settings':
             if not require_auth(self):
