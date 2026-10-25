@@ -117,7 +117,8 @@ class MainActivity : Activity() {
         var tripStartOdometerKm: Float = 0.0f,
         var activeAlertTitle: String? = null,
         var activeAlertDesc: String? = null,
-        var isAlertCritical: Boolean = false
+        var isAlertCritical: Boolean = false,
+        var obdProtocol: String = ""
     )
 
     private val candidates = linkedMapOf<String, DeviceCandidate>()
@@ -126,6 +127,10 @@ class MainActivity : Activity() {
     private lateinit var selectedText: TextView
     private lateinit var scanButton: Button
     private lateinit var preferences: SharedPreferences
+
+    // Vehicle Protocol State
+    private var isCurrentProtocolCan: Boolean = false
+    private var detectedProtocolName: String = ""
 
     // User State & Roles (owner, driver, garage)
     private var isLoggedIn: Boolean = false
@@ -7501,6 +7506,10 @@ class MainActivity : Activity() {
         sendObdCommand(outStream, inStream, "ATS0", 500)
         sendObdCommand(outStream, inStream, "ATH0", 500)
         sendObdCommand(outStream, inStream, "ATSP0", 1500)
+        val protoResp = sendObdCommand(outStream, inStream, "ATDP", 600)
+        detectedProtocolName = protoResp
+        isCurrentProtocolCan = protoResp.contains("CAN", ignoreCase = true) || protoResp.contains("ISO 15765", ignoreCase = true)
+        telemetry.obdProtocol = protoResp
 
         runOnUiThread {
             obdReconnectAttempts = 0
@@ -7829,7 +7838,7 @@ class MainActivity : Activity() {
                 // 9. DTC Trouble Codes (03)
                 if (loopCount % 20 == 0) {
                     val dtcResp = sendObdCommand(outStream, inStream, "03", 1500)
-                    val dtcs = parseDtc(dtcResp)
+                    val dtcs = parseDtc(dtcResp, isCurrentProtocolCan)
                     telemetry.dtcCodes.clear()
                     telemetry.dtcCodes.addAll(dtcs)
                 }
@@ -8806,41 +8815,32 @@ class MainActivity : Activity() {
         return DecodedVehicle(clean, make, year, displayName)
     }
 
-    private fun parseDtc(raw: String): List<String> {
+    private fun parseDtc(raw: String, isCan: Boolean = isCurrentProtocolCan): List<String> {
         val list = mutableListOf<String>()
-        if (raw.contains("NO DATA") || raw.contains("UNABLE")) return list
+        if (raw.contains("NO DATA") || raw.contains("UNABLE") || raw.contains("ERROR")) return list
 
         val lines = raw.split("\r", "\n")
         val hexSb = java.lang.StringBuilder()
         for (line in lines) {
             val trimmed = line.trim()
             val sanitized = if (trimmed.length > 2 && trimmed[1] == ':') trimmed.substring(2) else trimmed
-            hexSb.append(cleanHex(sanitized))
+            for (c in sanitized) {
+                if (c in '0'..'9' || c in 'A'..'F' || c in 'a'..'f') {
+                    hexSb.append(c.uppercaseChar())
+                }
+            }
         }
         val clean = hexSb.toString()
         val idx = clean.indexOf("43")
         if (idx == -1) return list
 
-        var startIndex = idx + 2
-        // Check if there is a count byte following 43
-        if (clean.length >= startIndex + 2) {
-            val potentialCount = clean.substring(startIndex, startIndex + 2).toIntOrNull(16)
-            if (potentialCount == 0) return list
-            if (potentialCount != null && potentialCount in 1..15) {
-                startIndex += 2
-            }
-        }
+        val payload = clean.substring(idx + 2)
+        if (payload.length < 4) return list
 
-        var i = startIndex
-        while (i + 4 <= clean.length) {
-            val hexCode = clean.substring(i, i + 4)
-            if (hexCode == "0000" || hexCode.startsWith("NO")) break
-
-            val byteA = hexCode.substring(0, 2).toIntOrNull(16) ?: break
-            val byteB = hexCode.substring(2, 4)
-
-            // Standard SAE J1979 DTC prefix decoding:
-            // Bits 7-6: 00 -> P, 01 -> C, 10 -> B, 11 -> U
+        fun decodeCandidate(hex4: String): String? {
+            if (hex4.length < 4 || hex4 == "0000") return null
+            val byteA = hex4.substring(0, 2).toIntOrNull(16) ?: return null
+            val byteB = hex4.substring(2, 4)
             val categoryBits = (byteA shr 6) and 0x03
             val categoryPrefix = when (categoryBits) {
                 0 -> "P"
@@ -8850,12 +8850,55 @@ class MainActivity : Activity() {
             }
             val secondDigit = (byteA shr 4) and 0x03
             val thirdDigitHex = Integer.toHexString(byteA and 0x0F).uppercase()
-            val dtcFullCode = "$categoryPrefix$secondDigit$thirdDigitHex$byteB".uppercase()
+            val code = "$categoryPrefix$secondDigit$thirdDigitHex$byteB".uppercase()
+            return if (code != "P0000") code else null
+        }
 
-            if (dtcFullCode != "P0000" && !list.contains(dtcFullCode)) {
-                list.add(dtcFullCode)
+        // Candidate A: Direct 2-byte DTC sequence (No count byte, starting at offset 0).
+        // MANDATORY standard for all K-Line, ISO 9141-2, ISO 14230-4 KWP (Chevrolet Aveo/Daewoo), and SAE J1850 protocols.
+        val dtcsWithoutCount = mutableListOf<String>()
+        var i = 0
+        while (i + 4 <= payload.length) {
+            val chunk = payload.substring(i, i + 4)
+            if (chunk == "0000") break
+            val code = decodeCandidate(chunk)
+            if (code != null && !dtcsWithoutCount.contains(code)) {
+                dtcsWithoutCount.add(code)
             }
             i += 4
+        }
+
+        // Candidate B: CAN Single-Frame / Multi-Frame where Byte 0 is the DTC count (01..0F)
+        val dtcsWithCount = mutableListOf<String>()
+        val firstByte = payload.substring(0, 2).toIntOrNull(16) ?: 0
+        if (firstByte in 1..15) {
+            var j = 2
+            while (j + 4 <= payload.length) {
+                val chunk = payload.substring(j, j + 4)
+                if (chunk == "0000") break
+                val code = decodeCandidate(chunk)
+                if (code != null && !dtcsWithCount.contains(code)) {
+                    dtcsWithCount.add(code)
+                }
+                j += 4
+            }
+        }
+
+        // Deterministic Selection:
+        // 1. Non-CAN protocols (K-Line / KWP / ISO 9141) NEVER have a count byte per SAE J1979 specification.
+        // 2. On CAN: Use candidate B ONLY if it successfully extracted exactly firstByte valid codes.
+        val finalCodes = if (!isCan) {
+            dtcsWithoutCount
+        } else {
+            if (dtcsWithCount.isNotEmpty() && dtcsWithCount.size == firstByte) {
+                dtcsWithCount
+            } else {
+                dtcsWithoutCount
+            }
+        }
+
+        for (c in finalCodes) {
+            if (!list.contains(c)) list.add(c)
         }
         return list
     }
@@ -8863,6 +8906,14 @@ class MainActivity : Activity() {
     private fun diagnoseDtc(code: String): DtcDiagnosis {
         val clean = code.trim().uppercase()
         return when (clean) {
+            "P3400" -> DtcDiagnosis(
+                clean,
+                "نظام تعطيل أسطوانات المحرك (Cylinder Deactivation System Bank 1 - AFM/MDS)",
+                "نظام إدارة الوقود النشط (محركات V8 فقط)",
+                "• عطل في صمام التحكم في إيقاف الأسطوانات أو ضغط الزيت\n• ملاحظة هامة: هذا الكود خاص بمحركات V8/V6 ذات نظام AFM النشط ولا ينطبق على محركات 4 سلندر كالأفيو (في سيارات 4 سلندر يرجع لخطأ قراءة سابق لحساس الشكمان P0134).",
+                "فحص مستوى الزيت وصمامات التحكم بالأسطوانات (للسيارات المزودة بنظام AFM/MDS).",
+                "تحذيرية"
+            )
             "P0300" -> DtcDiagnosis(
                 clean,
                 "خلل إشعال عام متعدد بأسطوانات المحرك (Random/Multiple Cylinder Misfire)",
