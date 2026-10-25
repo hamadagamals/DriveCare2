@@ -357,6 +357,39 @@ class MainActivity : Activity() {
     )
     private val ownerFleetVehicles = mutableListOf<OwnerVehicle>()
 
+    // Driver Delegation Requests (دعوات تفويض السائقين برقم الهاتف)
+    data class DriverDelegationRequest(
+        val id: String,
+        val vehicleId: String,
+        val vehicleName: String,
+        val vehicleMake: String,
+        val vehicleYear: String,
+        val vehicleVin: String,
+        val vehiclePlate: String,
+        val ownerName: String,
+        val ownerPhone: String,
+        val driverCustomName: String, // اسم السائق الخاص بالمالك
+        val driverPhone: String,       // رقم هاتف السائق المسجل به في التطبيق
+        val driverRole: String = "سائق مفوض",
+        val requestDate: String,
+        var status: String = "pending" // "pending", "accepted", "rejected"
+    )
+    private val driverDelegationRequests = mutableListOf<DriverDelegationRequest>()
+
+    // Workshop Single-Session Access Requests (طلبات فحص الورشة بموافقة هاتف المالك لمرة واحدة)
+    data class WorkshopAccessRequest(
+        val id: String,
+        val workshopName: String,
+        val workshopPhone: String,
+        val ownerPhone: String,
+        val targetVehicleName: String,
+        val serviceReason: String,
+        val requestDate: String,
+        var status: String = "pending" // "pending", "approved", "rejected", "closed"
+    )
+    private val workshopAccessRequests = mutableListOf<WorkshopAccessRequest>()
+    private var activeWorkshopSessionRequest: WorkshopAccessRequest? = null
+
     // Scanner state
     private var isScanning = false
     private val scanHandler = Handler(Looper.getMainLooper())
@@ -948,6 +981,8 @@ class MainActivity : Activity() {
         loadWorkshopProfile()
         loadDriverAssignedCars()
         loadOwnerFleetVehicles()
+        loadDriverDelegationRequests()
+        loadWorkshopAccessRequests()
         startPhoneGpsTracking()
 
         uiUpdateHandler.post(uiUpdateRunnable)
@@ -1054,8 +1089,12 @@ class MainActivity : Activity() {
             addView(text("بيانات الحساب", 18, Color.WHITE, true))
 
             val etName = edit("الاسم الكامل")
-            val etPhone = edit("رقم الموبايل")
-            val etPassword = edit("كلمة المرور")
+            val etPhone = edit("رقم الموبايل").apply {
+                inputType = InputType.TYPE_CLASS_PHONE
+            }
+            val etPassword = edit("كلمة المرور").apply {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
             addView(etName)
             addView(etPhone)
             addView(etPassword)
@@ -1079,6 +1118,17 @@ class MainActivity : Activity() {
                 setTextColor(Color.WHITE)
                 isChecked = false
             }
+
+            cbOwner.setOnCheckedChangeListener { _, checked ->
+                if (checked) { cbDriver.isChecked = false; cbGarage.isChecked = false }
+            }
+            cbDriver.setOnCheckedChangeListener { _, checked ->
+                if (checked) { cbOwner.isChecked = false; cbGarage.isChecked = false }
+            }
+            cbGarage.setOnCheckedChangeListener { _, checked ->
+                if (checked) { cbOwner.isChecked = false; cbDriver.isChecked = false }
+            }
+
             addView(cbOwner)
             addView(cbDriver)
             addView(cbGarage)
@@ -1089,8 +1139,9 @@ class MainActivity : Activity() {
             addView(button("تسجيل وإنشاء الحساب") {
                 val name = etName.text.toString().trim()
                 val phone = etPhone.text.toString().trim()
-                if (name.isEmpty() || phone.isEmpty()) {
-                    tvAuthErr.text = "يرجى إدخال الاسم ورقم الموبايل للمتابعة."
+                val pass = etPassword.text.toString().trim()
+                if (name.isEmpty() || phone.isEmpty() || pass.isEmpty()) {
+                    tvAuthErr.text = "يرجى إدخال الاسم، رقم الموبايل، وكلمة المرور للمتابعة."
                     return@button
                 }
                 val role = when {
@@ -1103,6 +1154,7 @@ class MainActivity : Activity() {
                     .putBoolean("is_logged_in", true)
                     .putString("user_name", name)
                     .putString("user_phone", phone)
+                    .putString("user_password", pass)
                     .putString("active_role", role)
                     .apply()
 
@@ -1237,6 +1289,13 @@ class MainActivity : Activity() {
         root.addView(banner)
         updateAlertBannerUI()
 
+        // Delegation and Access Requests Notice Banners
+        if (currentRole == "owner") {
+            buildOwnerAccessRequestsBanner()?.let { root.addView(it) }
+        } else if (currentRole == "driver") {
+            buildDriverDelegationRequestsBanner()?.let { root.addView(it) }
+        }
+
         // Tab Content Container
         when (activeTab) {
             "owner_fleet" -> root.addView(buildOwnerFleetTabContent())
@@ -1259,6 +1318,174 @@ class MainActivity : Activity() {
         }
 
         return scroll
+    }
+
+    private fun buildOwnerAccessRequestsBanner(): View? {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+        }
+
+        var hasItems = false
+
+        // 1. Active Workshop Session Alert & Instant Kill-Switch
+        if (isWorkshopSessionUnlocked && activeWorkshopSessionRequest != null) {
+            hasItems = true
+            val activeBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(55, 15, 20))
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+
+                addView(text("⚠️ تنبيه أمني مباشر: ورشة (${activeWorkshopSessionRequest?.workshopName}) متصلة بالسيارة الآن!", 14, Color.rgb(255, 122, 122), true))
+                addView(text("الورشة تقرأ الحساسات وأكواد الكمبيوتر لغرض: (${activeWorkshopSessionRequest?.serviceReason}) • هاتف الورشة: ${activeWorkshopSessionRequest?.workshopPhone}", 12, Color.WHITE, false))
+                addView(text("لديك الصلاحية الكاملة لإنهاء الجلسة وطرد الورشة وإلغاء الدخول فوراً بضغطة زر:", 11, Color.rgb(248, 199, 74), false))
+
+                addView(Button(this@MainActivity).apply {
+                    text = "⛔ إنهاء جلسة الورشة وإلغاء الدخول فوراً"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(180, 30, 30))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40))
+                    blp.topMargin = dp(6)
+                    layoutParams = blp
+                    setOnClickListener {
+                        revokeWorkshopAccessNow()
+                    }
+                })
+            }
+            container.addView(activeBox)
+        }
+
+        // 2. Pending Workshop Access Requests
+        val pendingWs = workshopAccessRequests.filter { it.status == "pending" }
+        if (pendingWs.isNotEmpty()) {
+            hasItems = true
+            pendingWs.forEach { req ->
+                val reqBox = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(20, 42, 60))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = dp(6)
+                    layoutParams = lp
+
+                    addView(text("📡 طلب إذن فحص من ورشة صيانة (بدون أرقام سرية):", 14, Color.rgb(248, 199, 74), true))
+                    addView(text("• اسم الورشة: ${req.workshopName} (هاتف: ${req.workshopPhone})", 13, Color.rgb(110, 231, 255), true))
+                    addView(text("• السيارة المطلوبة: ${req.targetVehicleName} • الغرض: ${req.serviceReason}", 12, Color.WHITE, false))
+                    addView(text("• التصريح يمنح الورشة دخولاً لمرة واحدة فقط وينتهي تلقائياً عند خروجها أو إلغائك له.", 11, Color.rgb(170, 205, 230), false))
+
+                    val btnRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        blp.topMargin = dp(8)
+                        layoutParams = blp
+
+                        addView(Button(this@MainActivity).apply {
+                            text = "✅ موافقة ودخول لمرة واحدة"
+                            textSize = 12f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(Color.WHITE)
+                            setBackgroundColor(Color.rgb(20, 120, 80))
+                            val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1.3f)
+                            lpBtn.rightMargin = dp(4)
+                            layoutParams = lpBtn
+                            setOnClickListener {
+                                approveWorkshopAccessRequest(req)
+                            }
+                        })
+
+                        addView(Button(this@MainActivity).apply {
+                            text = "❌ رفض الطلب"
+                            textSize = 12f
+                            setTextColor(Color.rgb(255, 122, 122))
+                            setBackgroundColor(Color.rgb(55, 20, 25))
+                            val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1f)
+                            layoutParams = lpBtn
+                            setOnClickListener {
+                                rejectWorkshopAccessRequest(req)
+                            }
+                        })
+                    }
+                    addView(btnRow)
+                }
+                container.addView(reqBox)
+            }
+        }
+
+        return if (hasItems) container else null
+    }
+
+    private fun buildDriverDelegationRequestsBanner(): View? {
+        val pendingInvites = driverDelegationRequests.filter {
+            it.status == "pending" && (it.driverPhone == userPhone || userPhone.isEmpty() || it.driverPhone.endsWith(userPhone.takeLast(8)))
+        }
+        if (pendingInvites.isEmpty()) return null
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+        }
+
+        pendingInvites.forEach { req ->
+            val inviteBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(18, 48, 70))
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+
+                addView(text("🚗 وصلتك دعوة تفويض استلام سيارة جديدة!", 15, Color.rgb(248, 199, 74), true))
+                addView(text("• السيارة: ${req.vehicleName} (${req.vehicleMake} - ${req.vehicleYear}) - لوحة: ${req.vehiclePlate}", 13, Color.WHITE, true))
+                addView(text("• المالك: ${req.ownerName} (هاتف: ${req.ownerPhone})", 12, Color.rgb(180, 215, 240), false))
+                addView(text("• اسمك لدى المالك: ${req.driverCustomName} • الصفة: ${req.driverRole}", 12, Color.rgb(126, 242, 154), false))
+
+                val btnRow = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    blp.topMargin = dp(8)
+                    layoutParams = blp
+
+                    addView(Button(this@MainActivity).apply {
+                        text = "✅ قبول واستلام السيارة"
+                        textSize = 12f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.rgb(20, 120, 80))
+                        val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1.3f)
+                        lpBtn.rightMargin = dp(4)
+                        layoutParams = lpBtn
+                        setOnClickListener {
+                            acceptDriverDelegation(req)
+                        }
+                    })
+
+                    addView(Button(this@MainActivity).apply {
+                        text = "❌ اعتذار / رفض"
+                        textSize = 12f
+                        setTextColor(Color.rgb(255, 122, 122))
+                        setBackgroundColor(Color.rgb(55, 20, 25))
+                        val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1f)
+                        layoutParams = lpBtn
+                        setOnClickListener {
+                            rejectDriverDelegation(req)
+                        }
+                    })
+                }
+                addView(btnRow)
+            }
+            container.addView(inviteBox)
+        }
+
+        return container
     }
 
     // ========================================================
@@ -1359,7 +1586,8 @@ class MainActivity : Activity() {
                 tabLayout.addView(tabBtn("🔧 الصيانة والأعطال", activeTab == "maint") { switchTab("maint") })
             }
             else -> { // "garage"
-                tabLayout.addView(tabBtn("🔑 فحص السيارة بالـ PIN", activeTab == "workshop_console") { switchTab("workshop_console") })
+                val wsTabLabel = if (isWorkshopSessionUnlocked) "🟢 فحص كمبيوتر السيارة (مصرح)" else "🔑 طلب إذن فحص السيارة"
+                tabLayout.addView(tabBtn(wsTabLabel, activeTab == "workshop_console") { switchTab("workshop_console") })
                 tabLayout.addView(tabBtn("🏪 ملف الورشة وبياناتي", activeTab == "workshop_profile") { switchTab("workshop_profile") })
                 tabLayout.addView(tabBtn("🏎️ الحساسات الحية", activeTab == "gauges") { switchTab("gauges") })
                 tabLayout.addView(tabBtn("🔍 فحص ومسح الأعطال", activeTab == "scanner") { switchTab("scanner") })
@@ -2083,67 +2311,80 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(12), dp(20), dp(12))
         }
 
-        val etDriverName = edit("اسم السائق الكامل (إلزامي)")
-        val etDriverPhone = edit("رقم موبايل السائق (إلزامي للربط بحسابه)")
-        val etDriverRole = edit("صفة / وردية السائق (مثال: سائق نهاري، سائق عائلي)")
+        val tvNotice = TextView(this).apply {
+            text = "💡 ملحوظة: اكتب اسم السائق المفضل لديك لتمييزه (ليس شرطاً أن يطابق اسمه في حسابه)، ولكن يجب إدخال رقم هاتف السائق المسجل به في التطبيق بدقة لتصله دعوة التفويض في واجهته."
+            textSize = 12f
+            setTextColor(Color.rgb(180, 215, 245))
+            setPadding(0, 0, 0, dp(8))
+        }
+        root.addView(tvNotice)
+
+        val etDriverName = edit("اسم السائق لدى المالك (لتمييزه لديك - اختياري للتطابق)")
+        val etDriverPhone = edit("رقم موبايل السائق المسجل به في التطبيق (إلزامي)").apply {
+            inputType = InputType.TYPE_CLASS_PHONE
+        }
+        val etDriverRole = edit("صفة / وردية السائق (مثال: سائق نهاري، سائق أوبر، سائق عائلي)")
 
         root.addView(etDriverName)
         root.addView(etDriverPhone)
         root.addView(etDriverRole)
 
         dialog.setView(root)
-        dialog.setPositiveButton("تأكيد التفويض والربط") { _, _ ->
+        dialog.setPositiveButton("إرسال دعوة التفويض") { _, _ ->
             val dName = etDriverName.text.toString().trim()
             val dPhone = etDriverPhone.text.toString().trim()
             val dRole = etDriverRole.text.toString().trim().ifEmpty { "سائق مفوض" }
 
             if (dName.isEmpty() || dPhone.isEmpty()) {
-                Toast.makeText(this, "يرجى كتابة اسم السائق ورقم هاتفه (إلزامي للربط بحسابه)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "يرجى كتابة اسم السائق ورقم هاتفه المسجل به في التطبيق", Toast.LENGTH_SHORT).show()
                 return@setPositiveButton
             }
 
-            val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
-            val driver = AssignedDriver(
-                name = dName,
-                phone = dPhone,
-                roleType = dRole,
-                assignedDate = today
+            val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+
+            // Create pending delegation request
+            val reqId = "del-${System.currentTimeMillis()}"
+            val req = DriverDelegationRequest(
+                id = reqId,
+                vehicleId = veh.id,
+                vehicleName = veh.name,
+                vehicleMake = veh.make,
+                vehicleYear = veh.year,
+                vehicleVin = veh.vin,
+                vehiclePlate = veh.plateNumber,
+                ownerName = userName.ifEmpty { "المالك الأساسي" },
+                ownerPhone = userPhone.ifEmpty { "01000000000" },
+                driverCustomName = dName,
+                driverPhone = dPhone,
+                driverRole = dRole,
+                requestDate = today,
+                status = "pending"
             )
+            driverDelegationRequests.add(0, req)
+            saveDriverDelegationRequests()
 
-            veh.assignedDrivers.add(driver)
-            saveOwnerFleetVehicles()
-
-            // Auto-link to driver's assigned cars list
-            val existing = driverAssignedCars.find { it.vin == veh.vin }
-            if (existing == null) {
-                driverAssignedCars.add(
-                    DriverAssignedCar(
-                        id = "drv-car-${veh.id}",
-                        name = veh.name,
-                        make = veh.make,
-                        year = veh.year,
-                        vin = veh.vin,
-                        ownerName = userName.ifEmpty { "المالك الأساسي" },
-                        ownerPhone = userPhone.ifEmpty { "01000000000" },
-                        tankCapacity = veh.tankCapacity,
-                        baseRate = veh.baseRate,
-                        displacement = veh.displacement,
-                        fuelType = veh.fuelType,
-                        emptyWeightKg = veh.emptyWeightKg,
-                        isActive = driverAssignedCars.none { it.isActive }
+            // Also record in vehicle assigned drivers as pending
+            val existingInVeh = veh.assignedDrivers.find { it.phone == dPhone }
+            if (existingInVeh == null) {
+                veh.assignedDrivers.add(
+                    AssignedDriver(
+                        name = dName,
+                        phone = dPhone,
+                        roleType = "$dRole (بانتظار قبول السائق ⏳)",
+                        assignedDate = today
                     )
                 )
-                saveDriverAssignedCars()
+                saveOwnerFleetVehicles()
             }
 
             addSecurityNotification(
-                "تفويض سائق جديد",
-                "تم تفويض السائق ($dName - هاتف: $dPhone) على سيارتك (${veh.name}).",
-                "driver_assigned",
+                "إرسال دعوة تفويض سائق",
+                "تم إرسال دعوة تفويض قيادة سيارتك (${veh.name}) إلى السائق ($dName - هاتف: $dPhone). ستنضم السيارة لحسابه فور موافقته وقبول الاستلام.",
+                "driver_invitation_sent",
                 "info"
             )
 
-            Toast.makeText(this, "✅ تم تفويض السائق [$dName] وربط السيارة بحسابه بنجاح!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "📡 تم إرسال دعوة التفويض للسائق ($dPhone). ستظهر له رسالة قبول في واجهته للموافقة واستلام السيارة!", Toast.LENGTH_LONG).show()
             renderCurrentScreen()
         }
         dialog.setNegativeButton("إلغاء", null)
@@ -2361,6 +2602,263 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun saveDriverDelegationRequests() {
+        val arr = org.json.JSONArray()
+        for (req in driverDelegationRequests) {
+            val obj = org.json.JSONObject().apply {
+                put("id", req.id)
+                put("vehicleId", req.vehicleId)
+                put("vehicleName", req.vehicleName)
+                put("vehicleMake", req.vehicleMake)
+                put("vehicleYear", req.vehicleYear)
+                put("vehicleVin", req.vehicleVin)
+                put("vehiclePlate", req.vehiclePlate)
+                put("ownerName", req.ownerName)
+                put("ownerPhone", req.ownerPhone)
+                put("driverCustomName", req.driverCustomName)
+                put("driverPhone", req.driverPhone)
+                put("driverRole", req.driverRole)
+                put("requestDate", req.requestDate)
+                put("status", req.status)
+            }
+            arr.put(obj)
+        }
+        preferences.edit().putString("saved_driver_delegation_requests", arr.toString()).apply()
+    }
+
+    private fun loadDriverDelegationRequests() {
+        driverDelegationRequests.clear()
+        val raw = preferences.getString("saved_driver_delegation_requests", null)
+        if (!raw.isNullOrEmpty()) {
+            try {
+                val arr = org.json.JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    driverDelegationRequests.add(
+                        DriverDelegationRequest(
+                            id = obj.optString("id", "req-$i"),
+                            vehicleId = obj.optString("vehicleId", ""),
+                            vehicleName = obj.optString("vehicleName", ""),
+                            vehicleMake = obj.optString("vehicleMake", ""),
+                            vehicleYear = obj.optString("vehicleYear", ""),
+                            vehicleVin = obj.optString("vehicleVin", ""),
+                            vehiclePlate = obj.optString("vehiclePlate", ""),
+                            ownerName = obj.optString("ownerName", ""),
+                            ownerPhone = obj.optString("ownerPhone", ""),
+                            driverCustomName = obj.optString("driverCustomName", ""),
+                            driverPhone = obj.optString("driverPhone", ""),
+                            driverRole = obj.optString("driverRole", "سائق مفوض"),
+                            requestDate = obj.optString("requestDate", ""),
+                            status = obj.optString("status", "pending")
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun saveWorkshopAccessRequests() {
+        val arr = org.json.JSONArray()
+        for (req in workshopAccessRequests) {
+            val obj = org.json.JSONObject().apply {
+                put("id", req.id)
+                put("workshopName", req.workshopName)
+                put("workshopPhone", req.workshopPhone)
+                put("ownerPhone", req.ownerPhone)
+                put("targetVehicleName", req.targetVehicleName)
+                put("serviceReason", req.serviceReason)
+                put("requestDate", req.requestDate)
+                put("status", req.status)
+            }
+            arr.put(obj)
+        }
+        preferences.edit().putString("saved_workshop_access_requests", arr.toString()).apply()
+    }
+
+    private fun loadWorkshopAccessRequests() {
+        workshopAccessRequests.clear()
+        val raw = preferences.getString("saved_workshop_access_requests", null)
+        if (!raw.isNullOrEmpty()) {
+            try {
+                val arr = org.json.JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val req = WorkshopAccessRequest(
+                        id = obj.optString("id", "wsreq-$i"),
+                        workshopName = obj.optString("workshopName", ""),
+                        workshopPhone = obj.optString("workshopPhone", ""),
+                        ownerPhone = obj.optString("ownerPhone", ""),
+                        targetVehicleName = obj.optString("targetVehicleName", ""),
+                        serviceReason = obj.optString("serviceReason", ""),
+                        requestDate = obj.optString("requestDate", ""),
+                        status = obj.optString("status", "pending")
+                    )
+                    workshopAccessRequests.add(req)
+                    if (req.status == "approved" && isWorkshopSessionUnlocked) {
+                        activeWorkshopSessionRequest = req
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun submitWorkshopAccessRequest(targetOwnerPhone: String, reason: String) {
+        val reqId = "wsreq-${System.currentTimeMillis()}"
+        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو"
+        val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        val wsName = if (myWorkshopName.isNotBlank()) myWorkshopName else userName.ifEmpty { "مركز صيانة معتمد" }
+        val wsPhone = if (myWorkshopPhone.isNotBlank()) myWorkshopPhone else userPhone.ifEmpty { "01099887755" }
+
+        val wsReq = WorkshopAccessRequest(
+            id = reqId,
+            workshopName = wsName,
+            workshopPhone = wsPhone,
+            ownerPhone = targetOwnerPhone,
+            targetVehicleName = activeVehName,
+            serviceReason = reason.ifEmpty { "كشف أعطال كمبيوتر وقراءة الحساسات" },
+            requestDate = today,
+            status = "pending"
+        )
+        workshopAccessRequests.add(0, wsReq)
+        saveWorkshopAccessRequests()
+
+        addSecurityNotification(
+            "طلب إذن فحص من ورشة صيانة",
+            "تطلب ورشة ($wsName - هاتف: $wsPhone) إذناً لفحص كمبيوتر سيارتك ($activeVehName) لغرض: (${wsReq.serviceReason}). بدون أرقام سرية وبموافقتك المباشرة فقط.",
+            "workshop_access_request",
+            "warning"
+        )
+
+        Toast.makeText(this, "📡 تم إرسال طلب الفحص لموبايل المالك ($targetOwnerPhone). ستفتح جلسة الفحص فور موافقة المالك!", Toast.LENGTH_LONG).show()
+        renderCurrentScreen()
+    }
+
+    private fun approveWorkshopAccessRequest(req: WorkshopAccessRequest) {
+        req.status = "approved"
+        activeWorkshopSessionRequest = req
+        isWorkshopSessionUnlocked = true
+        workshopSessionGrantedBy = userName.ifEmpty { "المالك الأساسي" }
+        saveWorkshopAccessRequests()
+
+        addSecurityNotification(
+            "منح تصريح فحص لورشة",
+            "منحت ورشة (${req.workshopName} - هاتف: ${req.workshopPhone}) إذن دخول لمرة واحدة لفحص سيارتك (${req.targetVehicleName}) لغرض: (${req.serviceReason}).",
+            "workshop_session_approved",
+            "info"
+        )
+
+        Toast.makeText(this, "✅ تم منح إذن الدخول لمرة واحدة لورشة (${req.workshopName}) بنجاح. يمكنك إلغاء الدخول فوراً في أي وقت!", Toast.LENGTH_LONG).show()
+        renderCurrentScreen()
+    }
+
+    private fun rejectWorkshopAccessRequest(req: WorkshopAccessRequest) {
+        req.status = "rejected"
+        saveWorkshopAccessRequests()
+        addSecurityNotification(
+            "رفض طلب ورشة صيانة",
+            "رفضت طلب فحص السيارة المقدم من ورشة (${req.workshopName}).",
+            "workshop_session_rejected",
+            "info"
+        )
+        Toast.makeText(this, "تم رفض طلب الورشة.", Toast.LENGTH_SHORT).show()
+        renderCurrentScreen()
+    }
+
+    private fun revokeWorkshopAccessNow() {
+        isWorkshopSessionUnlocked = false
+        activeWorkshopSessionRequest?.status = "closed"
+        saveWorkshopAccessRequests()
+
+        addSecurityNotification(
+            "إلغاء تصريح ورشة الصيانة",
+            "قام المالك ($userName) بإنهاء جلسة فحص الورشة وإلغاء الدخول فورياً وقفل كمبيوتر السيارة.",
+            "workshop_session_revoked",
+            "warning"
+        )
+
+        Toast.makeText(this, "⛔ تم إلغاء تصريح الورشة وطرد الجلسة فوراً ووقف القراءة!", Toast.LENGTH_SHORT).show()
+        renderCurrentScreen()
+    }
+
+    private fun closeWorkshopSessionAndExit() {
+        val wsName = activeWorkshopSessionRequest?.workshopName ?: myWorkshopName
+        isWorkshopSessionUnlocked = false
+        activeWorkshopSessionRequest?.status = "closed"
+        saveWorkshopAccessRequests()
+
+        addSecurityNotification(
+            "انتهاء جلسة فحص الورشة",
+            "أنهت ورشة ($wsName) جلسة فحص سيارتك وتم الخروج وقفل السيارة نهائياً. لا يمكن الدخول مجدداً إلا بطلب جديد وموافقتك.",
+            "workshop_session_closed",
+            "info"
+        )
+
+        Toast.makeText(this, "🚪 تم إنهاء جلسة الفحص بنجاح والخروج. تم قفل السيارة ولا يمكن الدخول إلا بطلب جديد وموافقة المالك ✅", Toast.LENGTH_LONG).show()
+        renderCurrentScreen()
+    }
+
+    private fun acceptDriverDelegation(req: DriverDelegationRequest) {
+        req.status = "accepted"
+        saveDriverDelegationRequests()
+
+        // Link vehicle to driver's fleet
+        val existing = driverAssignedCars.find { it.vin == req.vehicleVin }
+        if (existing == null) {
+            val ownerVeh = ownerFleetVehicles.find { it.vin == req.vehicleVin }
+            driverAssignedCars.add(
+                DriverAssignedCar(
+                    id = "drv-car-${req.vehicleId}",
+                    name = req.vehicleName,
+                    make = req.vehicleMake,
+                    year = req.vehicleYear,
+                    vin = req.vehicleVin,
+                    ownerName = req.ownerName,
+                    ownerPhone = req.ownerPhone,
+                    tankCapacity = ownerVeh?.tankCapacity ?: 45f,
+                    baseRate = ownerVeh?.baseRate ?: 7.2f,
+                    displacement = ownerVeh?.displacement ?: 1.5f,
+                    fuelType = ownerVeh?.fuelType ?: "gasoline",
+                    emptyWeightKg = ownerVeh?.emptyWeightKg ?: 1200f,
+                    isActive = driverAssignedCars.none { it.isActive }
+                )
+            )
+            saveDriverAssignedCars()
+        }
+
+        // Update in owner's vehicle assigned driver status
+        val ownerVeh = ownerFleetVehicles.find { it.vin == req.vehicleVin }
+        val matchingDriver = ownerVeh?.assignedDrivers?.find { it.phone == req.driverPhone }
+        if (matchingDriver != null) {
+            matchingDriver.roleType = "${req.driverRole} (مفوض ومستلم ✅)"
+            saveOwnerFleetVehicles()
+        }
+
+        addSecurityNotification(
+            "قبول تفويض قيادة",
+            "وافق السائق (${req.driverCustomName} - هاتف: ${req.driverPhone}) على تفويض قيادة سيارتك (${req.vehicleName}) واستلمها رسمياً.",
+            "driver_delegation_accepted",
+            "info"
+        )
+
+        Toast.makeText(this, "✅ تم قبول التفويض واستلام السيارة (${req.vehicleName}) بنجاح! متاحة الآن للقيادة بأسطولك 🚗", Toast.LENGTH_LONG).show()
+        renderCurrentScreen()
+    }
+
+    private fun rejectDriverDelegation(req: DriverDelegationRequest) {
+        req.status = "rejected"
+        saveDriverDelegationRequests()
+
+        addSecurityNotification(
+            "اعتذار عن تفويض قيادة",
+            "اعتذر السائق (${req.driverCustomName} - هاتف: ${req.driverPhone}) عن قبول تفويض قيادة سيارتك (${req.vehicleName}).",
+            "driver_delegation_rejected",
+            "warning"
+        )
+
+        Toast.makeText(this, "تم الاعتذار عن قبول تفويض السيارة.", Toast.LENGTH_SHORT).show()
+        renderCurrentScreen()
+    }
+
     // ========================================================
     // TAB: REMOTE FLEET & DELTA MONITORING (المراقبة عن بعد للمالك)
     // ========================================================
@@ -2529,16 +3027,18 @@ class MainActivity : Activity() {
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(8)
                 layoutParams = lp
-                if (isPinActive) {
-                    setBackgroundColor(Color.rgb(55, 35, 15))
+                if (isWorkshopSessionUnlocked && activeWorkshopSessionRequest != null) {
+                    setBackgroundColor(Color.rgb(65, 20, 25))
                     setPadding(dp(12), dp(10), dp(12), dp(10))
-                    addView(text("🔑 يوجد تصريح فحص مؤقت ساري حالياً (PIN: $activeWorkshopPin)", 14, Color.rgb(248, 199, 74), true))
-                    addView(text("ممنوح لورشة: ($activeWorkshopTargetName) • المصرح: ($workshopSessionGrantedBy) • الصلاحية تنتهي تلقائياً بعد ساعتين.", 12, Color.WHITE, false))
+                    addView(text("🔴 جلسة فحص نشطة حالياً بواسطة ورشة: ${activeWorkshopSessionRequest?.workshopName}", 14, Color.rgb(255, 122, 122), true))
+                    addView(text("هاتف الورشة: ${activeWorkshopSessionRequest?.workshopPhone} • السيارة: ${activeWorkshopSessionRequest?.targetVehicleName}", 12, Color.WHITE, false))
+                    addView(text("الغرض: ${activeWorkshopSessionRequest?.serviceReason} • المصرح: ($workshopSessionGrantedBy)", 12, Color.rgb(248, 199, 74), false))
+                    addView(text("الورشة تقرأ الحساسات الآن - يمكنك إنهاء الجلسة فوراً وإلغاء الدخول بضغطة زر أدناه.", 11, Color.rgb(180, 215, 240), false))
                 } else {
                     setBackgroundColor(Color.rgb(18, 52, 32))
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     addView(text("🔒 السيارة محمية: لا توجد أي ورشة مصرح لها بالدخول حالياً.", 14, Color.rgb(126, 242, 154), true))
-                    addView(text("كمبيوتر وحساسات السيارة مقفلة ومؤمنة تماماً ضد أي فحص غير معتمد.", 12, Color.WHITE, false))
+                    addView(text("كمبيوتر وحساسات السيارة مقفلة ومؤمنة تماماً ضد أي فحص غير معتمد (بدون أرقام سرية - يتطلب موافقتك الصريحة فقط).", 12, Color.WHITE, false))
                 }
             }
             addView(statusBox)
@@ -2560,15 +3060,7 @@ class MainActivity : Activity() {
                 lp.setMargins(0, 0, dp(3), 0)
                 layoutParams = lp
                 setOnClickListener {
-                    isPinActive = false
-                    isWorkshopSessionUnlocked = false
-                    addSecurityNotification(
-                        "⛔ إلغاء تصريح الورشة",
-                        "قام المالك ($userName) بإلغاء وإبطال جميع تصاريح دخول الورش وحظر الفحص فورياً.",
-                        "access_revoked",
-                        "warning"
-                    )
-                    Toast.makeText(this@MainActivity, "تم إلغاء تصاريح جميع الورش وحماية السيارة بنجاح 🔒", Toast.LENGTH_SHORT).show()
+                    revokeWorkshopAccessNow()
                     switchTab("owner_security")
                 }
             })
@@ -2591,6 +3083,69 @@ class MainActivity : Activity() {
             addView(btnRow)
         }
         container.addView(cardStatus)
+
+        // Pending Workshop Access Requests
+        val pendingWs = workshopAccessRequests.filter { it.status == "pending" }
+        if (pendingWs.isNotEmpty()) {
+            val cardPending = card().apply {
+                setBackgroundColor(Color.rgb(20, 42, 60))
+                addView(text("📡 طلبات فحص واستئذان صيانة واردة بانتظار موافقتك (${pendingWs.size}):", 15, Color.rgb(248, 199, 74), true))
+                addView(text("تطلب الورش التالية إذناً لدخول كمبيوتر سيارتك لمرة واحدة. اضغط [موافقة] لفتح الفحص فوراً:", 12, Color.rgb(167, 203, 226), false))
+
+                pendingWs.forEach { req ->
+                    val reqBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(10, 25, 38))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.topMargin = dp(8)
+                        layoutParams = lp
+
+                        addView(text("🔧 ${req.workshopName} (هاتف: ${req.workshopPhone})", 14, Color.rgb(110, 231, 255), true))
+                        addView(text("• السيارة: ${req.targetVehicleName} • الغرض: ${req.serviceReason}", 12, Color.WHITE, false))
+                        addView(text("• تاريخ الطلب: ${req.requestDate} • الدخول مخصص لمرة واحدة وينتهي عند الخروج.", 11, Color.rgb(180, 210, 230), false))
+
+                        val bRow = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            blp.topMargin = dp(6)
+                            layoutParams = blp
+
+                            addView(Button(this@MainActivity).apply {
+                                text = "✅ موافقة ودخول لمرة واحدة"
+                                textSize = 12f
+                                typeface = Typeface.DEFAULT_BOLD
+                                setTextColor(Color.WHITE)
+                                setBackgroundColor(Color.rgb(20, 120, 80))
+                                val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1.3f)
+                                lpBtn.rightMargin = dp(4)
+                                layoutParams = lpBtn
+                                setOnClickListener {
+                                    approveWorkshopAccessRequest(req)
+                                    switchTab("owner_security")
+                                }
+                            })
+
+                            addView(Button(this@MainActivity).apply {
+                                text = "❌ رفض"
+                                textSize = 12f
+                                setTextColor(Color.rgb(255, 122, 122))
+                                setBackgroundColor(Color.rgb(55, 20, 25))
+                                val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1f)
+                                layoutParams = lpBtn
+                                setOnClickListener {
+                                    rejectWorkshopAccessRequest(req)
+                                    switchTab("owner_security")
+                                }
+                            })
+                        }
+                        addView(bRow)
+                    }
+                    addView(reqBox)
+                }
+            }
+            container.addView(cardPending)
+        }
 
         // List of Security Alerts
         val cardAlerts = card().apply {
@@ -2873,33 +3428,72 @@ class MainActivity : Activity() {
         val primaryOwner = preferences.getString("vehicle_primary_owner", "مالك مسجل") ?: "مالك مسجل"
 
         if (!isWorkshopSessionUnlocked) {
-            val cardAuth = card().apply {
-                addView(text("🔑 منصة فحص السيارات المعتمدة (تسجيل دخول الورشة)", 17, Color.rgb(248, 199, 74), true))
-                addView(text("أدخل كود الفحص المؤقت (4 أرقام) الممنوح لك من المالك أو السائق لفتح قراءة الحساسات وفحص الأعطال:", 13, Color.rgb(167, 203, 226), false))
-
-                val etPin = edit("كود الفحص المؤقت المكون من 4 أرقام (مثال: $activeWorkshopPin)").apply {
-                    inputType = InputType.TYPE_CLASS_NUMBER
-                }
-                addView(etPin)
-
-                addView(button("🔓 التحقق وفك حظر الفحص للسيارة") {
-                    val entered = etPin.text.toString().trim()
-                    verifyAndUnlockWorkshopSession(entered)
-                }.apply {
-                    setBackgroundColor(Color.rgb(32, 120, 85))
-                    setTextColor(Color.WHITE)
-                })
-
-                addView(button("⚡ استخدام الكود المصرح به حالياً ($activeWorkshopPin) تجريبياً") {
-                    verifyAndUnlockWorkshopSession(activeWorkshopPin)
-                }.apply {
-                    setBackgroundColor(Color.rgb(36, 77, 111))
-                    setTextColor(Color.WHITE)
-                })
+            val myPendingReq = workshopAccessRequests.find {
+                it.status == "pending" && (it.workshopPhone == myWorkshopPhone || it.workshopPhone == userPhone || myWorkshopPhone.isEmpty())
             }
-            container.addView(cardAuth)
+
+            if (myPendingReq != null) {
+                // Pending Request Waiting Screen
+                val cardPending = card().apply {
+                    setBackgroundColor(Color.rgb(20, 45, 65))
+                    addView(text("⏳ جاري انتظار موافقة المالك على طلب الفحص", 17, Color.rgb(248, 199, 74), true))
+                    addView(text("تم إرسال طلب استئذان فحص إلى هاتف مالك السيارة (${myPendingReq.ownerPhone}) لغرض: (${myPendingReq.serviceReason}).", 13, Color.rgb(180, 215, 240), false))
+                    addView(text("💡 لا توجد أرقام سرية: بمجرد ضغط المالك على [موافقة] في هاتفه، ستفتح الجلسة تلقائياً لمرة واحدة فقط.", 12, Color.rgb(126, 242, 154), false))
+
+                    addView(button("⚡ محاكاة موافقة المالك فورياً (لتجربة الفحص على نفس الجهاز)") {
+                        approveWorkshopAccessRequest(myPendingReq)
+                    }.apply {
+                        setBackgroundColor(Color.rgb(25, 120, 80))
+                        setTextColor(Color.WHITE)
+                    })
+
+                    addView(button("❌ إلغاء طلب الفحص الحالي") {
+                        rejectWorkshopAccessRequest(myPendingReq)
+                    }.apply {
+                        setBackgroundColor(Color.rgb(55, 20, 25))
+                        setTextColor(Color.rgb(255, 122, 122))
+                    })
+                }
+                container.addView(cardPending)
+            } else {
+                // Request Inspection by Owner Phone Form
+                val cardAuth = card().apply {
+                    addView(text("📡 طلب إذن فحص سيارة من المالك (بدون أرقام سرية)", 17, Color.rgb(248, 199, 74), true))
+                    addView(text("لحماية أمان وخصوصية السيارة: لا توجد أرقام سرية. ضع رقم موبايل مالك السيارة المسجل به في التطبيق وسبب الفحص، وسيصل إشعار فوري للمالك لمنحك إذن فحص لمرة واحدة:", 13, Color.rgb(167, 203, 226), false))
+
+                    val etOwnerPhone = edit("رقم موبايل مالك السيارة المسجل بالتطبيق (إلزامي)").apply {
+                        inputType = InputType.TYPE_CLASS_PHONE
+                    }
+                    val etReason = edit("سبب الفحص / الشكوى (مثال: فحص لمبة Check Engine، دورة التبريد)")
+                    addView(etOwnerPhone)
+                    addView(etReason)
+
+                    addView(button("📡 إرسال طلب الفحص والاستئذان للمالك") {
+                        val phone = etOwnerPhone.text.toString().trim()
+                        val reason = etReason.text.toString().trim()
+                        if (phone.isEmpty()) {
+                            Toast.makeText(this@MainActivity, "يرجى كتابة رقم موبايل مالك السيارة المسجل به في التطبيق", Toast.LENGTH_SHORT).show()
+                            return@button
+                        }
+                        submitWorkshopAccessRequest(phone, reason)
+                    }.apply {
+                        setBackgroundColor(Color.rgb(32, 120, 85))
+                        setTextColor(Color.WHITE)
+                    })
+
+                    val primaryOwnerPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+                    addView(button("⚡ تعبئة برقم مالك السيارة الحالي ($primaryOwnerPhone) تجريبياً") {
+                        etOwnerPhone.setText(primaryOwnerPhone)
+                        etReason.setText("فحص وتشخيص أعطال كمبيوتر المحرك وقراءة الحساسات")
+                    }.apply {
+                        setBackgroundColor(Color.rgb(36, 77, 111))
+                        setTextColor(Color.WHITE)
+                    })
+                }
+                container.addView(cardAuth)
+            }
         } else {
-            // Authorized Inspection Session
+            // Authorized Inspection Session (One-Time Access)
             val cardSession = card().apply {
                 val banner = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
@@ -2907,9 +3501,9 @@ class MainActivity : Activity() {
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     layoutParams = lp
-                    addView(text("✅ فحص مصرح به ونشط للسيارة: $activeVehName", 15, Color.rgb(126, 242, 154), true))
+                    addView(text("✅ فحص مصرح به ونشط (دخول لمرة واحدة) - السيارة: $activeVehName", 15, Color.rgb(126, 242, 154), true))
                     addView(text("الشاسيه: $activeVin • المالك: $primaryOwner • المصرح: $workshopSessionGrantedBy", 12, Color.WHITE, false))
-                    addView(text("التصريح ساري حتى انتهاء الجلسة • تم إشعار المالك رسمياً بدخولك 📡", 11, Color.rgb(167, 203, 226), false))
+                    addView(text("⚠️ تنبيه أمني: عند خروجك ينتهي التصريح فوراً وتُقفل السيارة ولن تتمكن من الدخول مجدداً إلا بطلب جديد وموافقة المالك 📡", 11, Color.rgb(248, 199, 74), false))
                 }
                 addView(banner)
 
@@ -3007,12 +3601,10 @@ class MainActivity : Activity() {
                 })
                 addView(btnRow)
 
-                addView(button("🔒 إنهاء جلسة الفحص وقفل السيارة") {
-                    isWorkshopSessionUnlocked = false
-                    Toast.makeText(this@MainActivity, "تم إنهاء جلسة الفحص وقفل السيارة بنجاح.", Toast.LENGTH_SHORT).show()
-                    switchTab("workshop_console")
+                addView(button("🚪 إنهاء جلسة الفحص والخروج من السيارة (قفل نهائي)") {
+                    closeWorkshopSessionAndExit()
                 }.apply {
-                    setBackgroundColor(Color.rgb(45, 60, 75))
+                    setBackgroundColor(Color.rgb(150, 35, 40))
                     setTextColor(Color.WHITE)
                 })
             }
@@ -3323,6 +3915,71 @@ class MainActivity : Activity() {
             })
         }
         container.addView(cardHeader)
+
+        // Pending Driver Delegation Invitations (دعوات تفويض السيارات الواردة من المالكين)
+        val pendingInvites = driverDelegationRequests.filter {
+            it.status == "pending" && (it.driverPhone == userPhone || userPhone.isEmpty() || it.driverPhone.endsWith(userPhone.takeLast(8)))
+        }
+        if (pendingInvites.isNotEmpty()) {
+            val cardPending = card().apply {
+                setBackgroundColor(Color.rgb(18, 45, 65))
+                addView(text("📩 طلبات تفويض قيادة واردة بانتظار موافقتك (${pendingInvites.size}):", 16, Color.rgb(248, 199, 74), true))
+                addView(text("أرسل لك المالكون تفويضاً لاستلام السيارات التالية وقيادتها برقم هاتفك المسجل. اضغط [قبول] لتظهر السيارة فوراً بأسطولك:", 12, Color.rgb(167, 203, 226), false))
+
+                pendingInvites.forEach { req ->
+                    val inviteBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(10, 28, 42))
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.topMargin = dp(8)
+                        layoutParams = lp
+
+                        addView(text("🚗 ${req.vehicleName} (${req.vehicleMake} - موديل ${req.vehicleYear})", 15, Color.WHITE, true))
+                        addView(text("• لوحة السيارة: ${req.vehiclePlate} • رقم الشاسية (VIN): ${req.vehicleVin}", 12, Color.rgb(180, 200, 215), false))
+                        addView(text("• المالك: ${req.ownerName} (هاتف: ${req.ownerPhone})", 12, Color.rgb(248, 199, 74), false))
+                        addView(text("• اسمك لدى المالك: ${req.driverCustomName} • الصفة / الوردية: ${req.driverRole}", 12, Color.rgb(126, 242, 154), false))
+                        addView(text("• تاريخ إرسال الطلب: ${req.requestDate}", 11, Color.rgb(150, 175, 195), false))
+
+                        val btnRow = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            blp.topMargin = dp(8)
+                            layoutParams = blp
+
+                            addView(Button(this@MainActivity).apply {
+                                text = "✅ قبول واستلام السيارة"
+                                textSize = 12f
+                                typeface = Typeface.DEFAULT_BOLD
+                                setTextColor(Color.WHITE)
+                                setBackgroundColor(Color.rgb(20, 120, 80))
+                                val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1.3f)
+                                lpBtn.rightMargin = dp(4)
+                                layoutParams = lpBtn
+                                setOnClickListener {
+                                    acceptDriverDelegation(req)
+                                }
+                            })
+
+                            addView(Button(this@MainActivity).apply {
+                                text = "❌ اعتذار / رفض"
+                                textSize = 12f
+                                setTextColor(Color.rgb(255, 122, 122))
+                                setBackgroundColor(Color.rgb(55, 20, 25))
+                                val lpBtn = LinearLayout.LayoutParams(0, dp(40), 1f)
+                                layoutParams = lpBtn
+                                setOnClickListener {
+                                    rejectDriverDelegation(req)
+                                }
+                            })
+                        }
+                        addView(btnRow)
+                    }
+                    addView(inviteBox)
+                }
+            }
+            container.addView(cardPending)
+        }
 
         // List of Cars
         if (driverAssignedCars.isEmpty()) {
