@@ -57,7 +57,14 @@ class SpeedBumpManager(
     )
 
     // Public state
-    var isMuted: Boolean = false
+    var isWarningEnabled: Boolean = true
+    var isAudioMuted: Boolean = false
+    var isMuted: Boolean
+        get() = isAudioMuted
+        set(value) { isAudioMuted = value }
+
+    val alertSoundPlayer: AlertSoundPlayer = AlertSoundPlayer(context)
+
     var currentWarningText: String? = null
         private set
     var onWarningStateChanged: ((warningText: String?, stage: String?) -> Unit)? = null
@@ -136,6 +143,14 @@ class SpeedBumpManager(
         return isMuted
     }
 
+    fun toggleWarning(): Boolean {
+        isWarningEnabled = !isWarningEnabled
+        if (!isWarningEnabled) {
+            clearWarningState()
+        }
+        return isWarningEnabled
+    }
+
     /**
      * Called whenever a new GPS fix arrives.
      * Evaluates 20km sector refresh, proximity warnings, and pass-checks.
@@ -172,7 +187,7 @@ class SpeedBumpManager(
      * Evaluates cached hazards ahead of the vehicle.
      */
     private fun checkProximityWarnings(currentLoc: Location, speedKmh: Double) {
-        if (cachedHazards.isEmpty()) {
+        if (!isWarningEnabled || cachedHazards.isEmpty()) {
             clearWarningState()
             return
         }
@@ -221,15 +236,15 @@ class SpeedBumpManager(
     }
 
     private fun playProximityAudio(stage: String) {
-        if (isMuted) return
+        if (!isWarningEnabled || isAudioMuted) return
         try {
             if (stage == "FINAL") {
-                toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP2, 350)
+                alertSoundPlayer.playBump25m()
             } else {
-                toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 200)
+                alertSoundPlayer.playBump100m()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Audio tone failed: ${e.message}")
+            Log.w(TAG, "Natural voice alert failed: ${e.message}")
         }
     }
 
