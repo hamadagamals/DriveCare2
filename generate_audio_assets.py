@@ -1,5 +1,5 @@
 """
-Generate high quality natural Arabic human voice audio clips and
+Generate high quality concise natural Arabic human voice audio clips and
 harmonic acoustic tones for DriveCare & RoadGuardian.
 Places all generated audio files into android-native/app/src/main/res/raw/
 """
@@ -17,22 +17,28 @@ os.makedirs(RAW_DIR, exist_ok=True)
 
 import edge_tts
 
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
+
+# Concise, non-annoying natural phrases
 VOICE_PROMPTS = [
-    ("bump_100m_male.mp3", "ar-EG-ShakirNeural", "انتبه، مطب بعد مائة متر"),
-    ("bump_100m_female.mp3", "ar-EG-SalmaNeural", "انتبه، يوجد مطب على بعد مائة متر"),
-    ("bump_25m_male.mp3", "ar-EG-ShakirNeural", "مطب الآن، هدئ السرعة"),
-    ("bump_25m_female.mp3", "ar-EG-SalmaNeural", "مطب الآن، خفف السرعة"),
-    ("voice_engine_heat.mp3", "ar-EG-ShakirNeural", "تحذير طارئ، حرارة المحرك مرتفعة جداً، يرجى التوقف بأمان"),
-    ("voice_dtc_error.mp3", "ar-EG-ShakirNeural", "تنبيه، تم رصد كود عطل في كمبيوتر السيارة"),
-    ("voice_battery_low.mp3", "ar-EG-SalmaNeural", "تنبيه، انخفاض في جهد بطارية السيارة، يرجى فحص الشحن"),
-    ("voice_oil_maint.mp3", "ar-EG-ShakirNeural", "تذكير، حان موعد الصيانة وتغيير زيت المحرك"),
-    ("voice_speed_limit.mp3", "ar-EG-SalmaNeural", "تنبيه، لقد تجاوزت السرعة المحددة للطريق"),
+    ("bump_100m_male.mp3", "ar-EG-ShakirNeural", "مطب بعد مائة متر"),
+    ("bump_100m_female.mp3", "ar-EG-SalmaNeural", "مطب صناعي بعد 100 متر"),
+    ("bump_25m_male.mp3", "ar-EG-ShakirNeural", "مطب الآن"),
+    ("bump_25m_female.mp3", "ar-EG-SalmaNeural", "مطب"),
+    ("voice_engine_heat.mp3", "ar-EG-ShakirNeural", "حرارة المحرك مرتفعة"),
+    ("voice_dtc_error.mp3", "ar-EG-ShakirNeural", "عطل في المحرك"),
+    ("voice_battery_low.mp3", "ar-EG-SalmaNeural", "شحن البطارية منخفض"),
+    ("voice_oil_maint.mp3", "ar-EG-ShakirNeural", "موعد غيار الزيت"),
 ]
 
 
 async def generate_voice_file(filename, voice, text):
     out_path = os.path.join(RAW_DIR, filename)
-    print(f"Generating voice [{voice}] -> {filename} ...")
+    print(f"Generating concise voice [{voice}] -> {filename} ('{text}') ...")
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(out_path)
     print(f"  Saved {filename} ({os.path.getsize(out_path)} bytes)")
@@ -47,24 +53,21 @@ def generate_harmonic_wave(filename, frequencies, durations, sample_rate=44100):
         num_samples = int(sample_rate * duration_sec)
         for i in range(num_samples):
             t = float(i) / sample_rate
-            # Fade in and out envelope
             env = 1.0
-            attack = 0.02
-            decay = 0.05
+            attack = 0.015
+            decay = 0.04
             if t < attack:
                 env = t / attack
             elif t > duration_sec - decay:
                 env = max(0.0, (duration_sec - t) / decay)
             
-            # Fundamental + soft 2nd harmonic
-            val = 0.7 * math.sin(2.0 * math.pi * freq * t) + 0.3 * math.sin(4.0 * math.pi * freq * t)
-            val = val * env * 0.7
+            val = 0.75 * math.sin(2.0 * math.pi * freq * t) + 0.25 * math.sin(4.0 * math.pi * freq * t)
+            val = val * env * 0.75
             sample = int(val * 32767.0)
             sample = max(-32768, min(32767, sample))
             samples.append(sample)
         
-        # Short 20ms silence between notes
-        silence_samples = int(sample_rate * 0.02)
+        silence_samples = int(sample_rate * 0.015)
         samples.extend([0] * silence_samples)
 
     with wave.open(out_path, 'w') as wf:
@@ -79,7 +82,7 @@ def generate_harmonic_wave(filename, frequencies, durations, sample_rate=44100):
 
 async def main():
     print("=" * 60)
-    print("Generating DriveCare Natural Voice & Tone Audio Assets")
+    print("Generating DriveCare Ultra-Concise Natural Voices & Tones")
     print("=" * 60)
 
     # 1. Natural Arabic Voice Prompts
@@ -90,23 +93,25 @@ async def main():
             print(f"  Error generating {fn}: {e}")
 
     # 2. Harmonic Tones
-    # 100m Early bump chime: C6 -> E6 (1046 Hz -> 1318 Hz)
-    generate_harmonic_wave("tone_bump_100m.wav", [1046.5, 1318.5], [0.12, 0.22])
+    # 100m Early bump chimes
+    generate_harmonic_wave("tone_bump_100m.wav", [1046.5, 1318.5], [0.10, 0.18])
+    generate_harmonic_wave("tone_bump_100m_alt.wav", [880.0, 1174.6], [0.10, 0.20])
     
-    # 25m Final bump chime: G6 -> E6 -> C6 (1567 Hz -> 1318 Hz -> 1046 Hz)
-    generate_harmonic_wave("tone_bump_25m.wav", [1567.9, 1318.5, 1046.5], [0.08, 0.08, 0.18])
+    # 25m Final bump chimes
+    generate_harmonic_wave("tone_bump_25m.wav", [1567.9, 1318.5, 1046.5], [0.07, 0.07, 0.15])
+    generate_harmonic_wave("tone_bump_25m_alt.wav", [1760.0, 1318.5], [0.09, 0.16])
     
-    # Engine Heat urgent alarm: 880 Hz -> 660 Hz alternating
-    generate_harmonic_wave("tone_engine_heat.wav", [880.0, 659.2, 880.0, 659.2], [0.15, 0.15, 0.15, 0.25])
+    # Engine Heat urgent alarm
+    generate_harmonic_wave("tone_engine_heat.wav", [880.0, 659.2, 880.0, 659.2], [0.12, 0.12, 0.12, 0.20])
     
-    # DTC Diagnostic tone: 587 Hz -> 880 Hz
-    generate_harmonic_wave("tone_dtc_error.wav", [587.3, 880.0], [0.12, 0.22])
+    # DTC Diagnostic tone
+    generate_harmonic_wave("tone_dtc_error.wav", [587.3, 880.0], [0.10, 0.20])
     
-    # Battery low: 783 Hz -> 523 Hz
-    generate_harmonic_wave("tone_battery.wav", [783.9, 523.2], [0.15, 0.25])
+    # Battery tone
+    generate_harmonic_wave("tone_battery.wav", [783.9, 523.2], [0.12, 0.22])
     
-    # Oil / Maintenance soft chime: 523 Hz -> 659 Hz -> 783 Hz
-    generate_harmonic_wave("tone_oil_maint.wav", [523.2, 659.2, 783.9], [0.12, 0.12, 0.28])
+    # Oil / Maintenance soft chime
+    generate_harmonic_wave("tone_oil_maint.wav", [523.2, 659.2, 783.9], [0.10, 0.10, 0.24])
 
     print("\nAll audio files generated in res/raw successfully!")
 

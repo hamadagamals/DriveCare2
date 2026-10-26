@@ -296,6 +296,9 @@ class MainActivity : Activity() {
     // Alert Dismissal, Snoozing & Background Android Notifications
     private val snoozedAlertsMap = mutableMapOf<String, Long>()
     private val permanentlyDismissedAlerts = mutableSetOf<String>()
+    private var wasEngineRunning: Boolean = false
+    private var engineRunningStartTimeMs: Long = 0L
+    private var lowBatterySustainedCount: Int = 0
     private var currentActiveAlertKey: String? = null
     private val SAFETY_NOTIFICATION_ID = 9991
     private val SAFETY_CHANNEL_ID = "drivecare_safety_channel"
@@ -552,7 +555,7 @@ class MainActivity : Activity() {
                 key.contains("dtc") || key.contains("scanner") -> alertSoundPlayer.playDtcError()
                 key.contains("battery") || key.contains("voltage") -> alertSoundPlayer.playBatteryLow()
                 key.contains("oil") || key.contains("maint") -> alertSoundPlayer.playOilMaintenance()
-                key.contains("speed") -> alertSoundPlayer.playSpeedLimit()
+                key.contains("speed") -> return // Speed limit alerts suppressed per user requirement
                 critical -> alertSoundPlayer.playEngineHeat()
                 else -> {
                     thread {
@@ -814,22 +817,9 @@ class MainActivity : Activity() {
 
     private fun buildSpeedBumpBanner(): TextView {
         return TextView(this).apply {
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(8)
+            visibility = View.GONE
+            val lp = LinearLayout.LayoutParams(0, 0)
             layoutParams = lp
-            val currentWarning = if (isBumpWarningEnabled) speedBumpManager?.currentWarningText else null
-            if (currentWarning != null) {
-                text = currentWarning
-                visibility = View.VISIBLE
-                setBackgroundColor(Color.rgb(230, 138, 0))
-            } else {
-                visibility = View.GONE
-            }
             speedBumpBanner = this
         }
     }
@@ -842,17 +832,17 @@ class MainActivity : Activity() {
             layoutParams = lp
         }
 
-        // 1. Hero Card: Master Toggle & Mute Control
+        // 1. Hero Card: Master Audio Warning Toggle & Sound Settings Link
         val hero = card().apply {
-            addView(text("🛑 رادار وتنبيهات المطبات الذكية", 16, Color.rgb(255, 180, 70), true))
-            addView(text("حماية نظام التعليق (العفشة) والتنبيه الصوتي المبكر قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
+            addView(text("🛑 رادار وتحذيرات المطبات الذكية", 16, Color.rgb(255, 180, 70), true))
+            addView(text("تنبيه صوتي ذكي موجز (أصوات بشرية طبيعية ونغمات) قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
                 setPadding(0, dp(4), 0, dp(12))
             })
 
-            // Master Warning Toggle Button
+            // Master Warning Audio Toggle Button
             val btnMasterToggle = Button(this@MainActivity).apply {
                 val isEn = isBumpWarningEnabled
-                text = if (isEn) "🟢 تحذير المطبات: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات: معطل وملغي (اضغط للتفعيل)"
+                text = if (isEn) "🟢 تحذير المطبات الصوتي: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات الصوتي: معطل وملغي (اضغط للتفعيل)"
                 textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(if (isEn) Color.rgb(8, 23, 32) else Color.rgb(220, 230, 240))
@@ -864,8 +854,8 @@ class MainActivity : Activity() {
             addView(btnMasterToggle)
 
             val tvMasterNote = text(
-                if (isBumpWarningEnabled) "يتم إطلاق الصوت التحذيري والشريط الأحمر عند الاقتراب من أي مطب."
-                else "✅ قراءة ورصد المطبات مستمرة بالخلفية بدون إظهار أي صوت أو شريط أحمر.",
+                if (isBumpWarningEnabled) "التحذير الصوتي مسموع عند اقتراب 100م و 25م حسب النغمة أو الصوت المختار."
+                else "✅ قراءة ورصد المطبات مستمرة بالخلفية بدون إصدار أي صوت.",
                 11,
                 if (isBumpWarningEnabled) Color.rgb(160, 210, 230) else Color.rgb(140, 230, 180),
                 false
@@ -874,78 +864,31 @@ class MainActivity : Activity() {
             }
             addView(tvMasterNote)
 
-            // Audio Toggle Button (Mute Audio Only)
-            val btnMuteToggle = Button(this@MainActivity).apply {
-                val isMuted = isBumpAudioMuted
-                text = if (isMuted) "🔇 صوت التنبيه: مكتوم (اضغط لتشغيل الصوت)" else "🔊 صوت التنبيه: مسموع (اضغط لكتم الصوت)"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(if (isMuted) Color.rgb(255, 180, 100) else Color.rgb(8, 23, 32))
-                setBackgroundColor(if (isMuted) Color.rgb(36, 26, 16) else Color.rgb(110, 231, 255))
-                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
-                blp.bottomMargin = dp(6)
-                layoutParams = blp
-                visibility = if (isBumpWarningEnabled) View.VISIBLE else View.GONE
-            }
-            addView(btnMuteToggle)
-
-            val tvMuteNote = text(
-                if (isBumpAudioMuted) "مكتوم: يُكتفى بالشريط التحذيري المرئي على الشاشة فقط بدون صوت."
-                else "الصوت البشري الطبيعي والشريط المرئي يعملان معاً.",
-                11,
-                Color.rgb(180, 205, 225),
-                false
-            ).apply {
-                setPadding(dp(4), 0, dp(4), dp(10))
-                visibility = if (isBumpWarningEnabled) View.VISIBLE else View.GONE
-            }
-            addView(tvMuteNote)
-
-            // Setup button interactions
+            // Setup master button interaction
             btnMasterToggle.setOnClickListener {
                 isBumpWarningEnabled = !isBumpWarningEnabled
                 preferences.edit().putBoolean("is_bump_warning_enabled", isBumpWarningEnabled).apply()
                 speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
 
                 val isEn = isBumpWarningEnabled
-                btnMasterToggle.text = if (isEn) "🟢 تحذير المطبات: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات: معطل وملغي (اضغط للتفعيل)"
+                btnMasterToggle.text = if (isEn) "🟢 تحذير المطبات الصوتي: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات الصوتي: معطل وملغي (اضغط للتفعيل)"
                 btnMasterToggle.setTextColor(if (isEn) Color.rgb(8, 23, 32) else Color.rgb(220, 230, 240))
                 btnMasterToggle.setBackgroundColor(if (isEn) Color.rgb(80, 227, 194) else Color.rgb(55, 68, 85))
 
-                tvMasterNote.text = if (isEn) "يتم إطلاق الصوت التحذيري والشريط الأحمر عند الاقتراب من أي مطب."
-                    else "✅ قراءة ورصد المطبات مستمرة بالخلفية بدون إظهار أي صوت أو شريط أحمر."
+                tvMasterNote.text = if (isEn) "التحذير الصوتي مسموع عند اقتراب 100م و 25م حسب النغمة أو الصوت المختار."
+                    else "✅ قراءة ورصد المطبات مستمرة بالخلفية بدون إصدار أي صوت."
                 tvMasterNote.setTextColor(if (isEn) Color.rgb(160, 210, 230) else Color.rgb(140, 230, 180))
 
-                btnMuteToggle.visibility = if (isEn) View.VISIBLE else View.GONE
-                tvMuteNote.visibility = if (isEn) View.VISIBLE else View.GONE
-
                 if (!isEn) {
-                    speedBumpBanner?.visibility = View.GONE
-                    Toast.makeText(this@MainActivity, "تم إلغاء تحذيرات المطبات (الرصد مستمر بالخلفية)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم إلغاء التحذير الصوتي (الرصد مستمر بالخلفية)", Toast.LENGTH_SHORT).show()
                 } else {
-                    Toast.makeText(this@MainActivity, "تم تفعيل تحذيرات المطبات", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم تفعيل التحذير الصوتي للمطبات", Toast.LENGTH_SHORT).show()
                 }
             }
 
-            btnMuteToggle.setOnClickListener {
-                isBumpAudioMuted = !isBumpAudioMuted
-                preferences.edit().putBoolean("is_bump_audio_muted", isBumpAudioMuted).apply()
-                speedBumpManager?.isAudioMuted = isBumpAudioMuted
-
-                val isMuted = isBumpAudioMuted
-                btnMuteToggle.text = if (isMuted) "🔇 صوت التنبيه: مكتوم (اضغط لتشغيل الصوت)" else "🔊 صوت التنبيه: مسموع (اضغط لكتم الصوت)"
-                btnMuteToggle.setTextColor(if (isMuted) Color.rgb(255, 180, 100) else Color.rgb(8, 23, 32))
-                btnMuteToggle.setBackgroundColor(if (isMuted) Color.rgb(36, 26, 16) else Color.rgb(110, 231, 255))
-
-                tvMuteNote.text = if (isMuted) "مكتوم: يُكتفى بالشريط التحذيري المرئي على الشاشة فقط بدون صوت."
-                    else "الصوت البشري الطبيعي والشريط المرئي يعملان معاً."
-
-                Toast.makeText(this@MainActivity, if (isMuted) "تم كتم الصوت - يُكتفى بالشريط المرئي فقط" else "تم تشغيل الصوت التحذيري", Toast.LENGTH_SHORT).show()
-            }
-
-            // Button to open Audio & Tone Studio
+            // Quick button to customize Voices, Tones & Volume
             val btnOpenAudioStudio = Button(this@MainActivity).apply {
-                text = "🎵 تخصيص أصوات ونغمات التنبيه (100م، 25م، المحرك) ➡️"
+                text = "🎵 تخصيص نغمات وأصوات المطبات وشدة الصوت ➡️"
                 textSize = 12f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
@@ -1036,7 +979,7 @@ class MainActivity : Activity() {
         // Hero Card
         val hero = card().apply {
             addView(text("🔊 استوديو الأصوات البشرية والنغمات التنبيهية", 16, Color.rgb(110, 231, 255), true))
-            addView(text("خصص الأصوات والنغمات حسب نوع الخطر. استمع للصوت أولاً ثم اضغط اختيار لاعتماده فوراً.", 12, Color.rgb(180, 210, 230), false).apply {
+            addView(text("خصص الأصوات والنغمات ومستوى شدة الصوت (Volume) لكل خطر على حدة. الجمل الصوتية موجزة وغير مزعجة، ويمكنك الاستماع للتجربة قبل الاعتماد.", 12, Color.rgb(180, 210, 230), false).apply {
                 setPadding(0, dp(4), 0, dp(8))
             })
         }
@@ -1060,7 +1003,7 @@ class MainActivity : Activity() {
                 AlertSoundPlayer.KEY_SOUND_BUMP_25M,
                 "تحذير المطب الفوري الحاسم (قبل 25 متر)",
                 "⚠️",
-                "يُطلق عند الاقتراب المباشر بمسافة 25م للتنبيه الصوتي الفوري."
+                "يُطلق عند الاقتراب المباشر بمسافة 25م للتنبيه الصوتي الحاسم."
             ),
             SoundCategoryDef(
                 AlertSoundPlayer.KEY_SOUND_ENGINE_HEAT,
@@ -1072,25 +1015,19 @@ class MainActivity : Activity() {
                 AlertSoundPlayer.KEY_SOUND_DTC_ERROR,
                 "أكواد أعطال كمبيوتر السيارة (Check Engine / DTC)",
                 "🔍",
-                "تنبيه فحص إلكتروني فور ظهور كود عطل في كمبيوتر المحرك."
+                "تنبيه فحص إلكتروني فور رصد كود عطل في كمبيوتر المحرك."
             ),
             SoundCategoryDef(
                 AlertSoundPlayer.KEY_SOUND_BATTERY,
                 "انخفاض جهد البطارية والشحن (الدينامو)",
                 "🔋",
-                "تنبيه عند هبوط جهد البطارية أثناء التشغيل عن 12.0 فولت."
+                "تنبيه عند هبوط جهد البطارية أثناء عمل المحرك عن 11.9 فولت (مفلتر ضد هبوط بدء التشغيل)."
             ),
             SoundCategoryDef(
                 AlertSoundPlayer.KEY_SOUND_OIL_MAINT,
                 "تذكير موعد الصيانة الدورية وغيار الزيت",
                 "🛢️",
                 "تذكير صيانة هادئ عند اقتراب انتهاء الكيلومترات المحددة للزيت."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_SPEED_LIMIT,
-                "تنبيه تجاوز السرعة القانونية للطريق",
-                "⚡",
-                "تنبيه فوري عند تخطي حد السرعة المسموح للطريق."
             )
         )
 
@@ -1098,9 +1035,74 @@ class MainActivity : Activity() {
             val catCard = card().apply {
                 addView(text("${cat.icon} ${cat.title}", 14, Color.rgb(255, 200, 100), true))
                 addView(text(cat.description, 11, Color.rgb(160, 195, 220), false).apply {
-                    setPadding(0, dp(2), 0, dp(8))
+                    setPadding(0, dp(2), 0, dp(6))
                 })
 
+                // 1. Volume Control Bar
+                val volContainer = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    setBackgroundColor(Color.rgb(11, 26, 40))
+                    val vlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    vlp.bottomMargin = dp(10)
+                    layoutParams = vlp
+                }
+
+                fun renderVolumeBar() {
+                    volContainer.removeAllViews()
+                    val curVol = alertSoundPlayer.getCategoryVolume(cat.key)
+                    val pct = (curVol * 100).toInt()
+
+                    val volLabel = text("🔊 شدة ومستوى الصوت لهذا التحذير: ${if (pct == 0) "مكتوم 🔇" else "$pct%"}", 12, Color.rgb(110, 231, 255), true)
+                    volContainer.addView(volLabel)
+
+                    val volButtonsRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+                        rlp.topMargin = dp(6)
+                        layoutParams = rlp
+                    }
+
+                    val levels = listOf(
+                        Pair(0.0f, "🔇 كتم"),
+                        Pair(0.25f, "25%"),
+                        Pair(0.50f, "50%"),
+                        Pair(0.75f, "75%"),
+                        Pair(1.0f, "100%")
+                    )
+
+                    for ((volVal, volName) in levels) {
+                        val isCurrent = Math.abs(curVol - volVal) < 0.08f
+                        val btnVol = Button(this@MainActivity).apply {
+                            text = if (isCurrent) "$volName ✓" else volName
+                            textSize = 10f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(if (isCurrent) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245))
+                            setBackgroundColor(if (isCurrent) Color.rgb(80, 227, 194) else Color.rgb(24, 48, 72))
+                            val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                            blp.setMargins(dp(2), 0, dp(2), 0)
+                            layoutParams = blp
+                            setOnClickListener {
+                                alertSoundPlayer.setCategoryVolume(cat.key, volVal)
+                                renderVolumeBar()
+                                if (volVal > 0.05f) {
+                                    val opt = alertSoundPlayer.getOptionsForCategory(cat.key).firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(cat.key) }
+                                    if (opt != null) {
+                                        alertSoundPlayer.playRawSound(opt.resId, volVal)
+                                    }
+                                }
+                                Toast.makeText(this@MainActivity, "شدة صوت ${cat.title}: $volName", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        volButtonsRow.addView(btnVol)
+                    }
+                    volContainer.addView(volButtonsRow)
+                }
+
+                renderVolumeBar()
+                addView(volContainer)
+
+                // 2. Sound & Tone Options Container
                 val options = alertSoundPlayer.getOptionsForCategory(cat.key)
 
                 val optionsContainer = LinearLayout(this@MainActivity).apply {
@@ -1160,7 +1162,8 @@ class MainActivity : Activity() {
                                     lpBtn.leftMargin = dp(4)
                                     layoutParams = lpBtn
                                     setOnClickListener {
-                                        alertSoundPlayer.playRawSound(opt.resId)
+                                        val vol = alertSoundPlayer.getCategoryVolume(cat.key)
+                                        alertSoundPlayer.playRawSound(opt.resId, if (vol <= 0.02f) 1.0f else vol)
                                     }
                                 }
                                 addView(btnListen)
@@ -9564,6 +9567,25 @@ class MainActivity : Activity() {
             "maint" -> updateMaintenanceTabLiveUI()
         }
 
+        // Engine state transition & Cranking Voltage Dip Filter
+        val isEngineCurrentlyRunning = (telemetry.rpm >= 500)
+        val nowMs = System.currentTimeMillis()
+
+        if (isEngineCurrentlyRunning && !wasEngineRunning) {
+            // Engine was just started (New Trip / Ignition started)!
+            wasEngineRunning = true
+            engineRunningStartTimeMs = nowMs
+            lowBatterySustainedCount = 0
+
+            // Clear dismissed alerts for the new trip so driver is notified fresh if problem persists
+            permanentlyDismissedAlerts.clear()
+            snoozedAlertsMap.clear()
+        } else if (!isEngineCurrentlyRunning && wasEngineRunning) {
+            // Engine was shut down / turned off
+            wasEngineRunning = false
+            lowBatterySustainedCount = 0
+        }
+
         // Automatic Safety Alerts & Warning Banner Check
         if (!isSimulatingAlert) {
             val oilTarget = preferences.getFloat("oil_target_km", 5000.0f)
@@ -9605,14 +9627,22 @@ class MainActivity : Activity() {
                     desc,
                     critical = (diag.severity.contains("حرجة"))
                 )
-            } else if (telemetry.batteryVoltage in 0.1f..11.9f) {
-                setSafetyAlert(
-                    "battery_low",
-                    "🔋 تنبيه: شحن البطارية / الدينامو منخفض (${String.format("%.1f", telemetry.batteryVoltage)}V)",
-                    "جهد الشحن أقل من 12.0 فولت أثناء التشغيل. يرجى فحص الدينامو وحزام السير.",
-                    critical = false
-                )
+            } else if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs >= 8000L) && telemetry.batteryVoltage in 0.1f..11.8f) {
+                // High Precision Rule: Starter motor cranking naturally dips voltage!
+                // Only alert if engine has been running steadily for >= 8 seconds and voltage stays below 11.9V
+                lowBatterySustainedCount++
+                if (lowBatterySustainedCount >= 3) {
+                    setSafetyAlert(
+                        "battery_low",
+                        "🔋 تنبيه: شحن البطارية / الدينامو منخفض (${String.format("%.1f", telemetry.batteryVoltage)}V)",
+                        "جهد الشحن أقل من 12.0 فولت أثناء تشغيل المحرك. يرجى فحص الدينامو وحزام السير.",
+                        critical = false
+                    )
+                }
             } else {
+                if (telemetry.batteryVoltage >= 12.0f) {
+                    lowBatterySustainedCount = 0
+                }
                 if (telemetry.activeAlertTitle != null && !isSimulatingAlert) {
                     telemetry.activeAlertTitle = null
                     cancelSystemSafetyNotification()
