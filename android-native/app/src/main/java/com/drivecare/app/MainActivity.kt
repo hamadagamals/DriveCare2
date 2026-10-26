@@ -142,6 +142,7 @@ class MainActivity : Activity() {
     private var currentRole: String = "owner" // "owner", "driver", "garage"
     private var activeTab: String = "home" // "home", "gauges", "vehicles", "scanner", "fuel", "maint", "remote_fleet", "owner_security", "workshops_dir", "workshop_console", "log_service", "more"
     private var selectedPredictiveFilter: String = "30d"
+    private var activePredictiveSubTab: String = "fuel"
     private var activeSubScreen: String? = null // When null, displays the sleek 3x3 Home Grid Dashboard matching the reference design
     private var currentNavTab: String = "home" // "home", "scanner", "gauges", "reports", "more"
 
@@ -1782,12 +1783,12 @@ class MainActivity : Activity() {
             "owner" -> listOf(
                 ServiceCard("فحص وحذف الأعطال", "قراءة أكواد الكمبيوتر ومسحها", "🔍", "scanner"),
                 ServiceCard("البيانات والحساسات", "السرعة والحرارة والشحن الحية", "📊", "gauges"),
+                ServiceCard("التحليل التنبؤي وتوقع الأعطال", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
                 ServiceCard("أسطول سياراتي", "إدارة وتفويض السائقين بالهاتف", "🚗", "owner_fleet"),
                 ServiceCard("المراقبة والتتبع", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
                 ServiceCard("أمان وتصاريح الورش", "طلبات الفحص والطرد الفوري", "🚨", "owner_security"),
                 ServiceCard("ملكية الشاسيه", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
-                ServiceCard("التحليل التنبؤي وصحة السيارة", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
-                ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
                 ServiceCard("جدول الصيانة", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
             )
             "driver" -> listOf(
@@ -5290,9 +5291,10 @@ class MainActivity : Activity() {
         val heatAnomalyCount = filteredSnapshots.count { it.hasHeatAnomaly }
         val crankAnomalyCount = filteredSnapshots.count { it.hasCrankAnomaly }
         val fuelAnomalyCount = filteredSnapshots.count { it.hasFuelAnomaly }
+        val totalAnomalies = heatAnomalyCount + crankAnomalyCount + fuelAnomalyCount
 
         // ----------------------------------------------------
-        // CARD 1: VEHICLE BASELINE & TIME FILTER SELECTOR
+        // CARD 1: VEHICLE BASELINE & PERIOD FILTER (COMPACT)
         // ----------------------------------------------------
         val headerCard = card().apply {
             setBackgroundColor(Color.rgb(13, 29, 45))
@@ -5304,7 +5306,7 @@ class MainActivity : Activity() {
             val filterRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val flp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                flp.topMargin = dp(10)
+                flp.topMargin = dp(8)
                 flp.bottomMargin = dp(6)
                 layoutParams = flp
             }
@@ -5324,7 +5326,7 @@ class MainActivity : Activity() {
                     typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                     setTextColor(if (isSelected) Color.rgb(5, 18, 28) else Color.rgb(180, 215, 240))
                     setBackgroundColor(if (isSelected) Color.rgb(0, 229, 255) else Color.rgb(20, 48, 70))
-                    val blp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                    val blp = LinearLayout.LayoutParams(0, dp(34), 1f)
                     blp.setMargins(dp(2), 0, dp(2), 0)
                     layoutParams = blp
                     setOnClickListener {
@@ -5334,6 +5336,43 @@ class MainActivity : Activity() {
                 })
             }
             addView(filterRow)
+
+            // Pulse Strip in 1 row: Today Fuel | Starter | Anomalies
+            val pulseRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val plp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                plp.topMargin = dp(4)
+                plp.bottomMargin = dp(4)
+                layoutParams = plp
+            }
+
+            fun addPulseItem(title: String, value: String, sub: String, color: Int) {
+                val pBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(19, 42, 65))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+
+                    addView(text(title, 10, Color.rgb(170, 205, 230), false))
+                    addView(text(value, 12, color, true))
+                    addView(text(sub, 9, Color.rgb(180, 210, 230), false))
+                }
+                pulseRow.addView(pBox)
+            }
+
+            val fuelColor = if (todaySnapshot.avgFuelRateL100km > activeVeh.baseRate * 1.10f) Color.rgb(255, 152, 0) else Color.rgb(76, 217, 100)
+            val deltaSign = if (todaySnapshot.fuelRateDeltaPercent > 0) "+${todaySnapshot.fuelRateDeltaPercent}%" else "${todaySnapshot.fuelRateDeltaPercent}%"
+            addPulseItem("⛽ استهلاك اليوم", "${todaySnapshot.avgFuelRateL100km} L", deltaSign, fuelColor)
+
+            val crankColor = if (todaySnapshot.minCrankVoltage >= 9.6f) Color.rgb(76, 217, 100) else Color.rgb(255, 82, 82)
+            addPulseItem("⚡ سحب المرش", "${todaySnapshot.minCrankVoltage} V", "${todaySnapshot.estCrankAmps} A", crankColor)
+
+            val anomColor = if (totalAnomalies > 0) Color.rgb(255, 171, 0) else Color.rgb(76, 217, 100)
+            addPulseItem("🚨 الشذوذ المرصود", "${totalAnomalies} أيام", "طوال الفترة", anomColor)
+
+            addView(pulseRow)
 
             // Action Buttons (Take Today Snapshot / Manual Entry)
             val btnRow = LinearLayout(this@MainActivity).apply {
@@ -5345,11 +5384,11 @@ class MainActivity : Activity() {
 
             btnRow.addView(Button(this@MainActivity).apply {
                 text = "📸 أخذ لقطة اليوم الآن"
-                textSize = 12f
+                textSize = 11f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.rgb(18, 110, 75))
-                val blp = LinearLayout.LayoutParams(0, dp(42), 1.2f)
+                val blp = LinearLayout.LayoutParams(0, dp(38), 1.2f)
                 blp.leftMargin = dp(4)
                 layoutParams = blp
                 setOnClickListener {
@@ -5360,400 +5399,485 @@ class MainActivity : Activity() {
             })
 
             btnRow.addView(Button(this@MainActivity).apply {
-                text = "✏️ إدخال يدوي"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.rgb(240, 245, 250))
-                setBackgroundColor(Color.rgb(28, 55, 82))
-                val blp = LinearLayout.LayoutParams(0, dp(42), 0.9f)
+                text = "⚙️ إدخال يدوي"
+                textSize = 11f
+                setTextColor(Color.rgb(200, 230, 255))
+                setBackgroundColor(Color.rgb(24, 52, 76))
+                val blp = LinearLayout.LayoutParams(0, dp(38), 0.9f)
                 layoutParams = blp
                 setOnClickListener {
                     showManualSnapshotDialog(vehicleId)
                 }
             })
-
             addView(btnRow)
         }
         container.addView(headerCard)
 
         // ----------------------------------------------------
-        // CARD 2: FUEL CONSUMPTION RATE OF CHANGE & TREND
-        // (معدل استهلاك البنزين وتغيره الدوري مع الفابريكا)
+        // HORIZONTAL NAVIGATION BAR (5 SUB-TABS)
         // ----------------------------------------------------
-        val fuelCard = card().apply {
-            setBackgroundColor(Color.rgb(14, 31, 49))
-
-            addView(text("⛽ معدل استهلاك البنزين ومعدل التغير الدوري (Rate of Change)", 14, Color.rgb(248, 199, 74), true))
-            addView(text("مقارنة استهلاك اليوم بمتوسط الفترة والمعدل القياسي لحساب نسبة الانحراف بدقة:", 11, Color.rgb(170, 205, 230), false))
-
-            // 4 KPI Grid
-            val kpiRow1 = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.topMargin = dp(10)
-                layoutParams = rlp
-            }
-
-            // Metric 1: Today Rate
-            kpiRow1.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.leftMargin = dp(4)
-                layoutParams = lp
-
-                addView(text("استهلاك اليوم", 11, Color.rgb(160, 200, 230), false))
-                addView(text("${todaySnapshot.avgFuelRateL100km} لتر", 18, Color.WHITE, true))
-                addView(text("لكل 100 كم", 10, Color.rgb(140, 180, 210), false))
-            })
-
-            // Metric 2: Baseline
-            kpiRow1.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-
-                addView(text("معدل الفابريكا المرجعي", 11, Color.rgb(160, 200, 230), false))
-                addView(text("${todaySnapshot.baselineL100km} لتر", 18, Color.rgb(0, 229, 255), true))
-                addView(text("لكل 100 كم", 10, Color.rgb(140, 180, 210), false))
-            })
-            addView(kpiRow1)
-
-            val kpiRow2 = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.topMargin = dp(6)
-                layoutParams = rlp
-            }
-
-            // Metric 3: Delta %
-            val delta = todaySnapshot.fuelRateDeltaPercent
-            val deltaColor = if (delta > 20f) Color.rgb(255, 95, 95) else if (delta > 8f) Color.rgb(250, 180, 50) else Color.rgb(120, 235, 160)
-            val deltaArrow = if (delta > 0) "🔺 +$delta%" else "$delta%"
-
-            kpiRow2.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.leftMargin = dp(4)
-                layoutParams = lp
-
-                addView(text("معدل التغير اليومي (Δ%)", 11, Color.rgb(160, 200, 230), false))
-                addView(text(deltaArrow, 17, deltaColor, true))
-                addView(text(if (delta > 15f) "زيادة ملحوظة فوق الطبيعي" else "ضمن النطاق المسموح", 10, deltaColor, false))
-            })
-
-            // Metric 4: Period Average
-            kpiRow2.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-
-                addView(text("متوسط الفترة ($selectedPredictiveFilter)", 11, Color.rgb(160, 200, 230), false))
-                addView(text("$periodAvgFuel لتر", 18, Color.WHITE, true))
-                addView(text("لكل 100 كم (${filteredSnapshots.size} لقطة)", 10, Color.rgb(140, 180, 210), false))
-            })
-            addView(kpiRow2)
-
-            // Combustion & Fuel System Engineering Diagnosis
-            val diagBox = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(24, 48, 72))
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(10)
-                layoutParams = lp
-
-                addView(text("🔍 التشخيص الهندسي لسبب زيادة الاستهلاك (+${delta}%):", 12, Color.rgb(250, 210, 80), true))
-                addView(text("• الاحتمال الأول: اتساخ أو تسييل في رشاشات الوقود (Injectors) مما يقلل ذرات الرذاذ ويزيد الوقود غير المحترق.\n• الاحتمال الثاني: تباطؤ استجابة حساس الشكمان الأول (Lazy O2 Sensor) فيقرأ الكمبيوتر أن الخليط فقير ويأمر بحقن بنزين إضافي.\n• الاحتمال الثالث: اتساخ فلتر الهواء أو بوابة الثروتل مسبباً مقاومة في سحب الهواء.\n• الاحتمال الرابع: تآكل خلوص البوجيهات وضعف شرارة الاشتعال.", 11, Color.rgb(220, 235, 248), false))
-            }
-            addView(diagBox)
+        val navScroll = HorizontalScrollView(this).apply {
+            isFillViewport = true
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = dp(8)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
         }
-        container.addView(fuelCard)
 
-        // ----------------------------------------------------
-        // CARD 3: STARTER MOTOR HEALTH & CRANKING DRAW
-        // (أمبير سحب المرش وهبوط الجهد وزمن التدوير)
-        // ----------------------------------------------------
-        val starterCard = card().apply {
-            setBackgroundColor(Color.rgb(14, 31, 49))
-
-            addView(text("⚡ صحة وسحب محرك المرش (Starter Motor & Cranking Health)", 14, Color.rgb(0, 229, 255), true))
-
-            // Engineering Note Box
-            val noteBox = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(16, 42, 64))
-                setPadding(dp(10), dp(8), dp(10), dp(8))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
-                lp.bottomMargin = dp(8)
-                layoutParams = lp
-
-                addView(text("💡 حقيقة هندسية دقيقة حول أمبير المرش:", 12, Color.rgb(248, 199, 74), true))
-                addView(text("محرك المرش يستهلك تياراً ضخماً يتراوح بين 80 إلى 200+ أمبير عند التدوير (وليس 10 أمبير). لا تضع سيارات الركوب حساس أمبيرمتر مباشر على كابل المرش، ولكن كمبيوتر السيارة يقيس بدقة فائقة هبوط جهد البطارية أثناء التدوير (Cranking Voltage Dip) وزمن اللفة، ومنه نشتق تيار السحب بالأمبير لتوقع عطل المرش قبل أن يتوقف تماماً.", 11, Color.rgb(205, 230, 250), false))
-            }
-            addView(noteBox)
-
-            // Starter Metrics Row
-            val starterRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.topMargin = dp(4)
-                layoutParams = rlp
-            }
-
-            // Metric 1: Min Voltage
-            val volt = todaySnapshot.minCrankVoltage
-            val voltColor = if (volt >= 10.0f) Color.rgb(120, 240, 160) else if (volt >= 9.4f) Color.rgb(250, 185, 60) else Color.rgb(255, 95, 95)
-            val voltStatus = if (volt >= 10.0f) "ممتاز وطبيعي" else if (volt >= 9.4f) "بداية هبوط جهد" else "جهد ضعيف جداً"
-
-            starterRow.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.leftMargin = dp(4)
-                layoutParams = lp
-
-                addView(text("أدنى فولت عند التدوير", 10, Color.rgb(160, 200, 230), false))
-                addView(text("${volt} V", 17, voltColor, true))
-                addView(text(voltStatus, 10, voltColor, false))
-            })
-
-            // Metric 2: Estimated Amps
-            val amps = todaySnapshot.estCrankAmps
-            val ampsColor = if (amps <= 140) Color.rgb(120, 240, 160) else if (amps <= 165) Color.rgb(250, 185, 60) else Color.rgb(255, 95, 95)
-
-            starterRow.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                lp.leftMargin = dp(4)
-                layoutParams = lp
-
-                addView(text("سحب المرش التقديري", 10, Color.rgb(160, 200, 230), false))
-                addView(text("~$amps A", 17, ampsColor, true))
-                addView(text("المعدل: 90 - 140A", 10, Color.rgb(140, 180, 210), false))
-            })
-
-            // Metric 3: Crank Duration
-            val dur = todaySnapshot.crankDurationSec
-            starterRow.addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(20, 44, 68))
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-
-                addView(text("مدة تدوير المارش", 10, Color.rgb(160, 200, 230), false))
-                addView(text("${dur} ثانية", 17, Color.WHITE, true))
-                addView(text(if (dur <= 1.2f) "تدوير سريع وسلس" else "تدوير بطيء ومجهد", 10, if (dur <= 1.2f) Color.rgb(120, 240, 160) else Color.rgb(250, 185, 60), false))
-            })
-            addView(starterRow)
-
-            // Verdict
-            addView(text(
-                if (volt >= 10.0f) "✅ تقييم المرش والبطارية: جهد التدوير وسحب التيار طبيعيان. بلي وشربون المرش وخلايا البطارية بحالة ممتازة."
-                else "⚠️ مؤشر تنبؤي: بدأ المرش يسجل سحب تيار مرتفع وهبوط في الفولت. يُنصح بفحص كابلات البطارية والشربون قبل حدوث عطل مفاجئ.",
-                11, if (volt >= 10.0f) Color.rgb(120, 240, 160) else Color.rgb(250, 185, 60), true
-            ).apply { setPadding(0, dp(8), 0, 0) })
+        val navRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
-        container.addView(starterCard)
 
-        // ----------------------------------------------------
-        // CARD 4: ABNORMAL DAYS & SENSOR SPIKES CALENDAR
-        // (سجل الأيام التي رفعت فيها الحرارة أو حدثت قراءات شاذة)
-        // ----------------------------------------------------
-        val anomalyCard = card().apply {
-            setBackgroundColor(Color.rgb(14, 31, 49))
+        val subTabs = listOf(
+            Pair("fuel", "⛽ استهلاك الوقود"),
+            Pair("chart", "📊 الرسم البياني"),
+            Pair("starter", "⚡ سحب المرش"),
+            Pair("anomalies", "🚨 الأيام الشاذة (${totalAnomalies})"),
+            Pair("proposals", "💡 تقارير مقترحة")
+        )
 
-            addView(text("🚨 سجل الأيام ذات القراءات الشاذة (حرارة / مرش / بنزين)", 14, Color.rgb(255, 120, 120), true))
-            addView(text("الأيام التي سجلت فيها الحساسات سلوكاً خارج الحدود الطبيعية خلال هذه الفترة:", 11, Color.rgb(180, 210, 230), false))
-
-            // Anomaly counters bar
-            val counterRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.topMargin = dp(8)
-                rlp.bottomMargin = dp(8)
-                layoutParams = rlp
-            }
-
-            counterRow.addView(text("🔥 حرارة مرتفعة: $heatAnomalyCount يوم", 11, if (heatAnomalyCount > 0) Color.rgb(255, 120, 120) else Color.rgb(140, 190, 220), true).apply {
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-            })
-            counterRow.addView(text("⚡ هبوط تدوير: $crankAnomalyCount يوم", 11, if (crankAnomalyCount > 0) Color.rgb(250, 190, 60) else Color.rgb(140, 190, 220), true).apply {
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-            })
-            counterRow.addView(text("⛽ قفزات وقود: $fuelAnomalyCount يوم", 11, if (fuelAnomalyCount > 0) Color.rgb(248, 199, 74) else Color.rgb(140, 190, 220), true).apply {
-                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                layoutParams = lp
-            })
-            addView(counterRow)
-
-            val anomalousItems = filteredSnapshots.filter { it.hasHeatAnomaly || it.hasCrankAnomaly || it.hasFuelAnomaly }
-            if (anomalousItems.isEmpty()) {
-                addView(text("✅ لم تُسجل أي قراءات شاذة أو ارتفاع في درجات الحرارة خلال هذه الفترة.", 12, Color.rgb(120, 240, 160), false))
-            } else {
-                anomalousItems.forEach { item ->
-                    val itemBox = LinearLayout(this@MainActivity).apply {
-                        orientation = LinearLayout.VERTICAL
-                        setBackgroundColor(Color.rgb(26, 44, 64))
-                        setPadding(dp(10), dp(8), dp(10), dp(8))
-                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                        lp.bottomMargin = dp(6)
-                        layoutParams = lp
-
-                        // Header: Date + Badges
-                        val topRow = LinearLayout(this@MainActivity).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                        }
-                        topRow.addView(text("📅 ${item.date}", 12, Color.WHITE, true).apply {
-                            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                        })
-
-                        if (item.hasHeatAnomaly) {
-                            topRow.addView(text("🔥 حرارة ${item.maxCoolantTemp}°م", 10, Color.rgb(255, 100, 100), true).apply {
-                                setBackgroundColor(Color.rgb(55, 20, 25))
-                                setPadding(dp(6), dp(2), dp(6), dp(2))
-                            })
-                        }
-                        if (item.hasCrankAnomaly) {
-                            topRow.addView(text("⚡ هبوط ${item.minCrankVoltage}V", 10, Color.rgb(250, 185, 60), true).apply {
-                                setBackgroundColor(Color.rgb(55, 45, 15))
-                                setPadding(dp(6), dp(2), dp(6), dp(2))
-                            })
-                        }
-                        if (item.hasFuelAnomaly) {
-                            topRow.addView(text("⛽ استهلاك ${item.avgFuelRateL100km}L", 10, Color.rgb(248, 199, 74), true).apply {
-                                setBackgroundColor(Color.rgb(50, 40, 15))
-                                setPadding(dp(6), dp(2), dp(6), dp(2))
-                            })
-                        }
-                        addView(topRow)
-
-                        // Note text
-                        if (item.notes.isNotEmpty()) {
-                            addView(text("• التفسير: ${item.notes}", 11, Color.rgb(205, 230, 250), false))
-                        }
-                    }
-                    addView(itemBox)
+        subTabs.forEach { tab ->
+            val isSelected = activePredictiveSubTab == tab.first
+            navRow.addView(Button(this).apply {
+                text = tab.second
+                textSize = 11f
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (isSelected) Color.rgb(5, 18, 28) else Color.rgb(180, 215, 240))
+                setBackgroundColor(if (isSelected) Color.rgb(0, 229, 255) else Color.rgb(20, 48, 70))
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+                blp.setMargins(dp(3), 0, dp(3), 0)
+                layoutParams = blp
+                setOnClickListener {
+                    activePredictiveSubTab = tab.first
+                    renderCurrentScreen()
                 }
-            }
+            })
         }
-        container.addView(anomalyCard)
+        navScroll.addView(navRow)
+        container.addView(navScroll)
 
         // ----------------------------------------------------
-        // CARD 5: RECENT DAILY SNAPSHOTS HISTORY TABLE
-        // (جدول لقطات الأيام الأخيرة)
+        // RENDER ONLY THE ACTIVE SUB-TAB (CLEAN & COMPACT)
         // ----------------------------------------------------
-        val historyCard = card().apply {
+        val subView: View = when (activePredictiveSubTab) {
+            "fuel" -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
+            "chart" -> buildPredictiveChartSubTab(activeVeh, filteredSnapshots)
+            "starter" -> buildPredictiveStarterSubTab(todaySnapshot, filteredSnapshots)
+            "anomalies" -> buildPredictiveAnomaliesSubTab(filteredSnapshots, heatAnomalyCount, crankAnomalyCount, fuelAnomalyCount)
+            "proposals" -> buildPredictiveProposalsSubTab()
+            else -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
+        }
+        container.addView(subView)
+
+        return container
+    }
+
+    private fun buildPredictiveFuelSubTab(
+        activeVeh: OwnerVehicle,
+        todaySnapshot: DailyVehicleSnapshot,
+        periodAvgFuel: Double,
+        filteredSnapshots: List<DailyVehicleSnapshot>
+    ): View {
+        val fuelCard = card().apply {
             setBackgroundColor(Color.rgb(13, 29, 45))
 
-            addView(text("📋 سجل لقطات الأداء اليومية (${filteredSnapshots.size} لقطة محفوظة)", 14, Color.WHITE, true))
-            addView(text("يتم الاحتفاظ بلقطة يومية تراكمية لكل يوم (حتى 365 قراءة بالسنة) لقياس معدل التغير:", 11, Color.rgb(170, 200, 225), false))
+            addView(text("⛽ تحليل استهلاك الوقود ومعدل التغير اليومي", 14, Color.WHITE, true))
+            addView(text("• مقارنة الاستهلاك الفعلي بالمعدل القياسي لحساب نسبة الانحراف بدقة:", 11, Color.rgb(170, 205, 230), false))
 
-            // Table Header
-            val tableHead = LinearLayout(this@MainActivity).apply {
+            // 3 KPI Chips Row
+            val kpiRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setBackgroundColor(Color.rgb(18, 44, 68))
-                setPadding(dp(6), dp(6), dp(6), dp(6))
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(8)
+                lp.bottomMargin = dp(8)
                 layoutParams = lp
             }
 
-            tableHead.addView(text("التاريخ", 10, Color.rgb(0, 229, 255), true).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
-            })
-            tableHead.addView(text("الاستهلاك", 10, Color.rgb(0, 229, 255), true).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f)
-            })
-            tableHead.addView(text("التغير Δ", 10, Color.rgb(0, 229, 255), true).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
-            })
-            tableHead.addView(text("الحرارة", 10, Color.rgb(0, 229, 255), true).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
-            })
-            tableHead.addView(text("المرش", 10, Color.rgb(0, 229, 255), true).apply {
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
-            })
-            addView(tableHead)
+            fun addKpi(title: String, valText: String, sub: String, color: Int) {
+                val box = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(20, 45, 68))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                    val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    blp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = blp
 
-            // Table Rows
-            filteredSnapshots.take(15).forEachIndexed { index, snap ->
+                    addView(text(title, 10, Color.rgb(170, 205, 230), false))
+                    addView(text(valText, 13, color, true))
+                    addView(text(sub, 9, Color.rgb(190, 220, 240), false))
+                }
+                kpiRow.addView(box)
+            }
+
+            val deltaSign = if (todaySnapshot.fuelRateDeltaPercent > 0) "+${todaySnapshot.fuelRateDeltaPercent}%" else "${todaySnapshot.fuelRateDeltaPercent}%"
+            val fuelColor = if (todaySnapshot.avgFuelRateL100km > activeVeh.baseRate * 1.10f) Color.rgb(255, 152, 0) else Color.rgb(76, 217, 100)
+            addKpi("استهلاك اليوم", "${todaySnapshot.avgFuelRateL100km} L", deltaSign, fuelColor)
+            addKpi("متوسط الفترة", "$periodAvgFuel L", "معدل تشغيل فعلي", Color.rgb(0, 229, 255))
+            addKpi("معدل الفابريكا", "${activeVeh.baseRate} L", "لكل 100 كم", Color.rgb(160, 205, 235))
+            addView(kpiRow)
+
+            // التفسير العلمي المشروط: يظهر فقط إذا كان هناك مشكلة / انحراف أعلى من 10%
+            if (todaySnapshot.avgFuelRateL100km > activeVeh.baseRate * 1.10f) {
+                val diagBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(48, 28, 12))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    dlp.topMargin = dp(6)
+                    dlp.bottomMargin = dp(8)
+                    layoutParams = dlp
+
+                    addView(text("⚠️ تنبيه هندسي: استهلاك الوقود أعلى من الفابريكا بنسبة +${todaySnapshot.fuelRateDeltaPercent}%", 12, Color.rgb(255, 183, 77), true))
+                    addView(text("التفسير العلمي والأسباب المرجحة بالترتيب:\n1. اتساخ حساس تدفق الهواء (MAF / MAP) أو ترسب الكربون في البوابة (Throttle Body).\n2. كسل في قراءات حساس الشكمان (O2 Sensor) يرفع تصحيح الوقود LTFT.\n3. انسداد جزئي في فلتر الهواء أو تلف شمعات الاحتراق (البوجيهات).\n4. انخفاض ضغط الإطارات أو قيادة متكررة في زحام خانق.", 11, Color.rgb(240, 220, 200), false))
+                }
+                addView(diagBox)
+            } else {
+                val normalBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setBackgroundColor(Color.rgb(14, 45, 32))
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    val nlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    nlp.topMargin = dp(6)
+                    nlp.bottomMargin = dp(8)
+                    layoutParams = nlp
+
+                    addView(text("✅ معدل الاستهلاك طبيعي ومطابق لمعدل الفابريكا. منظومة سحب الهواء والحقن تعمل بكفاءة.", 11, Color.rgb(100, 235, 160), false))
+                }
+                addView(normalBox)
+            }
+
+            // Recent 5 Days Snapshots Mini-List
+            addView(text("سجل الأيام الأخيرة (لتر/100كم):", 12, Color.rgb(190, 225, 250), true))
+            val recentDays = filteredSnapshots.take(5)
+            recentDays.forEach { s ->
                 val row = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.HORIZONTAL
-                    setBackgroundColor(if (index % 2 == 0) Color.rgb(15, 34, 52) else Color.rgb(12, 28, 44))
-                    setPadding(dp(6), dp(6), dp(6), dp(6))
-                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    layoutParams = lp
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    rlp.topMargin = dp(4)
+                    layoutParams = rlp
+                    setBackgroundColor(Color.rgb(18, 38, 58))
                 }
-
-                // Date
-                row.addView(text(snap.date.substringAfter("/"), 10, Color.WHITE, false).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                row.addView(text("📅 ${s.date}", 11, Color.WHITE, false).apply {
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                    layoutParams = lp
                 })
-
-                // Fuel
-                row.addView(text("${snap.avgFuelRateL100km}L", 10, if (snap.hasFuelAnomaly) Color.rgb(255, 120, 120) else Color.rgb(220, 235, 245), snap.hasFuelAnomaly).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f)
+                row.addView(text("${s.avgFuelRateL100km} لتر", 11, Color.rgb(0, 229, 255), true).apply {
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = lp
                 })
-
-                // Delta
-                val dSign = if (snap.fuelRateDeltaPercent > 0) "+${snap.fuelRateDeltaPercent}%" else "${snap.fuelRateDeltaPercent}%"
-                row.addView(text(dSign, 10, if (snap.fuelRateDeltaPercent > 15f) Color.rgb(255, 120, 120) else Color.rgb(140, 220, 170), false).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0f)
+                val sDelta = if (s.fuelRateDeltaPercent > 0) "+${s.fuelRateDeltaPercent}%" else "${s.fuelRateDeltaPercent}%"
+                val sColor = if (s.hasFuelAnomaly) Color.rgb(255, 140, 140) else Color.rgb(140, 230, 170)
+                row.addView(text(sDelta, 11, sColor, true).apply {
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = lp
                 })
-
-                // Temp
-                row.addView(text("${snap.maxCoolantTemp}°م", 10, if (snap.hasHeatAnomaly) Color.rgb(255, 95, 95) else Color.rgb(200, 225, 245), snap.hasHeatAnomaly).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
-                })
-
-                // Crank
-                row.addView(text("${snap.minCrankVoltage}V", 10, if (snap.hasCrankAnomaly) Color.rgb(250, 185, 60) else Color.rgb(200, 225, 245), snap.hasCrankAnomaly).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.9f)
-                })
-
                 addView(row)
             }
         }
-        container.addView(historyCard)
+        return fuelCard
+    }
 
-        // ----------------------------------------------------
-        // CARD 6: PROPOSED PREDICTIVE DIAGNOSTIC REPORTS
-        // (اقتراحات تقارير تشخيصية لتوقع الأعطال قبل حدوثها)
-        // ----------------------------------------------------
+    private fun buildPredictiveChartSubTab(
+        activeVeh: OwnerVehicle,
+        filteredSnapshots: List<DailyVehicleSnapshot>
+    ): View {
+        val chartCard = card().apply {
+            setBackgroundColor(Color.rgb(13, 29, 45))
+
+            addView(text("📊 الرسم البياني لاستهلاك الوقود (آخر 10 قراءات)", 14, Color.WHITE, true))
+            addView(text("• الخط المرجعي للفابريكا: ${activeVeh.baseRate} لتر لكل 100 كم", 11, Color.rgb(0, 229, 255), false))
+
+            val chartDays = filteredSnapshots.take(10).reversed()
+            if (chartDays.isEmpty()) {
+                addView(text("لا توجد قراءات كافية لعرض الرسم البياني حالياً.", 12, Color.GRAY, false))
+                return@apply
+            }
+
+            // Legend
+            val legendRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                lp.bottomMargin = dp(10)
+                layoutParams = lp
+            }
+            legendRow.addView(text("🟢 فابريكا (≤8.5L)   🟡 متوسط (8.6-10.5L)   🔴 مرتفع (>10.5L)", 10, Color.rgb(170, 205, 230), false))
+            addView(legendRow)
+
+            // Bar Chart Area
+            val chartArea = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.BOTTOM
+                setBackgroundColor(Color.rgb(8, 20, 32))
+                setPadding(dp(6), dp(10), dp(6), dp(8))
+                val clp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(175))
+                clp.topMargin = dp(4)
+                clp.bottomMargin = dp(8)
+                layoutParams = clp
+            }
+
+            val maxScale = 14.0f // max chart value in L/100km
+            chartDays.forEach { sn ->
+                val col = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                    lp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = lp
+                }
+
+                // Value Label above bar
+                col.addView(TextView(this@MainActivity).apply {
+                    text = "${sn.avgFuelRateL100km}"
+                    textSize = 9f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(200, 235, 255))
+                    gravity = Gravity.CENTER
+                })
+
+                // Bar View
+                val clampedRate = sn.avgFuelRateL100km.coerceIn(1.0f, maxScale)
+                val barHeight = ((clampedRate / maxScale) * dp(115)).toInt().coerceAtLeast(dp(6))
+                val barColor = when {
+                    sn.avgFuelRateL100km <= 8.5f -> Color.rgb(46, 175, 125)
+                    sn.avgFuelRateL100km <= 10.5f -> Color.rgb(255, 183, 77)
+                    else -> Color.rgb(244, 67, 54)
+                }
+
+                col.addView(View(this@MainActivity).apply {
+                    val vlp = LinearLayout.LayoutParams(dp(16), barHeight)
+                    vlp.gravity = Gravity.CENTER_HORIZONTAL
+                    vlp.topMargin = dp(3)
+                    vlp.bottomMargin = dp(4)
+                    layoutParams = vlp
+                    setBackgroundColor(barColor)
+                })
+
+                // Date label below bar
+                val shortDate = if (sn.date.contains("/")) sn.date.substringAfterLast("/") else sn.date
+                col.addView(TextView(this@MainActivity).apply {
+                    text = shortDate
+                    textSize = 8f
+                    setTextColor(Color.rgb(150, 190, 220))
+                    gravity = Gravity.CENTER
+                })
+
+                chartArea.addView(col)
+            }
+            addView(chartArea)
+
+            // Statistics Summary below Chart
+            val minRate = chartDays.minOfOrNull { it.avgFuelRateL100km } ?: 0f
+            val maxRate = chartDays.maxOfOrNull { it.avgFuelRateL100km } ?: 0f
+            val avgRate = Math.round(chartDays.map { it.avgFuelRateL100km }.average() * 10.0) / 10.0
+
+            val statBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setBackgroundColor(Color.rgb(18, 42, 65))
+                setPadding(dp(8), dp(6), dp(8), dp(6))
+                val slp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                slp.topMargin = dp(4)
+                layoutParams = slp
+            }
+            statBox.addView(text("أدنى استهلاك: $minRate L  •  أعلى استهلاك: $maxRate L  •  المتوسط: $avgRate L", 10, Color.rgb(0, 229, 255), true))
+            addView(statBox)
+        }
+        return chartCard
+    }
+
+    private fun buildPredictiveStarterSubTab(
+        todaySnapshot: DailyVehicleSnapshot,
+        filteredSnapshots: List<DailyVehicleSnapshot>
+    ): View {
+        val starterCard = card().apply {
+            setBackgroundColor(Color.rgb(13, 29, 45))
+
+            addView(text("⚡ تحليل سحب المرش وصحة البطارية عند التدوير", 14, Color.WHITE, true))
+            addView(text("• قراءة هبوط الفولت الفوري وحساب أمبير الدوران التقديري:", 11, Color.rgb(170, 205, 230), false))
+
+            // 3 KPI Chips Row
+            val kpiRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+
+            fun addKpi(title: String, valText: String, sub: String, color: Int) {
+                val box = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(20, 45, 68))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                    val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    blp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = blp
+
+                    addView(text(title, 10, Color.rgb(170, 205, 230), false))
+                    addView(text(valText, 13, color, true))
+                    addView(text(sub, 9, Color.rgb(190, 220, 240), false))
+                }
+                kpiRow.addView(box)
+            }
+
+            val voltColor = if (todaySnapshot.minCrankVoltage >= 9.6f) Color.rgb(76, 217, 100) else Color.rgb(255, 82, 82)
+            addKpi("فولت التدوير", "${todaySnapshot.minCrankVoltage} V", "الحد الآمن ≥9.6V", voltColor)
+            val ampsColor = if (todaySnapshot.estCrankAmps <= 165) Color.rgb(0, 229, 255) else Color.rgb(255, 152, 0)
+            addKpi("أمبير السحب", "${todaySnapshot.estCrankAmps} A", "طبيعي 90-150A", ampsColor)
+            addKpi("حرارة المحرك", "${todaySnapshot.maxCoolantTemp}°C", "طبيعي 85-98°C", Color.rgb(160, 205, 235))
+            addView(kpiRow)
+
+            // التفسير العلمي المشروط: يظهر فقط في حالة هبوط الفولت عن 9.6V أو سحب أمبير زائد عن 165A
+            if (todaySnapshot.minCrankVoltage < 9.6f || todaySnapshot.estCrankAmps > 165) {
+                val diagBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(55, 18, 18))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val dlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    dlp.topMargin = dp(6)
+                    dlp.bottomMargin = dp(8)
+                    layoutParams = dlp
+
+                    addView(text("🚨 تحذير هندسي: هبوط حاد في فولت التدوير (${todaySnapshot.minCrankVoltage}V) أو سحب أمبير زائد", 12, Color.rgb(255, 110, 110), true))
+                    addView(text("التفسير الكهربائي والميكانيكي للأعطال المحتملة:\n1. ضعف كفاءة خلايا البطارية وارتفاع المقاومة الداخلية (High Internal Resistance).\n2. ثقل ميكانيكي في جلب المارش أو تآكل الشربون يسحب تياراً زائداً (${todaySnapshot.estCrankAmps}A).\n3. تأكسد أو ارتخاء في كابل الأرضي الرئيسي (Chassis Ground Strap) مما يسبب فقد في الجهد.", 11, Color.rgb(250, 215, 215), false))
+                }
+                addView(diagBox)
+            } else {
+                val normalBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setBackgroundColor(Color.rgb(14, 45, 32))
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    val nlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    nlp.topMargin = dp(6)
+                    nlp.bottomMargin = dp(8)
+                    layoutParams = nlp
+
+                    addView(text("✅ سحب المرش والبطارية في المدى الآمن والممتاز (لا يوجد ثقل ميكانيكي أو عزم ميت).", 11, Color.rgb(100, 235, 160), false))
+                }
+                addView(normalBox)
+            }
+
+            // Info Details
+            val infoBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(18, 38, 58))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val ilp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                ilp.topMargin = dp(6)
+                layoutParams = ilp
+
+                addView(text("💡 كيف يتم القياس عبر كمبيوتر السيارة OBD-II؟", 11, Color.rgb(0, 229, 255), true))
+                addView(text("يتم رصد هبوط الفولت لحظة تشغيل السلف عند أول 50-200 ميلي ثانية. من خلال معادلة المقاومة الداخلية وقانون أوم يتم تقدير أمبير السحب الفعلي للمارش دون الحاجة لأجهزة إضافية.", 10, Color.rgb(200, 230, 250), false))
+            }
+            addView(infoBox)
+        }
+        return starterCard
+    }
+
+    private fun buildPredictiveAnomaliesSubTab(
+        filteredSnapshots: List<DailyVehicleSnapshot>,
+        heatAnomalyCount: Int,
+        crankAnomalyCount: Int,
+        fuelAnomalyCount: Int
+    ): View {
+        val anomaliesCard = card().apply {
+            setBackgroundColor(Color.rgb(13, 29, 45))
+
+            addView(text("🚨 سجل الأيام الشاذة وحالات الخروج عن النطاق الآمن", 14, Color.WHITE, true))
+            addView(text("• حصر دقيق للأيام التي شهدت زيادة في استهلاك الوقود أو حرارة غير معتادة أو سحب مارش ضعيف:", 11, Color.rgb(170, 205, 230), false))
+
+            // 3 Summary Counters Row
+            val countRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
+
+            fun addCounter(title: String, count: Int, color: Int) {
+                val box = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(20, 45, 68))
+                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                    val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    blp.setMargins(dp(2), 0, dp(2), 0)
+                    layoutParams = blp
+
+                    addView(text(title, 10, Color.rgb(170, 205, 230), false))
+                    addView(text("$count أيام", 13, color, true))
+                }
+                countRow.addView(box)
+            }
+
+            addCounter("شذوذ بنزين", fuelAnomalyCount, if (fuelAnomalyCount > 0) Color.rgb(255, 152, 0) else Color.rgb(76, 217, 100))
+            addCounter("شذوذ حرارة", heatAnomalyCount, if (heatAnomalyCount > 0) Color.rgb(255, 82, 82) else Color.rgb(76, 217, 100))
+            addCounter("شذوذ مارش", crankAnomalyCount, if (crankAnomalyCount > 0) Color.rgb(255, 82, 82) else Color.rgb(76, 217, 100))
+            addView(countRow)
+
+            val anomalousDays = filteredSnapshots.filter { it.hasFuelAnomaly || it.hasHeatAnomaly || it.hasCrankAnomaly }
+            if (anomalousDays.isEmpty()) {
+                val cleanBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(14, 45, 32))
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(8)
+                    layoutParams = lp
+
+                    addView(text("✅ لم يتم رصد أي قراءات شاذة خلال الفترة المحددة.", 12, Color.rgb(100, 235, 160), true))
+                    addView(text("جميع الحساسات ومعدلات الاستهلاك وسحب المارش متوافقة مع الحدود الهندسية الآمنة.", 11, Color.rgb(200, 245, 220), false))
+                }
+                addView(cleanBox)
+            } else {
+                addView(text("قائمة الأيام التي تم فيها رصد شذوذ:", 12, Color.rgb(255, 171, 0), true))
+                anomalousDays.forEach { sn ->
+                    val aBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(38, 22, 22))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                        val alp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        alp.topMargin = dp(6)
+                        layoutParams = alp
+
+                        val flags = mutableListOf<String>()
+                        if (sn.hasFuelAnomaly) flags.add("بنزين مرتفع: ${sn.avgFuelRateL100km}L (+${sn.fuelRateDeltaPercent}%)")
+                        if (sn.hasHeatAnomaly) flags.add("حرارة مرتفعة: ${sn.maxCoolantTemp}°C")
+                        if (sn.hasCrankAnomaly) flags.add("هبوط مارش: ${sn.minCrankVoltage}V")
+
+                        addView(text("📅 ${sn.date} • ${flags.joinToString(" • ")}", 11, Color.rgb(255, 180, 180), true))
+                        if (!sn.notes.isNullOrBlank()) {
+                            addView(text("ملاحظة: ${sn.notes}", 10, Color.rgb(220, 200, 200), false))
+                        }
+                    }
+                    addView(aBox)
+                }
+            }
+        }
+        return anomaliesCard
+    }
+
+    private fun buildPredictiveProposalsSubTab(): View {
         val proposalCard = card().apply {
-            setBackgroundColor(Color.rgb(14, 32, 50))
+            setBackgroundColor(Color.rgb(13, 29, 45))
 
-            addView(text("💡 تقارير تشخيصية مقترحة لتوقع مشاكل السيارة مبكراً", 14, Color.rgb(248, 199, 74), true))
-            addView(text("بيانات متقدمة من حساسات كمبيوتر السيارة تكشف بداية الأعطال قبل إضاءة لمبة المحرك Check Engine:", 11, Color.rgb(180, 215, 240), false))
+            addView(text("💡 تقارير هندسية متقدمة مقترحة للإصدارات القادمة", 14, Color.WHITE, true))
+            addView(text("• تحليلات استباقية مبنية على حساسات OBD الحقيقية لكشف الأعطال قبل حدوثها:", 11, Color.rgb(170, 205, 230), false))
 
             val proposals = listOf(
                 Pair(
-                    "1. تقرير انحراف تعويض الوقود طويل المدى (Long-Term Fuel Trim - LTFT):",
-                    "• ما هو؟ يقيس النسبة المئوية التي يضطر الكمبيوتر لإضافتها للبنزين للحفاظ على الخليط المتوازن (مثلاً +15%).\n• الفائدة التنبؤية: يكتشف تسريب الهواء في المانيفولد (Vacuum Leak) أو ضعف طلمبة البنزين مبكراً قبل أن تسجل السيارة كود عطل رسمي."
+                    "1. مراقبة تصحيح الوقود طويل الأجل (LTFT Trend)",
+                    "يراقب نسب تصحيح البخاخات لمعرفة هل يضخ الكمبيوتر بنزين إضافي لتعويض تسريب هواء فاكيوم (Vacuum Leak) أو اتساخ رشاشات قبل إضاءة لمبة Check Engine."
                 ),
                 Pair(
-                    "2. تقرير منحنى زمن تسخين المحرك (Engine Warm-up Curve):",
-                    "• ما هو؟ حساب المدة بالدقائق التي يستغرقها المحرك للوصول من حرارة الجو إلى 85°م.\n• الفائدة التنبؤية: إذا زادت المدة عن 12 دقيقة، فهذا تشخيص قطعي لتعليق ثرموستات الكوعة في وضع الفتح (Stuck Open Thermostat) وهو سبب خفي لزيادة استهلاك البنزين وتراكم الكربون."
+                    "2. منحنى التسخين الحراري الزمني (Warm-up Thermal Curve)",
+                    "يقيس المدة الزمنية بالدقائق لوصول المحرك إلى 85°C. التأخر في التسخين يكشف تلف بلف الحرارة (ثرموستات مفتوح باستمرار) مما يهدر البنزين في الشتاء."
                 ),
                 Pair(
-                    "3. تقرير تموج جهد الدينامو تحت الأحمال (Alternator Load & Ripple):",
-                    "• ما هو؟ قياس هبوط الفولت عند تشغيل الأحمال العالية (التكييف + الأنوار العالية + سخان الزجاج).\n• الفائدة التنبؤية: إذا هبط الفولت إلى أقل من 13.2V أو زاد التموج عن 0.5V، فهذا مؤشر لتلف ديودات الدينامو أو شربون الشحن قبل انقطاع الكهرباء في الطريق."
+                    "3. نبضات تموج الدينامو والدايودات (Alternator Ripple Voltage)",
+                    "يقيس تموجات الجهد المتردد (AC Ripple) لكشف تلف أحد دايودات الدينامو قبل أن يفرغ البطارية أو يتسبب في تشويش حساسات الكرنك والكنترول."
                 )
             )
 
@@ -5772,9 +5896,7 @@ class MainActivity : Activity() {
                 addView(pBox)
             }
         }
-        container.addView(proposalCard)
-
-        return container
+        return proposalCard
     }
 
     private fun showGenerateWorkshopPinDialog(targetWorkshopName: String) {
