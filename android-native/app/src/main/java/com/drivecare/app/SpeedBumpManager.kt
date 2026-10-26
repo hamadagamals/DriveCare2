@@ -323,19 +323,24 @@ class SpeedBumpManager(
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                // Vertical acceleration (Z-axis corrected for gravity ~ 9.8)
-                val zRaw = event.values[2]
-                val zShock = zRaw - 9.81f
+                // Orientation-independent 3D dynamic acceleration shock:
+                // Regardless of whether phone is flat, vertical in dashboard holder, or tilted at an angle:
+                // |a_total| at rest/cruise = 9.81 m/s^2 (gravity).
+                val ax = event.values[0]
+                val ay = event.values[1]
+                val az = event.values[2]
+                val totalMag = sqrt((ax * ax + ay * ay + az * az).toDouble()).toFloat()
+                val dynamicShock = totalMag - 9.81f
 
-                // 1. Positive upward shock (+Z > 2.8 m/s^2)
-                if (zShock > 2.8f && !hasPositiveShock) {
+                // 1. Positive upward shock (+Shock > 2.8 m/s^2)
+                if (dynamicShock > 2.8f && !hasPositiveShock) {
                     hasPositiveShock = true
                     positiveShockTimeMs = now
                 }
 
-                // 2. Downward rebound (-Z < -1.6 m/s^2) following positive shock
+                // 2. Downward suspension rebound (-Shock < -1.6 m/s^2) following positive shock
                 if (hasPositiveShock && (now - positiveShockTimeMs <= 1400L)) {
-                    if (zShock < -1.6f) {
+                    if (dynamicShock < -1.6f) {
                         hasNegativeRebound = true
                     }
                 }
@@ -365,9 +370,9 @@ class SpeedBumpManager(
             }
 
             Sensor.TYPE_GYROSCOPE -> {
-                // Pitch rate (rotation around X-axis in rad/s)
-                val pitchRate = abs(event.values[0])
-                if (hasPositiveShock && pitchRate > 0.25f) {
+                // Pitch/Roll rotation rate (orientation-independent rotational deflection in rad/s)
+                val rotRate = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1]).toDouble()).toFloat()
+                if (hasPositiveShock && rotRate > 0.25f) {
                     hasPitchRotation = true
                 }
             }

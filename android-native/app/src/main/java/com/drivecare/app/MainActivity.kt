@@ -299,6 +299,8 @@ class MainActivity : Activity() {
     private var wasEngineRunning: Boolean = false
     private var engineRunningStartTimeMs: Long = 0L
     private var lowBatterySustainedCount: Int = 0
+    private var minObservedCrankVoltage: Float = 0f
+    private var hasObservedCrankInSession: Boolean = false
     private var currentActiveAlertKey: String? = null
     private val SAFETY_NOTIFICATION_ID = 9991
     private val SAFETY_CHANNEL_ID = "drivecare_safety_channel"
@@ -1263,7 +1265,9 @@ class MainActivity : Activity() {
         val system: String,
         val causesAr: String,
         val solutionAr: String,
-        val severity: String
+        val severity: String,
+        val isManufacturerSpecific: Boolean = false,
+        val targetBrand: String = "قياسي عام (SAE/ISO Generic)"
     )
 
     private val bluetoothAdapter: BluetoothAdapter?
@@ -5540,29 +5544,40 @@ class MainActivity : Activity() {
 
         // Read current live telemetry or provided override values
         val fuelRate = customFuel ?: if (telemetry.actualTripFuelLiters > 0.05f && telemetry.tripDistanceKm > 0.5f) {
-            (telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100.0f
+            ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100.0f).coerceIn(2.5f, 35.0f)
         } else if (telemetry.tripAverageFuelRate > 0.5f) {
             telemetry.tripAverageFuelRate
         } else {
-            11.0f
+            base
         }
 
         val coolantMax = customTemp ?: if (telemetry.coolantTemp > 30) telemetry.coolantTemp else 93
-        val crankVolt = customVolt ?: if (telemetry.batteryVoltage in 8.0f..14.5f) telemetry.batteryVoltage else 10.4f
+
+        // Cranking Voltage Logic (High-Precision Automotive Engineering):
+        // 1. If explicit custom override provided, use it.
+        // 2. If genuine starter crank dip was captured in this session (voltage in 7.0..11.8V), use it.
+        // 3. If engine is actively running and alternator is charging (voltage >= 12.8V), NEVER use alternator voltage as crank voltage!
+        val crankVolt = when {
+            customVolt != null -> customVolt
+            hasObservedCrankInSession && minObservedCrankVoltage in 7.0f..11.8f -> minObservedCrankVoltage
+            telemetry.batteryVoltage in 7.0f..11.8f -> telemetry.batteryVoltage
+            else -> 10.4f // Baseline healthy reference when alternator is running
+        }
 
         // Estimated Cranking Amperes via internal resistance formula: I = (12.6V - V_crank) / 0.018 ohm
         val estAmps = Math.round(((12.6f - crankVolt).coerceAtLeast(0.1f) / 0.018f)).coerceIn(80, 240)
-        val deltaPercent = Math.round(((fuelRate - base) / base) * 1000f) / 10f
+        val deltaPercent = if (base > 0.1f) Math.round(((fuelRate - base) / base) * 1000f) / 10f else 0.0f
 
         val heatAnomaly = coolantMax >= 102
         val fuelAnomaly = deltaPercent >= 20.0f
-        val crankAnomaly = crankVolt < 9.6f || estAmps > 165
+        val crankAnomaly = (hasObservedCrankInSession || customVolt != null) && (crankVolt < 9.6f || estAmps > 165)
 
         val autoNotes = customNotes ?: when {
             fuelAnomaly && heatAnomaly -> "ارتفاع متزامن في استهلاك الوقود وحرارة المحرك"
             fuelAnomaly -> "قفزة ملحوظة في استهلاك البنزين بنسبة +${deltaPercent}%"
             heatAnomaly -> "تسجيل حرارة غير طبيعية ($coolantMax°م)"
             crankAnomaly -> "هبوط جهد التدوير إلى ${crankVolt}V مع سحب مرش ${estAmps}A"
+            !hasObservedCrankInSession && customVolt == null -> "معدلات تشغيل منتظمة (جهد مرجعي للمارش)"
             else -> "معدلات تشغيل منتظمة"
         }
 
@@ -8975,7 +8990,7 @@ class MainActivity : Activity() {
                 val consumedLiters = (telemetry.instantFuelLitersPerHour.toDouble() * (dtSec / 3600.0)).toFloat()
                 telemetry.actualTripFuelLiters += consumedLiters
                 if (telemetry.tripDistanceKm > 0.05f) {
-                    telemetry.tripAverageFuelRate = (telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f
+                    telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
                 }
 
                 preferences.edit()
@@ -9580,10 +9595,23 @@ class MainActivity : Activity() {
             // Clear dismissed alerts for the new trip so driver is notified fresh if problem persists
             permanentlyDismissedAlerts.clear()
             snoozedAlertsMap.clear()
+            minObservedCrankVoltage = 0f
+            hasObservedCrankInSession = false
         } else if (!isEngineCurrentlyRunning && wasEngineRunning) {
             // Engine was shut down / turned off
             wasEngineRunning = false
             lowBatterySustainedCount = 0
+        }
+
+        // Capture genuine starter crank voltage dip during startup window (first 5 seconds of ignition)
+        if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs < 5000L)) {
+            val v = telemetry.batteryVoltage
+            if (v in 6.0f..11.8f) {
+                if (!hasObservedCrankInSession || v < minObservedCrankVoltage) {
+                    minObservedCrankVoltage = v
+                    hasObservedCrankInSession = true
+                }
+            }
         }
 
         // Automatic Safety Alerts & Warning Banner Check
@@ -9711,7 +9739,9 @@ class MainActivity : Activity() {
                     lp.topMargin = dp(4)
                     layoutParams = lp
                 }
-                tagRow.addView(text("🏷️ ${diag.system} | الخطورة: ${diag.severity}", 11, Color.rgb(248, 199, 74), false))
+                val oemBadge = if (diag.isManufacturerSpecific) "🏢 كود مصنعي خاص [${diag.targetBrand}]" else "🌐 كود قياسي عام (SAE Universal)"
+                val badgeColor = if (diag.isManufacturerSpecific) Color.rgb(248, 199, 74) else Color.rgb(110, 231, 255)
+                tagRow.addView(text("$oemBadge | 🏷️ ${diag.system} | الخطورة: ${diag.severity}", 11, badgeColor, false))
                 dtcCard.addView(tagRow)
 
                 dtcCard.addView(text("🔍 الأسباب المحتملة:", 12, Color.rgb(110, 231, 255), true).apply {
@@ -11570,8 +11600,112 @@ class MainActivity : Activity() {
         return list
     }
 
-    private fun diagnoseDtc(code: String): DtcDiagnosis {
+    private fun getActiveVehicleBrand(): String {
+        val savedVin = preferences.getString("vehicle_vin", "") ?: ""
+        if (savedVin.length >= 3) {
+            val dec = decodeVin(savedVin)
+            if (dec.make.isNotBlank() && !dec.make.contains("عامة") && !dec.make.contains("غير معرفة")) {
+                return dec.make
+            }
+        }
+        val savedMake = preferences.getString("vehicle_make", "") ?: ""
+        if (savedMake.isNotBlank()) return savedMake
+        return "عام"
+    }
+
+    private fun diagnoseDtc(code: String, vehicleBrand: String? = null): DtcDiagnosis {
         val clean = code.trim().uppercase()
+        val detectedBrand = (vehicleBrand ?: getActiveVehicleBrand()).lowercase()
+
+        // 1. SAE J2012 / ISO 15031-6 Standardization Rules:
+        // Digit 2 = '0' -> SAE Standard Generic (Universally identical across all brands)
+        // Digit 2 = '1' -> Manufacturer Specific (OEM Controlled - differs between Toyota, Ford, GM, Hyundai, etc.)
+        // Digit 2 = '2' -> SAE Standard Generic (P2xxx)
+        // Digit 2 = '3' -> Split: P3000..P3399 is OEM-specific; P3400..P3999 is SAE Generic
+        val isOemSpecific = clean.length >= 2 && when (clean.firstOrNull()) {
+            'P' -> clean[1] == '1' || (clean[1] == '3' && (clean.substring(2).toIntOrNull() ?: 999) < 400)
+            'C', 'B', 'U' -> clean[1] == '1' || clean[1] == '2'
+            else -> false
+        }
+
+        // =========================================================================
+        // BRAND-SPECIFIC OEM CODES (تجنب الخلط بين أكواد الشركات المصنعة المختلفة)
+        // =========================================================================
+        if (isOemSpecific) {
+            val isToyota = detectedBrand.contains("toyota") || detectedBrand.contains("تويوتا") || detectedBrand.contains("lexus") || detectedBrand.contains("لكزس")
+            val isHyundaiKia = detectedBrand.contains("hyundai") || detectedBrand.contains("هيونداي") || detectedBrand.contains("kia") || detectedBrand.contains("كيا")
+            val isGmChevy = detectedBrand.contains("chevrolet") || detectedBrand.contains("شيفروليه") || detectedBrand.contains("gm") || detectedBrand.contains("daewoo") || detectedBrand.contains("دايو")
+            val isFord = detectedBrand.contains("ford") || detectedBrand.contains("فورد")
+            val isNissan = detectedBrand.contains("nissan") || detectedBrand.contains("نيسان") || detectedBrand.contains("infiniti")
+
+            // Case A: Toyota / Lexus OEM Codes
+            if (isToyota) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "حساس وضع صمام التحكم في تدفق مياه التبريد (Coolant Flow Control Valve)", "نظام تبريد تويوتا الذكي", "• عطل في صمام تدوير مياه التبريد الكهربائي\n• تلف حساس زاوية الصمام أو التصاقه بالشوائب", "فحص صمام تدوير مياه التبريد والفيشة واستبدال الصمام إن لزم.", "متوسطة", true, "تويوتا / لكزس")
+                    "P1349" -> return DtcDiagnosis(clean, "عطل بنظام توقيت الصمامات المتغير VVT بنك 1 (VVT System Malfunction)", "نظام المحرك وتوقيت الصمامات VVT", "• انسداد فلتر زيت الـ VVT الصغير في رأس المحرك\n• تلف بلف أو حساس الـ OCV (Oil Control Valve)\n• انخفاض ضغط زيت المحرك أو اتساخه", "نظف فلتر بلف الـ VVT الصغير وتأكد من لزوجة الزيت وافحص صمام OCV.", "متوسطة إلى خطيرة", true, "تويوتا / لكزس")
+                    "P1604" -> return DtcDiagnosis(clean, "صعوبة بدء دوران المحرك / دوران مارش مطول (Startability Malfunction)", "نظام بدء الحركة والإشعال", "• ضعف شحن البطارية أو انخفاض ضغط طلمبة البنزين عند التدوير\n• اتساخ شمعات الاحتراق أو انخفاض جودة الوقود", "افحص جهد البطارية وضغط طلمبة البنزين واستبدل فلتر البنزين.", "تحذيرية", true, "تويوتا / لكزس")
+                    "P1605" -> return DtcDiagnosis(clean, "خشونة أو تذبذب سلانسيه المحرك (Rough Idling)", "نظام الهواء والسلانسيه", "• اتساخ بوابة الهواء الإلكترونية (Throttle Body)\n• تسريب هواء خفيف من خراطيم الفاكيوم", "تنظيف بوابة الهواء وبرمجتها ومراجعة خراطيم الهواء.", "تحذيرية", true, "تويوتا / لكزس")
+                    "C1201" -> return DtcDiagnosis(clean, "إيقاف نظام الثبات VSC/ABS لوجود عطل مسجل بالمحرك", "نظام الفرامل والثبات الإلكتروني", "• قام كمبيوتر الفرامل بإيقاف نظام مانع الانزلاق تلقائياً لأن كمبيوتر المحرك سجل عطلاً آخر\n• ملاحظة هندسية: إصلاح كود المحرك يطفئ هذا الكود تلقائياً", "افحص أكواد كمبيوتر المحرك أولاً وأصلحها وسينطفئ هذا الكود تلقائياً.", "تحذيرية", true, "تويوتا / لكزس")
+                }
+            }
+
+            // Case B: Hyundai / Kia OEM Codes
+            if (isHyundaiKia) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "خلل في أداء دائرة حساس وضع بوابة الهواء (Throttle Position Sensor Performance)", "نظام سحب الهواء والوقود", "• قراءة غير متناسقة من حساس الـ TPS مع حساس ضغط المانيفولد\n• اتساخ فيشة الحساس أو مقاومته الداخلية", "فحص فيشة حساس البوابة أو استبدال الحساس وإعادة البرمجة.", "متوسطة", true, "هيونداي / كيا")
+                    "P1186" -> return DtcDiagnosis(clean, "انخفاض ضغط مسطرة الوقود عن الحد المسموح (Fuel Pressure Too Low)", "نظام حقن الوقود (ديزل / CRDi)", "• انسداد فلتر السولار أو تسريب في منظم ضغط المسطرة\n• ضعف طلمبة الديزل ذات الضغط العالي", "استبدل فلتر الوقود فوراً وافحص حساس ومنظم ضغط المسطرة.", "خطيرة", true, "هيونداي / كيا")
+                    "P1529" -> return DtcDiagnosis(clean, "طلب إضاءة لمبة الأعطال من كمبيوتر الفتيس (TCM Mil Request)", "ناقل الحركة الأوتوماتيكي", "• كمبيوتر الفتيس سجل عطلاً وأمر بإضاءة لمبة الأعطال الرئيسية", "افحص كمبيوتر ناقل الحركة وقراءة كود عطل الفتيس التابع.", "متوسطة", true, "هيونداي / كيا")
+                    "P1693" -> return DtcDiagnosis(clean, "عطل في خط طلب إضاءة لمبة الأعطال عبر الكان (MIL Request Line)", "شبكة بيانات المحرك CAN-Bus", "• خلل في خط الإشارة بين كمبيوتر المحرك ولوحة العدادات", "فحص التوصيلات الكهربائية وشبكة الكان.", "تحذيرية", true, "هيونداي / كيا")
+                    "P1690" -> return DtcDiagnosis(clean, "عدم قراءة شريحة المفتاح الذكي (Smartra Immobilizer Fault)", "نظام الحماية والإيموبلايزر", "• عدم قراءة الشريحة الإلكترونية في المفتاح بواسطة حلقة الهوائي", "فحص فيشة هوائي الإيموبلايزر خلف الكونتاكت وتجربة المفتاح الاحتياطي.", "متوسطة", true, "هيونداي / كيا")
+                }
+            }
+
+            // Case C: Chevrolet / GM / Daewoo OEM Codes (Aveo, Optra, Cruze)
+            if (isGmChevy) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "إشارة متقطعة مرتفعة بحساس وضع بوابة الهواء (TPS Circuit Intermittent High)", "نظام البوابة وسحب الهواء", "• عيب في التوصيل بسلك الإشارة أو تلف حساس الـ TPS (شائع في الأفيو والأوبترا)\n• يسبب تقطيعاً أو ثقلاً في استجابة الدواسة", "افحص فيشة حساس البوابة وتأكد من ثبات جهد الإشارة (0.5V - 4.5V).", "متوسطة", true, "شيفروليه / GM / دايو")
+                    "P1133" -> return DtcDiagnosis(clean, "استجابة بطيئة وانتقال ناقص لحساس الشكمان العلوي (HO2S 1 Insufficient Switching)", "نظام العادم والانبعاثات", "• بطء إشارة حساس الشكمان الأول بسبب ترسبات الكربون\n• تقدم عمر الحساس", "تنظيف أو استبدال حساس الشكمان العلوي.", "تحذيرية", true, "شيفروليه / GM")
+                    "P1171" -> return DtcDiagnosis(clean, "نظام الوقود فقير أثناء التسارع (Fuel System Lean During Acceleration)", "نظام الوقود", "• ضعف ضغط طلمبة البنزين أو انسداد فلتر البنزين\n• اتساخ الرشاشات", "فحص ضغط طلمبة البنزين واستبدال فلتر الوقود.", "متوسطة", true, "شيفروليه / GM")
+                    "P1689" -> return DtcDiagnosis(clean, "فقدان إشارة عزم الدوران مع نظام التراكشن (TCS Torque Signal)", "شبكة الاتصال والتحكم في الجر", "• انقطاع خط بيانات عزم الدوران بين كمبيوتر المحرك وكمبيوتر الـ ABS", "فحص فيش وتوصيلات كمبيوتر المحرك وكمبيوتر الفرامل.", "تحذيرية", true, "شيفروليه / GM")
+                }
+            }
+
+            // Case D: Ford OEM Codes
+            if (isFord) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "حساس وضع بوابة الهواء غير متطابق مع حساس تدفق الهواء (TPS Inconsistent with MAF)", "نظام سحب الهواء والوقود", "• تعارض بين كمية الهواء المقاسة من الماف وفتحة البوابة\n• اتساخ حساس MAF أو تلف حساس TPS", "نظف حساس الـ MAF وافحص حساس البوابة.", "متوسطة", true, "فورد")
+                    "P1000" -> return DtcDiagnosis(clean, "دورة فحص الكمبيوتر غير مكتملة بعد مسح الأعطال (OBD-II Drive Cycle Not Complete)", "نظام الاختبار الذاتي للـ ECU", "• تم مسح الأعطال حديثاً أو فصل البطارية، والكمبيوتر يحتاج للسير لمسافة لإتمام الفحص الذاتي\n• ملاحظة هندسية: هذا ليس عطلاً ميكانيكياً ولا يضيء لمبة الأعطال", "استمر في القيادة الطبيعية وسيكتمل الفحص وينطفئ الكود تلقائياً.", "تنبيهية", true, "فورد")
+                    "P1260" -> return DtcDiagnosis(clean, "منع سرقة السيارة مفعل - المحرك معطل بواسطة نظام PATS (Theft Detected)", "نظام المفتاح المشفر والحماية", "• كمبيوتر السيارة لم يتعرف على شريحة المفتاح ومنع تشغيل المحرك", "جرب المفتاح الاحتياطي أو أعد برمجة ريموت ومفتاح السيارة.", "حرجة / فورية", true, "فورد")
+                    "P1131" -> return DtcDiagnosis(clean, "حساس الشكمان يشير إلى خليط فقير دائم بنك 1 (Lack of Upstream O2 Switch - Lean)", "نظام الوقود والعادم", "• تسريب فاكيوم شديد أو ضعف ضغط الوقود\n• عطل في حساس الشكمان العلوي", "فحص خراطيم السحب وضغط البنزين وقراءة حساس الأكسجين.", "متوسطة", true, "فورد")
+                }
+            }
+
+            // Case E: Nissan OEM Codes
+            if (isNissan) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "عطل في محرك بوابة الهواء الإلكترونية (Electronic Throttle Control Actuator)", "بوابة الهواء الإلكترونية", "• تلف الموتور الداخلي للبوابة أو تراكم الكربون عليها", "تنظيف بوابة الهواء وإعادة برمجتها (Idle Air Volume Learn).", "متوسطة", true, "نيسان")
+                    "P1610" -> return DtcDiagnosis(clean, "تفعيل وضع حظر التشغيل بنظام المفتاح المشفر (Lock Mode - NATS)", "نظام حماية الإيموبلايزر", "• محاولة تشغيل بمفتاح غير معتمد أو هبوط حاد في فولت البطارية", "افصل كابل البطارية لمدة 5 دقائق ثم أعد التشغيل بمفتاح السيارة الأصلي.", "حرجة / فورية", true, "نيسان")
+                    "P1614" -> return DtcDiagnosis(clean, "عدم التعرف على شريحة مفتاح السيارة (Key ID Disagree - NATS)", "نظام الحماية NATS", "• عدم تطابق شريحة المفتاح مع كمبيوتر المحرك أو تلف هوائي الكونتاكت", "فحص فيشة حلقة الهوائي حول الكونتاكت وتجربة المفتاح الأصلي.", "متوسطة", true, "نيسان")
+                }
+            }
+
+            // General Fallback for OEM-Specific Code when brand dictionary doesn't have it or brand is unselected:
+            val activeBrandDisplay = if (detectedBrand != "عام" && detectedBrand.isNotBlank()) detectedBrand else "غير محددة"
+            return DtcDiagnosis(
+                clean,
+                "كود خاص بالشركة الصانعة: [$clean]",
+                "عطل مصنعي خاص (OEM Specific)",
+                "• كود عطل خاص بالشركة المصنعة للسيارة (${activeBrandDisplay}) ولا يتبع المعايير العامة (SAE Generic).\n• تحذير هندسي لمنع الخلط: هذا الكود يختلف معناه تماماً من شركة لأخرى (مثل تويوتا، شيفروليه، هيونداي، فورد).\n• تم رصده في السيارة المسجلة: ${activeBrandDisplay}.",
+                "تأكد من ضبط ماركة وموديل سيارتك بدقة في الإعدادات، واستخدم جهاز فحص الوكيل المتوافق مع بروتوكول ${activeBrandDisplay} لتحديد التفسير الدقيق للمصنع.",
+                "فحص مصنعي خاص",
+                true,
+                activeBrandDisplay
+            )
+        }
+
+        // =========================================================================
+        // STANDARD UNIVERSAL SAE / ISO GENERIC CODES (ينطبق عالمياً على كافة السيارات)
+        // =========================================================================
         return when (clean) {
             "P3400" -> DtcDiagnosis(
                 clean,
@@ -11673,7 +11807,9 @@ class MainActivity : Activity() {
                     categoryName,
                     "• تم رصد قراءة غير مطابقة للمواصفات القياسية من حساسات $subName\n• قد يكون بسبب تلف حساس أو ارتخاء فيشة أو اتساخ التوصيلات الكهربائية",
                     "افحص فيش وتوصيلات $subName بجهاز القياس واستخدم زر مسح الأعطال بعد الصيانة للتأكد.",
-                    "تنبيهية / فحص"
+                    "تنبيهية / فحص",
+                    false,
+                    "قياسي عام (SAE Universal)"
                 )
             }
         }
@@ -11691,9 +11827,15 @@ class MainActivity : Activity() {
                 val code = etCode.text.toString().trim().uppercase()
                 if (code.isNotBlank()) {
                     val diag = diagnoseDtc(code)
+                    val oemInfo = if (diag.isManufacturerSpecific) {
+                        "🏢 تصنيف الكود: عطل خاص بمصنع السيارة [${diag.targetBrand}]\n⚠️ تنبيه هندسي: هذا الكود خاص بشركة الصانع ويختلف معناه من ماركة لأخرى منعاً للخلط.\n\n"
+                    } else {
+                        "🌐 تصنيف الكود: كود قياسي عام (SAE/ISO Generic - معتمد لكافة السيارات عالمياً)\n\n"
+                    }
                     AlertDialog.Builder(this)
                         .setTitle("تقرير فحص العطل: [${diag.code}]")
                         .setMessage(
+                            oemInfo +
                             "📌 اسم ومعنى الكود:\n${diag.titleAr}\n\n" +
                             "🏷️ النظام المتأثر:\n${diag.system}\n\n" +
                             "⚠️ مستوى الخطورة:\n${diag.severity}\n\n" +
