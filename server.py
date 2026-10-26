@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
+import hazard_service
+
 ROOT = os.path.dirname(__file__)
 PUBLIC_DIR = os.path.join(ROOT, 'public')
 PORT = int(os.environ.get('DRIVECARE_PORT', '3000'))
@@ -208,6 +210,7 @@ def init_db():
               ('ws-005', 'user-001', 'البرنس لصيانة وتعبئة تكييف السيارات', 'تكييف وتبريد، فريون أصلي، كباس، كشف تسريب ليزر', '01167890125', 30.0381, 31.2064, 20),
               ('ws-006', 'user-001', 'مركز النيل المتكامل للصيانة السريعة', 'صيانة سريعة، زيوت وفلاتر، بوجيهات وتيل فرامل', '01098765432', 30.0520, 31.2010, 25);
         ''')
+    hazard_service.init_hazard_tables(conn)
     conn.commit()
     conn.close()
 
@@ -1360,6 +1363,30 @@ class Handler(SimpleHTTPRequestHandler):
                 self._send_json(200, {'vehicleId': target_veh, 'snapshots': [dict(r) for r in rows]})
                 return
 
+        if path == '/api/hazards/nearby':
+            try:
+                lat = float(query.get('lat', [30.0])[0])
+                lng = float(query.get('lng', [31.0])[0])
+                radius_km = float(query.get('radius_km', [20.0])[0])
+            except (ValueError, TypeError):
+                lat, lng, radius_km = 30.0, 31.0, 20.0
+            with get_connection() as conn:
+                res = hazard_service.get_nearby_hazards(conn, lat, lng, radius_km)
+                self._send_json(200, res)
+                return
+
+        if path == '/api/hazards/stats':
+            with get_connection() as conn:
+                total_active = conn.execute("SELECT COUNT(*) FROM speed_bumps WHERE status = 'ACTIVE'").fetchone()[0]
+                total_deactivated = conn.execute("SELECT COUNT(*) FROM speed_bumps WHERE status = 'DEACTIVATED'").fetchone()[0]
+                pending = conn.execute("SELECT COUNT(*) FROM speed_bumps WHERE needs_map_match = 1").fetchone()[0]
+                self._send_json(200, {
+                    'active': total_active,
+                    'deactivated': total_deactivated,
+                    'pending_map_match': pending
+                })
+                return
+
         if path == '/api/settings':
             if not require_auth(self):
                 self._send_json(401, {'error': 'Unauthorized'})
@@ -1833,6 +1860,43 @@ class Handler(SimpleHTTPRequestHandler):
             res = record_workshop_maintenance(selected_vehicle_id, payload)
             self._send_json(201, res)
             return
+
+        if path == '/api/hazards':
+            try:
+                lat = float(payload.get('latitude', 0.0))
+                lng = float(payload.get('longitude', 0.0))
+                direction = float(payload.get('direction_degrees', payload.get('direction', 0.0)))
+                bidirectional = bool(payload.get('bidirectional', False))
+                vehicle_id = payload.get('vehicle_id') or payload.get('vehicleId')
+            except (ValueError, TypeError):
+                self._send_json(400, {'error': 'Invalid hazard payload numbers'})
+                return
+            if lat == 0.0 and lng == 0.0:
+                self._send_json(400, {'error': 'Invalid latitude or longitude'})
+                return
+            with get_connection() as conn:
+                res = hazard_service.report_new_hazard(conn, lat, lng, direction, bidirectional, vehicle_id)
+                self._send_json(201, res)
+                return
+
+        if path == '/api/hazards/pass-check':
+            hazard_id = payload.get('hazard_id') or payload.get('hazardId')
+            felt_bump = bool(payload.get('felt_bump', True))
+            speed_kmh = float(payload.get('speed_kmh', payload.get('speed', 0.0)))
+            vehicle_id = payload.get('vehicle_id') or payload.get('vehicleId')
+            if not hazard_id:
+                self._send_json(400, {'error': 'hazard_id is required'})
+                return
+            with get_connection() as conn:
+                res = hazard_service.record_hazard_pass_check(conn, hazard_id, felt_bump, speed_kmh, vehicle_id)
+                self._send_json(200, res)
+                return
+
+        if path == '/api/hazards/reconcile-daily':
+            with get_connection() as conn:
+                res = hazard_service.run_daily_map_matching(conn)
+                self._send_json(200, res)
+                return
 
         self._send_json(404, {'error': 'Not found'})
 

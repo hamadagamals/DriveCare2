@@ -420,6 +420,8 @@ class MainActivity : Activity() {
     private var tvAlertDesc: TextView? = null
     private var lastAlertToneTime = 0L
     private var isSimulatingAlert = false
+    private var speedBumpManager: SpeedBumpManager? = null
+    private var speedBumpBanner: TextView? = null
 
     // Route & Payload Trip Planner State
     private var phoneGpsSpeedKmh: Int = 0
@@ -792,6 +794,131 @@ class MainActivity : Activity() {
         return banner
     }
 
+    private fun buildSpeedBumpBanner(): TextView {
+        return TextView(this).apply {
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+            val currentWarning = speedBumpManager?.currentWarningText
+            if (currentWarning != null) {
+                text = currentWarning
+                visibility = View.VISIBLE
+                setBackgroundColor(Color.rgb(230, 138, 0))
+            } else {
+                visibility = View.GONE
+            }
+            speedBumpBanner = this
+        }
+    }
+
+    private fun buildSpeedBumpsSubScreen(): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(20)
+            layoutParams = lp
+        }
+
+        // 1. Hero Card: Radar status
+        val hero = card().apply {
+            addView(text("🛑 رادار وتنبيهات المطبات الذكية", 16, Color.rgb(255, 180, 70), true))
+            addView(text("حماية نظام التعليق (العفشة) والتنبيه الصوتي المبكر قبل المطب بـ 100م", 12, Color.rgb(180, 210, 230), false).apply {
+                setPadding(0, dp(4), 0, dp(12))
+            })
+
+            // Audio Toggle Button
+            val btnMuteToggle = Button(this@MainActivity).apply {
+                val isMuted = speedBumpManager?.isMuted == true
+                text = if (isMuted) "🔇 التنبيه الصوتي: صامت (اضغط للتشغيل)" else "🔊 التنبيه الصوتي: مفعل (اضغط للكتم)"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (isMuted) Color.rgb(255, 180, 100) else Color.rgb(8, 23, 32))
+                setBackgroundColor(if (isMuted) Color.rgb(36, 26, 16) else Color.rgb(110, 231, 255))
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
+                blp.bottomMargin = dp(10)
+                layoutParams = blp
+                setOnClickListener {
+                    val muted = speedBumpManager?.toggleMute() == true
+                    isAudioMuted = muted
+                    preferences.edit().putBoolean("is_audio_alert_muted", isAudioMuted).apply()
+                    text = if (muted) "🔇 التنبيه الصوتي: صامت (اضغط للتشغيل)" else "🔊 التنبيه الصوتي: مفعل (اضغط للكتم)"
+                    setTextColor(if (muted) Color.rgb(255, 180, 100) else Color.rgb(8, 23, 32))
+                    setBackgroundColor(if (muted) Color.rgb(36, 26, 16) else Color.rgb(110, 231, 255))
+                    Toast.makeText(this@MainActivity, if (muted) "تم كتم صوت تحذيرات المطبات" else "تم تفعيل صوت تحذيرات المطبات", Toast.LENGTH_SHORT).show()
+                }
+            }
+            addView(btnMuteToggle)
+
+            // Dynamic Sector Info
+            val sectorRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.bottomMargin = dp(6)
+                layoutParams = rlp
+
+                val infoText = text("🗺️ نطاق التغطية النشط: 20 كم حول موقع السيارة", 12, Color.rgb(200, 225, 245), false).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                addView(infoText)
+
+                val btnRefresh = Button(this@MainActivity).apply {
+                    text = "🔄 تحديث النطاق"
+                    textSize = 11f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.rgb(24, 52, 75))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36))
+                    layoutParams = blp
+                    setOnClickListener {
+                        currentGpsLocation?.let { loc ->
+                            speedBumpManager?.onLocationChanged(loc, telemetry.speed.toDouble())
+                            Toast.makeText(this@MainActivity, "جاري تحديث بيانات الـ 20 كم من السيرفر...", Toast.LENGTH_SHORT).show()
+                        } ?: run {
+                            Toast.makeText(this@MainActivity, "يرجى تفعيل GPS لتحديد الموقع الحالي", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                addView(btnRefresh)
+            }
+            addView(sectorRow)
+        }
+        root.addView(hero)
+
+        // 2. Rules and Kinematic Logic Card
+        val rulesCard = card().apply {
+            addView(text("⚙️ خوارزمية الرصد والتوثيق الذكي", 14, Color.rgb(110, 231, 255), true))
+            addView(text("تم ضبط شروط التوثيق المجتمعي وفق أحدث معايير الأمان الهندسي:", 11, Color.rgb(160, 190, 215), false).apply {
+                setPadding(0, dp(2), 0, dp(10))
+            })
+
+            val item1 = "1️⃣ بوابة الأمان وسرعة السيارة:\nأي حركة للجوال وسرعة السيارة أعلى من 21 كم/س يتم تجاهلها تماماً لمنع الإنذارات الخاطئة واهتزازات اليد."
+            val item2 = "2️⃣ نمط المطب الحركي المعتمد:\nيتم الرصد فقط عند السرعة < 21 كم/س بتسلسل دقيق: تباطؤ ⬅️ صدمة رأسية (+Z) ⬅️ دوران وانقلاب الزاوية ⬅️ ارتداد سفلي (-Z) ⬅️ تسارع مجدداً."
+            val item3 = "3️⃣ التوثيق المجتمعي والحذف التلقائي:\nيتم اعتماد المطب فورياً من أول رصد، ولكن في حال مرور سيارات أخرى على نفس النقطة دون استشعار نمط المطب يتم حذفه تلقائياً من الخريطة لحماية دقة البيانات."
+            val item4 = "4️⃣ المطابقة اليومية على السيرفر (Map-Matching):\nتتم مطابقة المطبات الجديدة يومياً بالسيرفر لفصل طريق الخدمة عن الطريق السريع وتصحيح الحركات المخالفة المعاكسة لحركة السير (عكس الاتجاه)."
+
+            listOf(item1, item2, item3, item4).forEach { rule ->
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    setBackgroundColor(Color.rgb(14, 32, 48))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.bottomMargin = dp(6)
+                    layoutParams = lp
+                    addView(text(rule, 11, Color.rgb(220, 235, 245), false))
+                })
+            }
+        }
+        root.addView(rulesCard)
+
+        return root
+    }
+
     // UI elements for live gauges
     private lateinit var tvRpm: TextView
     private lateinit var tvSpeed: TextView
@@ -991,6 +1118,7 @@ class MainActivity : Activity() {
         loadDriverDelegationRequests()
         loadWorkshopAccessRequests()
         startPhoneGpsTracking()
+        initSpeedBumpManager()
 
         uiUpdateHandler.post(uiUpdateRunnable)
 
@@ -1017,6 +1145,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        speedBumpManager?.stop()
         stopPhoneGpsTracking()
         userRequestedDisconnect = true
         if (ObdForegroundService.onStopRequested === stopRequestHandler) {
@@ -1033,6 +1162,39 @@ class MainActivity : Activity() {
             classicReceiverRegistered = false
         }
         super.onDestroy()
+    }
+
+    private fun getApiBaseUrl(): String {
+        return preferences.getString("backend_url", "http://10.0.2.2:3000") ?: "http://10.0.2.2:3000"
+    }
+
+    private fun initSpeedBumpManager() {
+        if (speedBumpManager != null) return
+        speedBumpManager = SpeedBumpManager(this) { getApiBaseUrl() }.apply {
+            isMuted = isAudioMuted
+            start()
+            onWarningStateChanged = { warningText, stage ->
+                runOnUiThread {
+                    val banner = speedBumpBanner ?: return@runOnUiThread
+                    if (warningText != null) {
+                        banner.text = warningText
+                        banner.visibility = View.VISIBLE
+                        if (stage == "FINAL") {
+                            banner.setBackgroundColor(Color.rgb(215, 38, 56))
+                        } else {
+                            banner.setBackgroundColor(Color.rgb(230, 138, 0))
+                        }
+                    } else {
+                        banner.visibility = View.GONE
+                    }
+                }
+            }
+            onBumpDetectedNotice = { msg ->
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun startPhoneGpsTracking() {
@@ -1052,6 +1214,7 @@ class MainActivity : Activity() {
                                 updateGaugesTabUI()
                             }
                         }
+                        speedBumpManager?.onLocationChanged(location, telemetry.speed.toDouble())
                     }
                     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
                     override fun onProviderEnabled(provider: String) {}
@@ -1246,6 +1409,8 @@ class MainActivity : Activity() {
             contentBox.addView(banner)
             updateAlertBannerUI()
 
+            contentBox.addView(buildSpeedBumpBanner())
+
             val subView = when (activeSubScreen) {
                 "owner_fleet" -> buildOwnerFleetTabContent()
                 "remote_fleet" -> buildRemoteFleetTabContent()
@@ -1257,6 +1422,7 @@ class MainActivity : Activity() {
                 "driver_cars" -> buildDriverCarsTabContent()
                 "predictive_health" -> buildPredictiveHealthTabContent()
                 "log_service" -> buildLogServiceTabContent()
+                "speed_bumps" -> buildSpeedBumpsSubScreen()
                 "gauges" -> buildGaugesTabContent()
                 "scanner" -> buildScannerTabContent()
                 "fuel" -> buildFuelTabContent()
@@ -1275,6 +1441,8 @@ class MainActivity : Activity() {
             alertBanner = banner
             contentBox.addView(banner)
             updateAlertBannerUI()
+
+            contentBox.addView(buildSpeedBumpBanner())
 
             // 3. إشعارات تصاريح الورش أو دعوات السائقين الحقيقية
             if (currentRole == "owner") {
@@ -1347,6 +1515,7 @@ class MainActivity : Activity() {
                 setOnClickListener {
                     isAudioMuted = !isAudioMuted
                     preferences.edit().putBoolean("is_audio_alert_muted", isAudioMuted).apply()
+                    speedBumpManager?.isMuted = isAudioMuted
                     text = if (isAudioMuted) "🔇" else "🔊"
                     setTextColor(if (isAudioMuted) Color.rgb(255, 180, 100) else Color.rgb(126, 242, 154))
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
@@ -1783,6 +1952,7 @@ class MainActivity : Activity() {
             "owner" -> listOf(
                 ServiceCard("فحص وحذف الأعطال", "قراءة أكواد الكمبيوتر ومسحها", "🔍", "scanner"),
                 ServiceCard("البيانات والحساسات", "السرعة والحرارة والشحن الحية", "📊", "gauges"),
+                ServiceCard("رادار وتحذير المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("التحليل التنبؤي وتوقع الأعطال", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
                 ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
                 ServiceCard("أسطول سياراتي", "إدارة وتفويض السائقين بالهاتف", "🚗", "owner_fleet"),
@@ -1793,6 +1963,7 @@ class MainActivity : Activity() {
             )
             "driver" -> listOf(
                 ServiceCard("مقصورة العدادات", "السرعة والحرارة والشحن الحية", "🏎️", "gauges"),
+                ServiceCard("رادار وتحذير المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("فحص أعطال السيارة", "فحص سريع للمبة Check Engine", "🔍", "scanner"),
                 ServiceCard("سياراتي المفوض بها", "السيارات المصرح بقيادتها", "🚗", "driver_cars"),
                 ServiceCard("حاسبة الحمولة والوقود", "توزيع الوزن وتكلفة المسار", "⛽", "fuel"),
@@ -1960,6 +2131,7 @@ class MainActivity : Activity() {
             "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
             "predictive_health" -> "📈 التحليل التنبؤي وصحة السيارة (المعدلات والأعطال)"
             "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
+            "speed_bumps" -> "🛑 رادار وتحذيرات المطبات الذكية"
             "fuel" -> "⛽ تكلفة الوقود وحساب الاستهلاك"
             "maint" -> "🔧 جدول وتذكيرات الصيانة الدورية"
             "more" -> "⚙️ إعدادات التطبيق والحساب"
