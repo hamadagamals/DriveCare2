@@ -3786,7 +3786,8 @@ class MainActivity : Activity() {
             val fuelColor = if (telemetry.fuelLevel <= 15) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154)
             r2.addView(metricBox("مستوى الوقود بالتنك", "${telemetry.fuelLevel}%", fuelColor).parent as View)
             val tempColor = if (telemetry.coolantTemp >= 100) Color.rgb(255, 100, 100) else Color.rgb(110, 231, 255)
-            r2.addView(metricBox("حرارة مياه التبريد", "${telemetry.coolantTemp} °C", tempColor).parent as View)
+            val tempDisplay = if (telemetry.coolantTemp > 0) "${telemetry.coolantTemp} °C" else "-- °C"
+            r2.addView(metricBox("حرارة مياه التبريد", tempDisplay, tempColor).parent as View)
             addView(r2)
 
             val r3 = LinearLayout(context).apply {
@@ -3795,7 +3796,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            r3.addView(metricBox("جهد شحن البطارية", "${String.format("%.1f", telemetry.batteryVoltage)}V", Color.WHITE).parent as View)
+            val battDisplay = if (telemetry.batteryVoltage > 0f) "${String.format("%.1f", telemetry.batteryVoltage)}V" else "-- V"
+            r3.addView(metricBox("جهد شحن البطارية", battDisplay, Color.WHITE).parent as View)
             val dtcColor = if (telemetry.dtcCodes.isEmpty()) Color.rgb(126, 242, 154) else Color.rgb(255, 122, 122)
             val dtcLabel = if (telemetry.dtcCodes.isEmpty()) "سليمة (0 أعطال) ✅" else "${telemetry.dtcCodes.size} أعطال مسجلة ⚠️"
             r3.addView(metricBox("حالة كمبيوتر المحرك", dtcLabel, dtcColor).parent as View)
@@ -4401,8 +4403,9 @@ class MainActivity : Activity() {
                     val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     layoutParams = lp
                 }
-                r1.addView(metricBox("سرعة المحرك (RPM)", "${telemetry.rpm} RPM", Color.rgb(248, 199, 74)).parent as View)
-                r1.addView(metricBox("حرارة سائل التبريد", "${telemetry.coolantTemp} °C", Color.rgb(110, 231, 255)).parent as View)
+                r1.addView(metricBox("سرعة المحرك (RPM)", if (telemetry.rpm > 0) "${telemetry.rpm} RPM" else "-- RPM", Color.rgb(248, 199, 74)).parent as View)
+                val tempDisplay = if (telemetry.coolantTemp > 0) "${telemetry.coolantTemp} °C" else "-- °C"
+                r1.addView(metricBox("حرارة سائل التبريد", tempDisplay, Color.rgb(110, 231, 255)).parent as View)
                 addView(r1)
 
                 val r2 = LinearLayout(context).apply {
@@ -4411,7 +4414,8 @@ class MainActivity : Activity() {
                     lp.topMargin = dp(6)
                     layoutParams = lp
                 }
-                r2.addView(metricBox("شحن البطارية / الدينامو", "${String.format("%.1f", telemetry.batteryVoltage)}V", Color.WHITE).parent as View)
+                val battDisplay = if (telemetry.batteryVoltage > 0f) "${String.format("%.1f", telemetry.batteryVoltage)}V" else "-- V"
+                r2.addView(metricBox("شحن البطارية / الدينامو", battDisplay, Color.WHITE).parent as View)
                 r2.addView(metricBox("نسبة الوقود بالتنك", "${telemetry.fuelLevel}%", Color.rgb(126, 242, 154)).parent as View)
                 addView(r2)
 
@@ -9408,8 +9412,8 @@ class MainActivity : Activity() {
         if (isLive) {
             tvSpeed.text = "${telemetry.speed} km/h"
             tvRpm.text = "${telemetry.rpm} RPM"
-            tvTemp.text = "${telemetry.coolantTemp} °C"
-            tvBattery.text = "${String.format("%.1f", telemetry.batteryVoltage)} V"
+            tvTemp.text = if (telemetry.coolantTemp > 0) "${telemetry.coolantTemp} °C" else "-- °C"
+            tvBattery.text = if (telemetry.batteryVoltage > 0f) "${String.format("%.1f", telemetry.batteryVoltage)} V" else "-- V"
             val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
             val litersRemaining = (telemetry.fuelLevel * tankCap / 100.0f)
             val fuelBadge = if (telemetry.fuelLevelSource.contains("🔌")) "🔌" else "🧮"
@@ -9655,7 +9659,7 @@ class MainActivity : Activity() {
                     desc,
                     critical = (diag.severity.contains("حرجة"))
                 )
-            } else if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs >= 8000L) && telemetry.batteryVoltage in 0.1f..11.8f) {
+            } else if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs >= 8000L) && telemetry.batteryVoltage in 6.0f..11.8f) {
                 // High Precision Rule: Starter motor cranking naturally dips voltage!
                 // Only alert if engine has been running steadily for >= 8 seconds and voltage stays below 11.9V
                 lowBatterySustainedCount++
@@ -10705,7 +10709,7 @@ class MainActivity : Activity() {
             val a = byteHex.toIntOrNull(16) ?: return -1
 
             val rawRes = if (probe.isLiters) {
-                val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
+                val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f).coerceAtLeast(20.0f)
                 ((a.toFloat() / tankCap) * 100.0f).toInt().coerceIn(0, 100)
             } else if (probe.isUds) {
                 if (a in 0..100) a else (a * 100) / 255
@@ -11424,8 +11428,8 @@ class MainActivity : Activity() {
             wmi in listOf("JF1", "JF2", "4S3") -> "سوبارو (Subaru)"
             // Ford
             wmi in listOf("1FA", "1FB", "1FC", "1FD", "1FM", "1FT", "2FA", "2FM", "3FA", "WF0", "SFA") -> "فورد (Ford)"
-            // Chevrolet / GM
-            wmi in listOf("1G1", "1GC", "2G1", "3G1", "KL1", "KL7", "9BG") -> "شيفروليه (Chevrolet)"
+            // Chevrolet / GM / Daewoo
+            wmi in listOf("1G1", "1GC", "2G1", "3G1", "KL1", "KL7", "KLM", "KLA", "9BG") -> "شيفروليه (Chevrolet)"
             // GMC
             wmi in listOf("1GT", "2GT") -> "جي إم سي (GMC)"
             // Jeep / Dodge / Chrysler
@@ -11441,14 +11445,16 @@ class MainActivity : Activity() {
             wmi in listOf("WAU", "WA1") -> "أودي (Audi)"
             // Skoda
             wmi.startsWith("TMB") -> "سكودا (Skoda)"
+            // Seat
+            wmi.startsWith("VSS") -> "سيات (Seat)"
             // Renault / Dacia
             wmi in listOf("VF1", "UU1", "VF2") -> "رينو (Renault / Dacia)"
             // Peugeot
             wmi.startsWith("VF3") -> "بيجو (Peugeot)"
             // Citroen
             wmi.startsWith("VF7") -> "ستروين (Citroën)"
-            // Fiat
-            wmi in listOf("ZFA", "ZFC", "2FA", "3FA") -> "فيات (Fiat)"
+            // Fiat (Fixed: removed 2FA/3FA Ford Canada/Mexico collisions)
+            wmi in listOf("ZFA", "ZFC", "SUA", "9BD") -> "فيات (Fiat)"
             // Opel
             wmi.startsWith("W0L") -> "أوبل (Opel)"
             // Suzuki
@@ -11634,9 +11640,15 @@ class MainActivity : Activity() {
         if (isOemSpecific) {
             val isToyota = detectedBrand.contains("toyota") || detectedBrand.contains("تويوتا") || detectedBrand.contains("lexus") || detectedBrand.contains("لكزس")
             val isHyundaiKia = detectedBrand.contains("hyundai") || detectedBrand.contains("هيونداي") || detectedBrand.contains("kia") || detectedBrand.contains("كيا")
-            val isGmChevy = detectedBrand.contains("chevrolet") || detectedBrand.contains("شيفروليه") || detectedBrand.contains("gm") || detectedBrand.contains("daewoo") || detectedBrand.contains("دايو")
+            val isGmChevy = detectedBrand.contains("chevrolet") || detectedBrand.contains("شيفروليه") || detectedBrand.contains("gm") || detectedBrand.contains("daewoo") || detectedBrand.contains("دايو") || detectedBrand.contains("opel") || detectedBrand.contains("أوبل")
             val isFord = detectedBrand.contains("ford") || detectedBrand.contains("فورد")
             val isNissan = detectedBrand.contains("nissan") || detectedBrand.contains("نيسان") || detectedBrand.contains("infiniti")
+            val isVag = detectedBrand.contains("volkswagen") || detectedBrand.contains("فولكس") || detectedBrand.contains("audi") || detectedBrand.contains("أودي") || detectedBrand.contains("skoda") || detectedBrand.contains("سكودا") || detectedBrand.contains("seat") || detectedBrand.contains("سيات")
+            val isBmw = detectedBrand.contains("bmw") || detectedBrand.contains("بي إم") || detectedBrand.contains("mini") || detectedBrand.contains("ميني")
+            val isMercedes = detectedBrand.contains("mercedes") || detectedBrand.contains("مرسيدس")
+            val isRenaultPeugeot = detectedBrand.contains("renault") || detectedBrand.contains("رينو") || detectedBrand.contains("peugeot") || detectedBrand.contains("بيجو") || detectedBrand.contains("citroen") || detectedBrand.contains("ستروين") || detectedBrand.contains("dacia")
+            val isMitsubishi = detectedBrand.contains("mitsubishi") || detectedBrand.contains("ميتسوبيشي")
+            val isFiat = detectedBrand.contains("fiat") || detectedBrand.contains("فيات")
 
             // Case A: Toyota / Lexus OEM Codes
             if (isToyota) {
@@ -11689,14 +11701,72 @@ class MainActivity : Activity() {
                 }
             }
 
+            // Case F: Volkswagen / Audi / Skoda / Seat (VAG) OEM Codes
+            if (isVag) {
+                when (clean) {
+                    "P1171" -> return DtcDiagnosis(clean, "حساس زاوية فتح بوابة الهواء إشارة 2 (Throttle Actuator Potentiometer Signal 2)", "نظام البوابة وسحب الهواء", "• عطل في المقاومة المتغيرة الثانية لبوابة الثروتل الإلكترونية\n• اتساخ فيشة البوابة أو ترسب الكربون", "تنظيف بوابة الهواء وعمل معايرة Adaption بجهاز الفحص.", "متوسطة", true, "فولكس فاجن / VAG")
+                    "P1297" -> return DtcDiagnosis(clean, "انخفاض الضغط بين مخرج التيربو وبوابة الهواء (Pressure Drop Turbo to Throttle)", "نظام شحن الهواء والتيربو", "• تسريب هواء أو تنفيس في خراطيم الإنتركولر أو بلف التنفيس Diverter Valve", "فحص وصلات وخراطيم التيربو والإنتركولر والتأكد من إحكام القفزان.", "متوسطة", true, "فولكس فاجن / VAG")
+                    "P1555" -> return DtcDiagnosis(clean, "تجاوز الحد الأقصى لضغط شحن التيربو (Charge Pressure Upper Limit Exceeded)", "نظام التيربو والتحكم بالضغط", "• صمام Wastegate أو صمام N75 عالق في وضع الإغلاق\n• قد يؤدي لتلف التيربو", "فحص صمام N75 الكهربائي وبلف التحكم بضغط التيربو.", "خطيرة", true, "فولكس فاجن / VAG")
+                    "P1602" -> return DtcDiagnosis(clean, "انخفاض جهد التغذية الدائمة للكمبيوتر خط 30 (Terminal 30 Voltage Too Low)", "الدائرة الكهربائية الرئيسية", "• تم فصل كابل البطارية حديثاً أو هبوط حاد في جهد البطارية عند التدوير", "تأكد من شحن البطارية ونظافة قواطيش التوصيل وامسح الكود.", "تحذيرية", true, "فولكس فاجن / VAG")
+                }
+            }
+
+            // Case G: BMW / Mini OEM Codes
+            if (isBmw) {
+                when (clean) {
+                    "P1083" -> return DtcDiagnosis(clean, "خليط وقود فقير جداً بنك 1 حساس 1 (Fuel Control Mixture Lean Bank 1)", "نظام الوقود والهواء", "• تسريب هواء فاكيوم بعد حساس MAF أو ضعف في ضغط طلمبة الوقود\n• عطل في صمام بخار الزيت CCV", "فحص خراطيم سحب الهواء وبلوف الفاكيوم وصمام الـ CCV.", "متوسطة", true, "بي إم دبليو (BMW)")
+                    "P1085" -> return DtcDiagnosis(clean, "خليط وقود فقير جداً بنك 2 حساس 1 (Fuel Control Mixture Lean Bank 2)", "نظام الوقود والهواء", "• تسريب فاكيوم بمانيفولد السحب بنك 2 أو اتساخ الرشاشات", "فحص تسريبات الفاكيوم بمولد الدخان (Smoke Test).", "متوسطة", true, "بي إم دبليو (BMW)")
+                    "P1159" -> return DtcDiagnosis(clean, "انحراف تصحيح الوقود بنك 1 للحد الأقصى (Fuel Trim Bank 1 High)", "نظام حقن الوقود", "• اتساخ حساس تدفق الهواء MAF أو ضغط وقود غير منتظم", "تنظيف حساس MAF وفحص ضغط طلمبة البنزين وفلتر الوقود.", "متوسطة", true, "بي إم دبليو (BMW)")
+                    "P1188" -> return DtcDiagnosis(clean, "معايرة وقود غير صحيحة بنك 1 (Fuel Control Bank 1 Out of Range)", "نظام إدارة المحرك", "• اتساخ شمعات الاحتراق أو انسداد الرشاشات بنك 1", "فحص البوجيهات وضغط الرشاشات.", "متوسطة", true, "بي إم دبليو (BMW)")
+                }
+            }
+
+            // Case H: Mercedes-Benz OEM Codes
+            if (isMercedes) {
+                when (clean) {
+                    "P1105" -> return DtcDiagnosis(clean, "عطل في حساس الضغط الجوي المدمج بالكمبيوتر (Atmospheric Pressure Sensor)", "كمبيوتر المحرك ECU", "• تلف حساس الضغط البارومتري الداخلي أو خلل في دائرة التغذية", "فحص كمبيوتر المحرك وبرمجته لدى مركز متخصص.", "متوسطة", true, "مرسيدس بنز")
+                    "P1470" -> return DtcDiagnosis(clean, "خلل في صمام التحكم بضغط شاحن التيربو (Charge Pressure Control Valve)", "نظام التيربو", "• تلف بلف تحويل الضغط الكهربائي أو تسريب في خراطيم الفاكيوم", "فحص صمام التحكم الفاكيوم وخراطيم التيربو.", "متوسطة", true, "مرسيدس بنز")
+                    "P1630" -> return DtcDiagnosis(clean, "عطل في نظام حظر التشغيل والمفتاح المشفر (Drive Authorization System Fault)", "نظام الحماية والإيموبلايزر", "• عدم تطابق إشارة المفتاح الإلكتروني مع كمبيوتر المحرك أو كمبيوتر EZS", "فحص ريموت السيارة والمفتاح وتوصيلات وحدة الـ EZS.", "حرجة / فورية", true, "مرسيدس بنز")
+                }
+            }
+
+            // Case I: Mitsubishi OEM Codes
+            if (isMitsubishi) {
+                when (clean) {
+                    "P1200" -> return DtcDiagnosis(clean, "عطل في دائرة تشغيل رشاشات الوقود (Injector Driver Circuit)", "نظام حقن الوقود", "• انقطاع في سلك تغذية الرشاشات أو تلف ترانزستور الإشارة بالكمبيوتر", "فحص فيش وأسلاك الرشاشات وقياس المقاومة الكهربائية.", "حرجة / فورية", true, "ميتسوبيشي")
+                    "P1500" -> return DtcDiagnosis(clean, "عطل في طرف إشارة دينامو الشحن بالكمبيوتر (Alternator FR Terminal Circuit)", "نظام الشحن والكهرباء", "• انقطاع سلك طرف الـ FR بين الدينامو وكمبيوتر المحرك\n• خلل في كتاوت الدينامو", "فحص فيشة الدينامو وسلك الإشارة ومراجعة جهد الشحن.", "تحذيرية", true, "ميتسوبيشي")
+                }
+            }
+
+            // Case J: Renault / Peugeot / Citroen OEM Codes
+            if (isRenaultPeugeot) {
+                when (clean) {
+                    "P1525" -> return DtcDiagnosis(clean, "إشارة غير متطابقة للبوابة ونظام تثبيت السرعة (Throttle / Cruise Inconsistent)", "نظام حقن الهواء والسرعة", "• سجل كمبيوتر المحرك تعارضاً في إشارة البوابة وأوقف مثبت السرعة حمايةً للنظام", "فحص بوابة الهواء وحساس البدال ومسح كود المحرك التابع.", "متوسطة", true, "رينو / بيجو / ستروين")
+                    "P1641" -> return DtcDiagnosis(clean, "عطل في دائرة مرحل طلمبة الوقود أو شمعات التسخين (Fuel Pump / Glow Relay)", "دائرة الوقود والتشغيل", "• تلف ريليه طلمبة الوقود أو احتراق فيوز سخانات الديزل", "فحص فيوز وريليه طلمبة البنزين وسخانات الديزل.", "متوسطة", true, "رينو / بيجو / ستروين")
+                }
+            }
+
+            // Case K: Fiat OEM Codes
+            if (isFiat) {
+                when (clean) {
+                    "P1121" -> return DtcDiagnosis(clean, "حساس وضع بوابة الهواء إشارة خارج المدى (TPS Signal Out of Range)", "نظام سحب الهواء", "• تلف حساس البوابة أو ارتخاء الفيشة الكهربائية", "فحص فيشة حساس البوابة وتنظيف مسار الهواء.", "متوسطة", true, "فيات")
+                    "P1300" -> return DtcDiagnosis(clean, "إعادة معايرة ترس الكرنك مطلوبة (Phonic Wheel Learn Procedure)", "نظام توقيت الإشعال والكرنك", "• تم استبدال سير الكاتينة أو حساس الكرنك ويتطلب الكمبيوتر عمل معايرة Phonic Wheel", "تنفيذ إجراء المعايرة بجهاز كشف الأعطال أو القيادة 3 مرات متتالية لدوران 5000 RPM سلانسيه.", "تحذيرية", true, "فيات")
+                }
+            }
+
             // General Fallback for OEM-Specific Code when brand dictionary doesn't have it or brand is unselected:
             val activeBrandDisplay = if (detectedBrand != "عام" && detectedBrand.isNotBlank()) detectedBrand else "غير محددة"
+            val brandNotice = if (activeBrandDisplay == "غير محددة") {
+                "⚠️ تحذير هندسي حاسم لمنع الخلط بين الماركات:\n• هذا الكود مصنعي خاص (OEM-Specific) وتختلف وظيفته وتشخيصه كلياً بين الماركات (مثلاً P1121 في تويوتا هو صمام تبريد مياه، وفي نيسان محرك بوابة، وفي فورد تعارض مع الماف، وفي شيفروليه بدال بنزين).\n• يرجى تحديد ماركة وموديل سيارتك في الإعدادات أو القاموس لعرض التشخيص المصنعي المطابق بنسبة 100%."
+            } else {
+                "• كود عطل خاص بشركة الصانع (${activeBrandDisplay}) ولا يتبع المعايير الموحدة (SAE Generic).\n• تم رصده في السيارة: ${activeBrandDisplay}.\n• تحذير هندسي: هذا الكود لا ينطبق على سيارات الماركات الأخرى بنفس المعنى لمنع الخلط في الصيانة."
+            }
             return DtcDiagnosis(
                 clean,
                 "كود خاص بالشركة الصانعة: [$clean]",
                 "عطل مصنعي خاص (OEM Specific)",
-                "• كود عطل خاص بالشركة المصنعة للسيارة (${activeBrandDisplay}) ولا يتبع المعايير العامة (SAE Generic).\n• تحذير هندسي لمنع الخلط: هذا الكود يختلف معناه تماماً من شركة لأخرى (مثل تويوتا، شيفروليه، هيونداي، فورد).\n• تم رصده في السيارة المسجلة: ${activeBrandDisplay}.",
-                "تأكد من ضبط ماركة وموديل سيارتك بدقة في الإعدادات، واستخدم جهاز فحص الوكيل المتوافق مع بروتوكول ${activeBrandDisplay} لتحديد التفسير الدقيق للمصنع.",
+                brandNotice,
+                "تأكد من اختيار ماركة سيارتك بدقة، واستخدم جهاز فحص الوكيل المتوافق مع بروتوكول ${activeBrandDisplay} أو راجع دليل الصيانة المصنعي المعتمد.",
                 "فحص مصنعي خاص",
                 true,
                 activeBrandDisplay
@@ -11816,21 +11886,65 @@ class MainActivity : Activity() {
     }
 
     private fun showDtcLookupDialog() {
-        val etCode = edit("أدخل كود العطل (مثال: P0420)").apply {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+        }
+
+        val activeBrand = getActiveVehicleBrand()
+        val brandOptions = listOf(
+            "السيارة الحالية ($activeBrand)",
+            "تويوتا / لكزس (Toyota / Lexus)",
+            "هيونداي / كيا (Hyundai / Kia)",
+            "شيفروليه / GM / دايو (Chevrolet / Aveo / Optra)",
+            "نيسان / إنفينيتي (Nissan / Infiniti)",
+            "فورد (Ford)",
+            "فولكس فاجن / أودي / سكودا / سيات (VAG)",
+            "بي إم دبليو (BMW)",
+            "مرسيدس بنز (Mercedes-Benz)",
+            "رينو / بيجو / ستروين (French Cars)",
+            "ميتسوبيشي (Mitsubishi)",
+            "فيات (Fiat)"
+        )
+
+        val brandLabel = text("اختر صانع السيارة (لمنع الخلط في الأكواد المصنعية P1xxx):", 12, Color.rgb(180, 210, 230), false).apply {
+            setPadding(0, 0, 0, dp(6))
+        }
+        val brandSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, brandOptions)
+            setBackgroundColor(Color.rgb(16, 37, 66))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(12)
+            layoutParams = lp
+        }
+
+        val codeLabel = text("أدخل كود العطل:", 12, Color.rgb(180, 210, 230), false).apply {
+            setPadding(0, 0, 0, dp(4))
+        }
+        val etCode = edit("أدخل كود العطل (مثال: P0420 أو P1121)").apply {
             inputType = InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         }
+
+        container.addView(brandLabel)
+        container.addView(brandSpinner)
+        container.addView(codeLabel)
+        container.addView(etCode)
+
         AlertDialog.Builder(this)
-            .setTitle("🔍 قاموس تفسير أعطال OBD-II الشامل")
-            .setMessage("أدخل أي كود عطل يظهر في السيارة (P, C, B, U) لمعرفة معناه وتشخيصه وأسبابه وطريقة الإصلاح باللغة العربية فورياً:")
-            .setView(etCode)
+            .setTitle("🔍 قاموس تفسير أعطال OBD-II الشامل الذكي")
+            .setMessage("ابحث عن أي كود عطل (P, C, B, U) لمعرفة معناه وتشخيصه وأسبابه وطريقة الإصلاح باللغة العربية مع ربطه المباشر بصانع سيارتك لمنع الخلط الهندسي بين الأنظمة:")
+            .setView(container)
             .setPositiveButton("تشخيص العطل") { _, _ ->
                 val code = etCode.text.toString().trim().uppercase()
                 if (code.isNotBlank()) {
-                    val diag = diagnoseDtc(code)
+                    val selectedPos = brandSpinner.selectedItemPosition
+                    val chosenBrand = if (selectedPos == 0) activeBrand else brandOptions[selectedPos]
+                    val diag = diagnoseDtc(code, chosenBrand)
                     val oemInfo = if (diag.isManufacturerSpecific) {
-                        "🏢 تصنيف الكود: عطل خاص بمصنع السيارة [${diag.targetBrand}]\n⚠️ تنبيه هندسي: هذا الكود خاص بشركة الصانع ويختلف معناه من ماركة لأخرى منعاً للخلط.\n\n"
+                        "🏢 تصنيف الكود: كود مصنعي خاص [${diag.targetBrand}]\n⚠️ تنبيه هندسي لمنع الخلط: هذا الكود خاص بشركة الصانع وتختلف وظيفته كلياً من سيارة لأخرى (مثال: كود P1121 في تويوتا هو صمام تبريد مياه، وفي نيسان محرك بوابة، وفي فورد تعارض مع الماف، وفي شيفروليه بدال بنزين).\n\n"
                     } else {
-                        "🌐 تصنيف الكود: كود قياسي عام (SAE/ISO Generic - معتمد لكافة السيارات عالمياً)\n\n"
+                        "🌐 تصنيف الكود: كود قياسي موحد عالمياً (SAE/ISO Generic - معتمد لكافة السيارات بلا اختلاف)\n\n"
                     }
                     AlertDialog.Builder(this)
                         .setTitle("تقرير فحص العطل: [${diag.code}]")

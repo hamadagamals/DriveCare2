@@ -91,6 +91,7 @@ class SpeedBumpManager(
     private var hasPitchRotation = false
     private var hasNegativeRebound = false
     private var lastBumpFeltTimeMs: Long = 0L
+    private var filteredGravity: Float = 9.81f
 
     // Current vehicle telemetry
     private var latestGpsLocation: Location? = null
@@ -330,7 +331,9 @@ class SpeedBumpManager(
                 val ay = event.values[1]
                 val az = event.values[2]
                 val totalMag = sqrt((ax * ax + ay * ay + az * az).toDouble()).toFloat()
-                val dynamicShock = totalMag - 9.81f
+                // Adaptive low-pass filter: converges to phone's mounting gravity baseline & sensor calibration offset
+                filteredGravity = (0.95f * filteredGravity) + (0.05f * totalMag.coerceIn(8.5f, 11.5f))
+                val dynamicShock = totalMag - filteredGravity
 
                 // 1. Positive upward shock (+Shock > 2.8 m/s^2)
                 if (dynamicShock > 2.8f && !hasPositiveShock) {
@@ -536,7 +539,8 @@ class SpeedBumpManager(
         val dphi = Math.toRadians(lat2 - lat1)
         val dlambda = Math.toRadians(lon2 - lon1)
         val a = sin(dphi / 2.0).pow(2.0) + cos(phi1) * cos(phi2) * sin(dlambda / 2.0).pow(2.0)
-        return EARTH_RADIUS_METERS * 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
+        val aClamped = a.coerceIn(0.0, 1.0)
+        return EARTH_RADIUS_METERS * 2.0 * atan2(sqrt(aClamped), sqrt(1.0 - aClamped))
     }
 
     private fun initialBearingDegrees(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
