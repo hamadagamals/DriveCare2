@@ -826,6 +826,29 @@ class MainActivity : Activity() {
         }
     }
 
+    inner class DarkSpinnerAdapter(context: Context, items: List<String>) :
+        ArrayAdapter<String>(context, android.R.layout.simple_spinner_item, items) {
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val v = super.getView(position, convertView, parent)
+            if (v is TextView) {
+                v.setTextColor(Color.WHITE)
+                v.textSize = 13f
+                v.setTypeface(v.typeface, Typeface.BOLD)
+            }
+            return v
+        }
+        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val v = super.getDropDownView(position, convertView, parent)
+            if (v is TextView) {
+                v.setTextColor(Color.rgb(220, 240, 255))
+                v.setBackgroundColor(Color.rgb(14, 30, 48))
+                v.textSize = 13f
+                v.setPadding(dp(14), dp(10), dp(14), dp(10))
+            }
+            return v
+        }
+    }
+
     private fun buildSpeedBumpsSubScreen(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -834,10 +857,10 @@ class MainActivity : Activity() {
             layoutParams = lp
         }
 
-        // 1. Hero Card: Master Audio Warning Toggle & Sound Settings Link
+        // Hero Card: Master Audio Warning Toggle & Sound Settings Link
         val hero = card().apply {
             addView(text("🛑 رادار وتحذيرات المطبات الذكية", 16, Color.rgb(255, 180, 70), true))
-            addView(text("تنبيه صوتي ذكي موجز (أصوات بشرية طبيعية ونغمات) قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
+            addView(text("تنبيه صوتي ذكي موجز قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
                 setPadding(0, dp(4), 0, dp(12))
             })
 
@@ -866,7 +889,6 @@ class MainActivity : Activity() {
             }
             addView(tvMasterNote)
 
-            // Setup master button interaction
             btnMasterToggle.setOnClickListener {
                 isBumpWarningEnabled = !isBumpWarningEnabled
                 preferences.edit().putBoolean("is_bump_warning_enabled", isBumpWarningEnabled).apply()
@@ -882,7 +904,7 @@ class MainActivity : Activity() {
                 tvMasterNote.setTextColor(if (isEn) Color.rgb(160, 210, 230) else Color.rgb(140, 230, 180))
 
                 if (!isEn) {
-                    Toast.makeText(this@MainActivity, "تم إلغاء التحذير الصوتي (الرصد مستمر بالخلفية)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "تم كتم التحذير الصوتي (الرصد مستمر بالخلفية)", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this@MainActivity, "تم تفعيل التحذير الصوتي للمطبات", Toast.LENGTH_SHORT).show()
                 }
@@ -941,31 +963,46 @@ class MainActivity : Activity() {
         }
         root.addView(hero)
 
-        // 2. Rules and Kinematic Logic Card
-        val rulesCard = card().apply {
-            addView(text("⚙️ خوارزمية الرصد والتوثيق الذكي", 14, Color.rgb(110, 231, 255), true))
-            addView(text("تم ضبط شروط التوثيق المجتمعي وفق أحدث معايير الأمان الهندسي:", 11, Color.rgb(160, 190, 215), false).apply {
-                setPadding(0, dp(2), 0, dp(10))
-            })
+        // Operational Control Card (Direct Functions & Live Audio Test)
+        val controlCard = card().apply {
+            addView(text("🎮 التحكم المباشر وتجربة التحذير", 14, Color.rgb(110, 231, 255), true))
 
-            val item1 = "1️⃣ بوابة الأمان وسرعة السيارة:\nأي حركة للجوال وسرعة السيارة أعلى من 21 كم/س يتم تجاهلها تماماً لمنع الإنذارات الخاطئة واهتزازات اليد."
-            val item2 = "2️⃣ نمط المطب الحركي المعتمد:\nيتم الرصد فقط عند السرعة < 21 كم/س بتسلسل دقيق: تباطؤ ⬅️ صدمة رأسية (+Z) ⬅️ دوران وانقلاب الزاوية ⬅️ ارتداد سفلي (-Z) ⬅️ تسارع مجدداً."
-            val item3 = "3️⃣ التوثيق المجتمعي والحذف التلقائي:\nيتم اعتماد المطب فورياً من أول رصد، ولكن في حال مرور سيارات أخرى على نفس النقطة دون استشعار نمط المطب يتم حذفه تلقائياً من الخريطة لحماية دقة البيانات."
-            val item4 = "4️⃣ المطابقة اليومية على السيرفر (Map-Matching):\nتتم مطابقة المطبات الجديدة يومياً بالسيرفر لفصل طريق الخدمة عن الطريق السريع وتصحيح الحركات المخالفة المعاكسة لحركة السير (عكس الاتجاه)."
+            val statusRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                setBackgroundColor(Color.rgb(14, 32, 48))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
 
-            listOf(item1, item2, item3, item4).forEach { rule ->
-                addView(LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(10), dp(8), dp(10), dp(8))
-                    setBackgroundColor(Color.rgb(14, 32, 48))
-                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    lp.bottomMargin = dp(6)
-                    layoutParams = lp
-                    addView(text(rule, 11, Color.rgb(220, 235, 245), false))
-                })
+                val tvStatus = text(
+                    if (isBumpWarningEnabled) "حالة التحذير: 🟢 نشط ويعمل بالخلفية" else "حالة التحذير: ⚪ مكتوم (رصد صامت)",
+                    12,
+                    if (isBumpWarningEnabled) Color.rgb(126, 242, 154) else Color.rgb(200, 220, 235),
+                    true
+                )
+                addView(tvStatus)
             }
+            addView(statusRow)
+
+            val btnTestBump = Button(this@MainActivity).apply {
+                text = "🔔 تجربة صوت تحذير المطب الآن"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(22, 65, 95))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+                setOnClickListener {
+                    alertSoundPlayer.playBump100m()
+                    Toast.makeText(this@MainActivity, "تم تشغيل تحذير المطب للتجربة", Toast.LENGTH_SHORT).show()
+                }
+            }
+            addView(btnTestBump)
         }
-        root.addView(rulesCard)
+        root.addView(controlCard)
 
         return root
     }
@@ -980,9 +1017,9 @@ class MainActivity : Activity() {
 
         // Hero Card
         val hero = card().apply {
-            addView(text("🔊 استوديو الأصوات البشرية والنغمات التنبيهية", 16, Color.rgb(110, 231, 255), true))
-            addView(text("خصص الأصوات والنغمات ومستوى شدة الصوت (Volume) لكل خطر على حدة. الجمل الصوتية موجزة وغير مزعجة، ويمكنك الاستماع للتجربة قبل الاعتماد.", 12, Color.rgb(180, 210, 230), false).apply {
-                setPadding(0, dp(4), 0, dp(8))
+            addView(text("🔊 نغمات وأصوات التنبيه الذكية", 16, Color.rgb(110, 231, 255), true))
+            addView(text("اختر نوع التنبيه ثم حدد النغمة أو الصوت البشري المناسب ومستوى الصوت.", 12, Color.rgb(180, 210, 230), false).apply {
+                setPadding(0, dp(4), 0, dp(4))
             })
         }
         root.addView(hero)
@@ -990,214 +1027,180 @@ class MainActivity : Activity() {
         data class SoundCategoryDef(
             val key: String,
             val title: String,
-            val icon: String,
-            val description: String
+            val icon: String
         )
 
         val categories = listOf(
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_BUMP_100M,
-                "تحذير اقتراب المطب المبكر (قبل 100 متر)",
-                "🛑",
-                "يُطلق عندما تكون السيارة متجهة نحو مطب على بعد 100م."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_BUMP_25M,
-                "تحذير المطب الفوري الحاسم (قبل 25 متر)",
-                "⚠️",
-                "يُطلق عند الاقتراب المباشر بمسافة 25م للتنبيه الصوتي الحاسم."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_ENGINE_HEAT,
-                "حرارة المحرك وسائل التبريد (Coolant Overheat)",
-                "🚨",
-                "إنذار طوارئ عند تجاوز حرارة سائل تبريد المحرك 100°C."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_DTC_ERROR,
-                "أكواد أعطال كمبيوتر السيارة (Check Engine / DTC)",
-                "🔍",
-                "تنبيه فحص إلكتروني فور رصد كود عطل في كمبيوتر المحرك."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_BATTERY,
-                "انخفاض جهد البطارية والشحن (الدينامو)",
-                "🔋",
-                "تنبيه عند هبوط جهد البطارية أثناء عمل المحرك عن 11.9 فولت (مفلتر ضد هبوط بدء التشغيل)."
-            ),
-            SoundCategoryDef(
-                AlertSoundPlayer.KEY_SOUND_OIL_MAINT,
-                "تذكير موعد الصيانة الدورية وغيار الزيت",
-                "🛢️",
-                "تذكير صيانة هادئ عند اقتراب انتهاء الكيلومترات المحددة للزيت."
-            )
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_BUMP_100M, "تحذير اقتراب المطب المبكر (100 متر)", "🛑"),
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_BUMP_25M, "تحذير المطب الفوري الحاسم (25 متر)", "⚠️"),
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_ENGINE_HEAT, "حرارة سائل تبريد المحرك (Coolant Overheat)", "🚨"),
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_DTC_ERROR, "أكواد أعطال كمبيوتر المحرك (DTC)", "🔍"),
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_BATTERY, "انخفاض شحن البطارية والدينامو", "🔋"),
+            SoundCategoryDef(AlertSoundPlayer.KEY_SOUND_OIL_MAINT, "تذكير موعد الصيانة وغيار الزيت", "🛢️")
         )
 
-        for (cat in categories) {
-            val catCard = card().apply {
-                addView(text("${cat.icon} ${cat.title}", 14, Color.rgb(255, 200, 100), true))
-                addView(text(cat.description, 11, Color.rgb(160, 195, 220), false).apply {
-                    setPadding(0, dp(2), 0, dp(6))
-                })
+        val settingsCard = card().apply {
+            addView(text("1️⃣ اختيار نوع التنبيه:", 13, Color.rgb(255, 200, 100), true).apply {
+                setPadding(0, dp(2), 0, dp(6))
+            })
 
-                // 1. Volume Control Bar
-                val volContainer = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(10), dp(8), dp(10), dp(8))
-                    setBackgroundColor(Color.rgb(11, 26, 40))
-                    val vlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    vlp.bottomMargin = dp(10)
-                    layoutParams = vlp
-                }
+            var currentCategoryIndex = 0
+            var currentOptions = alertSoundPlayer.getOptionsForCategory(categories[0].key)
 
-                fun renderVolumeBar() {
-                    volContainer.removeAllViews()
-                    val curVol = alertSoundPlayer.getCategoryVolume(cat.key)
-                    val pct = (curVol * 100).toInt()
-
-                    val volLabel = text("🔊 شدة ومستوى الصوت لهذا التحذير: ${if (pct == 0) "مكتوم 🔇" else "$pct%"}", 12, Color.rgb(110, 231, 255), true)
-                    volContainer.addView(volLabel)
-
-                    val volButtonsRow = LinearLayout(this@MainActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
-                        rlp.topMargin = dp(6)
-                        layoutParams = rlp
-                    }
-
-                    val levels = listOf(
-                        Pair(0.0f, "🔇 كتم"),
-                        Pair(0.25f, "25%"),
-                        Pair(0.50f, "50%"),
-                        Pair(0.75f, "75%"),
-                        Pair(1.0f, "100%")
-                    )
-
-                    for ((volVal, volName) in levels) {
-                        val isCurrent = Math.abs(curVol - volVal) < 0.08f
-                        val btnVol = Button(this@MainActivity).apply {
-                            text = if (isCurrent) "$volName ✓" else volName
-                            textSize = 10f
-                            typeface = Typeface.DEFAULT_BOLD
-                            setTextColor(if (isCurrent) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245))
-                            setBackgroundColor(if (isCurrent) Color.rgb(80, 227, 194) else Color.rgb(24, 48, 72))
-                            val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
-                            blp.setMargins(dp(2), 0, dp(2), 0)
-                            layoutParams = blp
-                            setOnClickListener {
-                                alertSoundPlayer.setCategoryVolume(cat.key, volVal)
-                                renderVolumeBar()
-                                if (volVal > 0.05f) {
-                                    val opt = alertSoundPlayer.getOptionsForCategory(cat.key).firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(cat.key) }
-                                    if (opt != null) {
-                                        alertSoundPlayer.playRawSound(opt.resId, volVal)
-                                    }
-                                }
-                                Toast.makeText(this@MainActivity, "شدة صوت ${cat.title}: $volName", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        volButtonsRow.addView(btnVol)
-                    }
-                    volContainer.addView(volButtonsRow)
-                }
-
-                renderVolumeBar()
-                addView(volContainer)
-
-                // 2. Sound & Tone Options Container
-                val options = alertSoundPlayer.getOptionsForCategory(cat.key)
-
-                val optionsContainer = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                }
-
-                fun renderOptions() {
-                    optionsContainer.removeAllViews()
-                    val selectedId = alertSoundPlayer.getSelectedSoundId(cat.key)
-
-                    for (opt in options) {
-                        val isSelected = (opt.id == selectedId)
-                        val optRow = LinearLayout(this@MainActivity).apply {
-                            orientation = LinearLayout.VERTICAL
-                            setPadding(dp(12), dp(10), dp(12), dp(10))
-                            setBackgroundColor(if (isSelected) Color.rgb(20, 48, 70) else Color.rgb(13, 28, 42))
-                            val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                            rlp.bottomMargin = dp(8)
-                            layoutParams = rlp
-
-                            val topRow = LinearLayout(this@MainActivity).apply {
-                                orientation = LinearLayout.HORIZONTAL
-                                gravity = Gravity.CENTER_VERTICAL
-                                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-
-                                val badgeText = if (opt.isVoice) "🎙️ صوت بشري طبيعي" else "🎵 نغمة صوتية"
-                                val badgeColor = if (opt.isVoice) Color.rgb(80, 227, 194) else Color.rgb(180, 210, 255)
-                                addView(text(badgeText, 10, badgeColor, true).apply {
-                                    setPadding(dp(6), dp(2), dp(6), dp(2))
-                                    setBackgroundColor(if (opt.isVoice) Color.rgb(18, 55, 50) else Color.rgb(24, 45, 75))
-                                })
-
-                                addView(text(opt.title, 13, if (isSelected) Color.rgb(255, 230, 150) else Color.WHITE, true).apply {
-                                    val tlp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                                    tlp.rightMargin = dp(8)
-                                    layoutParams = tlp
-                                })
-                            }
-                            addView(topRow)
-
-                            addView(text(opt.subtitle, 11, Color.rgb(180, 205, 225), false).apply {
-                                setPadding(0, dp(4), 0, dp(8))
-                            })
-
-                            val buttonsRow = LinearLayout(this@MainActivity).apply {
-                                orientation = LinearLayout.HORIZONTAL
-                                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-
-                                val btnListen = Button(this@MainActivity).apply {
-                                    text = "▶ استماع للتجربة"
-                                    textSize = 11f
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setTextColor(Color.WHITE)
-                                    setBackgroundColor(Color.rgb(28, 62, 92))
-                                    val lpBtn = LinearLayout.LayoutParams(0, dp(38), 1f)
-                                    lpBtn.leftMargin = dp(4)
-                                    layoutParams = lpBtn
-                                    setOnClickListener {
-                                        val vol = alertSoundPlayer.getCategoryVolume(cat.key)
-                                        alertSoundPlayer.playRawSound(opt.resId, if (vol <= 0.02f) 1.0f else vol)
-                                    }
-                                }
-                                addView(btnListen)
-
-                                val btnSelect = Button(this@MainActivity).apply {
-                                    text = if (isSelected) "تم الاختيار ✅" else "اختيار 🔘"
-                                    textSize = 11f
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setTextColor(if (isSelected) Color.rgb(8, 23, 32) else Color.rgb(220, 240, 255))
-                                    setBackgroundColor(if (isSelected) Color.rgb(80, 227, 194) else Color.rgb(42, 75, 105))
-                                    val lpBtn = LinearLayout.LayoutParams(0, dp(38), 1f)
-                                    lpBtn.rightMargin = dp(4)
-                                    layoutParams = lpBtn
-                                    setOnClickListener {
-                                        alertSoundPlayer.setSelectedSoundId(cat.key, opt.id)
-                                        renderOptions()
-                                        Toast.makeText(this@MainActivity, "تم اعتماد: ${opt.title}", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                                addView(btnSelect)
-                            }
-                            addView(buttonsRow)
-                        }
-                        optionsContainer.addView(optRow)
-                    }
-                }
-
-                renderOptions()
-                addView(optionsContainer)
+            // Spinner 1: Category Selector
+            val spinnerCategory = Spinner(this@MainActivity).apply {
+                val catTitles = categories.map { "${it.icon} ${it.title}" }
+                adapter = DarkSpinnerAdapter(this@MainActivity, catTitles)
+                setBackgroundColor(Color.rgb(18, 42, 65))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                lp.bottomMargin = dp(14)
+                layoutParams = lp
             }
-            root.addView(catCard)
+            addView(spinnerCategory)
+
+            addView(text("2️⃣ اختيار النغمة أو الصوت البشري:", 13, Color.rgb(255, 200, 100), true).apply {
+                setPadding(0, dp(2), 0, dp(6))
+            })
+
+            // Spinner 2: Tone / Voice Selector
+            val spinnerTone = Spinner(this@MainActivity).apply {
+                setBackgroundColor(Color.rgb(18, 42, 65))
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48))
+                lp.bottomMargin = dp(14)
+                layoutParams = lp
+            }
+            addView(spinnerTone)
+
+            // Volume Control Container
+            val volContainer = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                setBackgroundColor(Color.rgb(11, 26, 40))
+                val vlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                vlp.bottomMargin = dp(12)
+                layoutParams = vlp
+            }
+            addView(volContainer)
+
+            fun renderVolumeButtons(catKey: String) {
+                volContainer.removeAllViews()
+                val curVol = alertSoundPlayer.getCategoryVolume(catKey)
+                val pct = (curVol * 100).toInt()
+
+                val volLabel = text("3️⃣ شدة ومستوى الصوت: ${if (pct == 0) "مكتوم 🔇" else "$pct%"}", 12, Color.rgb(110, 231, 255), true)
+                volContainer.addView(volLabel)
+
+                val volButtonsRow = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34))
+                    rlp.topMargin = dp(6)
+                    layoutParams = rlp
+                }
+
+                val levels = listOf(
+                    Pair(0.0f, "🔇 كتم"),
+                    Pair(0.25f, "25%"),
+                    Pair(0.50f, "50%"),
+                    Pair(0.75f, "75%"),
+                    Pair(1.0f, "100%")
+                )
+
+                for ((volVal, volName) in levels) {
+                    val isCurrent = Math.abs(curVol - volVal) < 0.08f
+                    val btnVol = Button(this@MainActivity).apply {
+                        text = if (isCurrent) "$volName ✓" else volName
+                        textSize = 10f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(if (isCurrent) Color.rgb(8, 23, 32) else Color.rgb(200, 225, 245))
+                        setBackgroundColor(if (isCurrent) Color.rgb(80, 227, 194) else Color.rgb(24, 48, 72))
+                        val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+                        blp.setMargins(dp(2), 0, dp(2), 0)
+                        layoutParams = blp
+                        setOnClickListener {
+                            alertSoundPlayer.setCategoryVolume(catKey, volVal)
+                            renderVolumeButtons(catKey)
+                            if (volVal > 0.05f) {
+                                val curSelId = alertSoundPlayer.getSelectedSoundId(catKey)
+                                val opt = currentOptions.firstOrNull { it.id == curSelId } ?: currentOptions.firstOrNull()
+                                if (opt != null) {
+                                    alertSoundPlayer.playRawSound(opt.resId, volVal)
+                                }
+                            }
+                            Toast.makeText(this@MainActivity, "مستوى الصوت: $volName", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    volButtonsRow.addView(btnVol)
+                }
+                volContainer.addView(volButtonsRow)
+            }
+
+            fun updateToneSpinner(catKey: String) {
+                currentOptions = alertSoundPlayer.getOptionsForCategory(catKey)
+                val toneTitles = currentOptions.map { opt ->
+                    val typePrefix = if (opt.isVoice) "🎙️ " else "🎵 "
+                    "$typePrefix${opt.title} (${opt.subtitle})"
+                }
+                spinnerTone.adapter = DarkSpinnerAdapter(this@MainActivity, toneTitles)
+                val curSelectedId = alertSoundPlayer.getSelectedSoundId(catKey)
+                val initialPos = currentOptions.indexOfFirst { it.id == curSelectedId }.let { if (it >= 0) it else 0 }
+                spinnerTone.setSelection(initialPos)
+                renderVolumeButtons(catKey)
+            }
+
+            // Category change listener
+            spinnerCategory.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    currentCategoryIndex = position
+                    val cat = categories[position]
+                    updateToneSpinner(cat.key)
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+
+            // Tone change listener
+            spinnerTone.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    val cat = categories[currentCategoryIndex]
+                    if (position in currentOptions.indices) {
+                        val chosenOpt = currentOptions[position]
+                        val curSaved = alertSoundPlayer.getSelectedSoundId(cat.key)
+                        if (chosenOpt.id != curSaved) {
+                            alertSoundPlayer.setSelectedSoundId(cat.key, chosenOpt.id)
+                            Toast.makeText(this@MainActivity, "تم اعتماد: ${chosenOpt.title}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+
+            // Quick Play / Test Button
+            val btnTestSound = Button(this@MainActivity).apply {
+                text = "▶ استماع وتجربة النغمة المختارة"
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(28, 75, 110))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
+                lp.topMargin = dp(4)
+                layoutParams = lp
+                setOnClickListener {
+                    val cat = categories[currentCategoryIndex]
+                    val pos = spinnerTone.selectedItemPosition
+                    if (pos in currentOptions.indices) {
+                        val opt = currentOptions[pos]
+                        val vol = alertSoundPlayer.getCategoryVolume(cat.key)
+                        alertSoundPlayer.playRawSound(opt.resId, if (vol <= 0.02f) 1.0f else vol)
+                    }
+                }
+            }
+            addView(btnTestSound)
+
+            // Initial load
+            updateToneSpinner(categories[0].key)
         }
+        root.addView(settingsCard)
 
         return root
     }
@@ -2047,6 +2050,52 @@ class MainActivity : Activity() {
         }
         card.addView(statusRow)
 
+        // السطر الثالث: شريط القراءات الحية للمركبة (يظهر للمالك والسائق بالتساوي وبدون نقصان)
+        val metricsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.rgb(10, 22, 34))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = dp(8)
+            layoutParams = lp
+
+            val isLive = telemetry.isConnected || isSimulating
+            val spdVal = if (isLive) "${telemetry.speed} كم/س" else if (phoneGpsSpeedKmh > 0) "$phoneGpsSpeedKmh كم/س" else "0"
+            val tempVal = if (isLive) "${telemetry.coolantTemp}°C" else "--"
+            val voltVal = if (isLive) "${String.format("%.1f", telemetry.batteryVoltage)}V" else "--"
+            val fuelVal = if (isLive) "${telemetry.fuelLevel}%" else "--"
+
+            fun addMiniStat(label: String, value: String, color: Int) {
+                val box = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    layoutParams = blp
+                    addView(TextView(this@MainActivity).apply {
+                        text = value
+                        textSize = 12f
+                        setTypeface(typeface, Typeface.BOLD)
+                        setTextColor(color)
+                        gravity = Gravity.CENTER
+                    })
+                    addView(TextView(this@MainActivity).apply {
+                        text = label
+                        textSize = 10f
+                        setTextColor(Color.rgb(160, 195, 220))
+                        gravity = Gravity.CENTER
+                    })
+                }
+                addView(box)
+            }
+
+            addMiniStat("السرعة", spdVal, Color.rgb(110, 231, 255))
+            addMiniStat("الحرارة", tempVal, Color.rgb(248, 199, 74))
+            addMiniStat("البطارية", voltVal, Color.rgb(126, 242, 154))
+            addMiniStat("الوقود", fuelVal, Color.rgb(255, 180, 70))
+        }
+        card.addView(metricsRow)
+
         return card
     }
 
@@ -2240,23 +2289,32 @@ class MainActivity : Activity() {
 
         val cards: List<ServiceCard> = when(currentRole) {
             "owner" -> listOf(
-                ServiceCard("فحص وحذف الأعطال", "قراءة أكواد الكمبيوتر ومسحها", "🔍", "scanner"),
-                ServiceCard("البيانات والحساسات", "السرعة والحرارة والشحن الحية", "📊", "gauges"),
-                ServiceCard("رادار وتحذير المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
+                // 1. قراءة جهاز كمبيوتر المسح
+                ServiceCard("مسح وفحص كمبيوتر السيارة", "قراءة ومسح كمبيوتر السيارة ECU", "🔍", "scanner"),
+                // 2. إضافة سيارة عند المالك
+                ServiceCard("إضافة وإدارة السيارات", "تسجيل سيارة جديدة وتفويض السائقين", "➕", "owner_fleet"),
+                // 3. قراءة الحساسات للكمبيوتر عند المالك والسائق
+                ServiceCard("قراءة الحساسات الحية", "السرعة والحرارة والشحن والضغط اللحظي", "📊", "gauges"),
+                // 4. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
+                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
+                // باقي الخدمات
+                ServiceCard("رادار وتحذيرات المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
-                ServiceCard("التحليل التنبؤي وتوقع الأعطال", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
-                ServiceCard("حساب استهلاك الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
-                ServiceCard("أسطول سياراتي", "إدارة وتفويض السائقين بالهاتف", "🚗", "owner_fleet"),
-                ServiceCard("المراقبة والتتبع", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
+                ServiceCard("حساب وتكلفة الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
+                ServiceCard("التحليل التنبؤي وصحة المحرك", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("المراقبة والتتبع الحي", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
                 ServiceCard("أمان وتصاريح الورش", "طلبات الفحص والطرد الفوري", "🚨", "owner_security"),
-                ServiceCard("ملكية الشاسيه", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
-                ServiceCard("جدول الصيانة", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
+                ServiceCard("ملكية الشاسيه والقيد", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
+                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
             )
             "driver" -> listOf(
-                ServiceCard("مقصورة العدادات", "السرعة والحرارة والشحن الحية", "🏎️", "gauges"),
+                // 1. قراءة الحساسات للكمبيوتر عند السائق والمالك
+                ServiceCard("قراءة الحساسات الحية", "مقصورة العدادات والبيانات اللحظية", "🏎️", "gauges"),
+                // 2. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
+                ServiceCard("فحص وتفسير الأعطال", "قراءة أكواد الكمبيوتر وتفسير العطل", "🔍", "scanner"),
+                // باقي الخدمات
                 ServiceCard("رادار وتحذير المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
-                ServiceCard("فحص أعطال السيارة", "فحص سريع للمبة Check Engine", "🔍", "scanner"),
                 ServiceCard("سياراتي المفوض بها", "السيارات المصرح بقيادتها", "🚗", "driver_cars"),
                 ServiceCard("حاسبة الحمولة والوقود", "توزيع الوزن وتكلفة المسار", "⛽", "fuel"),
                 ServiceCard("دليل وأرقام الورش", "أرقام الورش وأوناش الإنقاذ", "🗺️", "workshops_dir"),
@@ -2266,10 +2324,10 @@ class MainActivity : Activity() {
                 ServiceCard("طلب إذن الفحص", "إرسال طلب للمالك بدون أرقام سرية", "🔑", "workshop_console"),
                 ServiceCard("فحص ومسح الأعطال", "قراءة ومسح أعطال الكمبيوتر ECU", "🔍", "scanner"),
                 ServiceCard("الحساسات الحية", "قراءة الحساسات و Freeze Frame", "📊", "gauges"),
+                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وشرح كود العطل", "📋", "dtc_lookup"),
                 ServiceCard("التحليل التنبؤي وتاريخ السيارة", "تغير معدل البنزين وسحب المرش والحرارة", "📈", "predictive_health"),
                 ServiceCard("تسجيل صيانة وفاتورة", "توثيق القطع وتكلفة الصيانة", "📝", "log_service"),
-                ServiceCard("ملف الورشة وبياناتي", "اسم الورشة والهاتف للعملاء", "🏪", "workshop_profile"),
-                ServiceCard("جاهزية الفحص I/M", "فحص جاهزية انبعاثات العادم", "📋", "gauges")
+                ServiceCard("ملف الورشة وبياناتي", "اسم الورشة والهاتف للعملاء", "🏪", "workshop_profile")
             )
         }
 
@@ -2287,10 +2345,10 @@ class MainActivity : Activity() {
                 if (idx < cards.size) {
                     val cardItem = cards[idx]
                     val tile = buildServiceTile(cardItem.title, cardItem.subtitle, cardItem.icon) {
-                        if (cardItem.key == "call_owner") {
-                            showCallOwnerDialog()
-                        } else {
-                            openSubScreen(cardItem.key)
+                        when (cardItem.key) {
+                            "call_owner" -> showCallOwnerDialog()
+                            "dtc_lookup" -> showDtcLookupDialog()
+                            else -> openSubScreen(cardItem.key)
                         }
                     }
                     row.addView(tile)
@@ -3819,7 +3877,7 @@ class MainActivity : Activity() {
         // Delta-Deadband Storage Log Card
         val cardDelta = card().apply {
             addView(text("📊 سجل التخزين الذكي عند التغير (Delta Storage Log)", 17, Color.rgb(248, 199, 74), true))
-            addView(text("تطبيقاً للبروتوكول الذكي: لا يتم تسجيل أو إرسال داتا جديدة إلا عند حدوث تغير فعلي بالقيم (سرعة ≥3، وقود ≥1%، حرارة ≥2°C، أعطال)، وذلك لضغط البيانات وحماية السيرفر:", 13, Color.rgb(167, 203, 226), false))
+            addView(text("سجل التغيرات اللحظية المباشرة للسرعة والحرارة والجهد والوقود:", 12, Color.rgb(167, 203, 226), false))
 
             // Timeframe filters
             val filterRow = LinearLayout(context).apply {
@@ -6239,19 +6297,7 @@ class MainActivity : Activity() {
                 addView(normalBox)
             }
 
-            // Info Details
-            val infoBox = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.rgb(18, 38, 58))
-                setPadding(dp(10), dp(8), dp(10), dp(8))
-                val ilp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                ilp.topMargin = dp(6)
-                layoutParams = ilp
-
-                addView(text("💡 كيف يتم القياس عبر كمبيوتر السيارة OBD-II؟", 11, Color.rgb(0, 229, 255), true))
-                addView(text("يتم رصد هبوط الفولت لحظة تشغيل السلف عند أول 50-200 ميلي ثانية. من خلال معادلة المقاومة الداخلية وقانون أوم يتم تقدير أمبير السحب الفعلي للمارش دون الحاجة لأجهزة إضافية.", 10, Color.rgb(200, 230, 250), false))
-            }
-            addView(infoBox)
+// Info details preserved in repository technical specifications
         }
         return starterCard
     }
@@ -6920,73 +6966,74 @@ class MainActivity : Activity() {
         }
         container.addView(cardGauges)
 
-        // DRIVER COCKPIT ENRICHED EXTENSION (بطاقة السائق الخاصة لخدمات الطريق والسلامة)
-        if (currentRole == "driver") {
-            val cardDriverSafety = card().apply {
-                addView(text("💡 أسلوب القيادة والسلامة", 15, Color.rgb(110, 231, 255), true))
+        // SAFETY & DRIVING STYLE EXTENSION (تظهر للمالك والسائق بالتساوي لمتابعة أمان القيادة)
+        val cardDriverSafety = card().apply {
+            addView(text("💡 أسلوب القيادة وتقييم الأمان", 15, Color.rgb(110, 231, 255), true))
 
-                val statsRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    lp.topMargin = dp(6)
-                    layoutParams = lp
-                }
-                val tvScore = metricBox("تقييم الأمان", "98 / 100 ⭐", Color.rgb(126, 242, 154))
-                val tvSpeedSrc = metricBox("مصدر السرعة", if (telemetry.isConnected) "OBD السيارة 🔌" else if (phoneGpsSpeedKmh > 0) "GPS الهاتف 🛰️" else "الهاتف / OBD", Color.rgb(248, 199, 74))
-                statsRow.addView(tvScore.parent as View)
-                statsRow.addView(tvSpeedSrc.parent as View)
-                addView(statsRow)
-
-                addView(text("🚨 طوارئ ومساعدة الطريق:", 13, Color.rgb(255, 140, 90), true).apply {
-                    setPadding(0, dp(8), 0, dp(4))
-                })
-
-                val actionRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    layoutParams = lp
-                }
-
-                val activeCar = driverAssignedCars.find { it.isActive } ?: driverAssignedCars.firstOrNull()
-                val ownerContact = activeCar?.ownerPhone ?: preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
-
-                actionRow.addView(Button(this@MainActivity).apply {
-                    text = "📞 اتصال طوارئ بالمالك"
-                    textSize = 11f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(160, 40, 40))
-                    val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                    lp.setMargins(0, 0, dp(3), 0)
-                    layoutParams = lp
-                    setOnClickListener {
-                        try {
-                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$ownerContact"))
-                            startActivity(intent)
-                        } catch (e: Exception) {
-                            Toast.makeText(this@MainActivity, "رقم هاتف المالك: $ownerContact", Toast.LENGTH_LONG).show()
-                        }
-                    }
-                })
-
-                actionRow.addView(Button(this@MainActivity).apply {
-                    text = "🗺️ أقرب ورشة صيانة"
-                    textSize = 11f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(36, 77, 111))
-                    val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                    lp.setMargins(dp(3), 0, 0, 0)
-                    layoutParams = lp
-                    setOnClickListener {
-                        switchTab("workshops_dir")
-                    }
-                })
-
-                addView(actionRow)
+            val statsRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
             }
-            container.addView(cardDriverSafety)
+            val tvScore = metricBox("تقييم الأمان", "98 / 100 ⭐", Color.rgb(126, 242, 154))
+            val tvSpeedSrc = metricBox("مصدر السرعة", if (telemetry.isConnected) "OBD السيارة 🔌" else if (phoneGpsSpeedKmh > 0) "GPS الهاتف 🛰️" else "الهاتف / OBD", Color.rgb(248, 199, 74))
+            statsRow.addView(tvScore.parent as View)
+            statsRow.addView(tvSpeedSrc.parent as View)
+            addView(statsRow)
+
+            addView(text("🚨 طوارئ ومساعدة الطريق:", 13, Color.rgb(255, 140, 90), true).apply {
+                setPadding(0, dp(8), 0, dp(4))
+            })
+
+            val actionRow = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                layoutParams = lp
+            }
+
+            val isDriver = (currentRole == "driver")
+            val activeCar = driverAssignedCars.find { it.isActive } ?: driverAssignedCars.firstOrNull()
+            val ownerContact = activeCar?.ownerPhone ?: preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+            val contactPhone = if (isDriver) ownerContact else (preferences.getString("assigned_driver_phone", "01000000000") ?: "01000000000")
+            val btnContactLabel = if (isDriver) "📞 اتصال طوارئ بالمالك" else "📞 اتصال بالسائق المفوض"
+
+            actionRow.addView(Button(this@MainActivity).apply {
+                text = btnContactLabel
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(if (isDriver) Color.rgb(160, 40, 40) else Color.rgb(20, 80, 110))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                lp.setMargins(0, 0, dp(3), 0)
+                layoutParams = lp
+                setOnClickListener {
+                    try {
+                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$contactPhone"))
+                        startActivity(intent)
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "رقم الهاتف: $contactPhone", Toast.LENGTH_LONG).show()
+                    }
+                }
+            })
+
+            actionRow.addView(Button(this@MainActivity).apply {
+                text = "🗺️ أقرب ورشة صيانة"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(36, 77, 111))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                lp.setMargins(dp(3), 0, 0, 0)
+                layoutParams = lp
+                setOnClickListener {
+                    switchTab("workshops_dir")
+                }
+            })
+
+            addView(actionRow)
         }
+        container.addView(cardDriverSafety)
 
         return container
     }
@@ -11123,7 +11170,7 @@ class MainActivity : Activity() {
             val val5E = parseFuelRate5E(r5E)
             if (val5E > 0f) {
                 telemetry.directFuelRateLph = val5E
-                telemetry.fuelCalculationSource = "حساس كمبيوتر المحرك المباشر (PID 015E) دقة 99% ⚡"
+                telemetry.fuelCalculationSource = "حساس كمبيوتر المحرك المباشر (PID 015E)"
                 return FuelSensorMode.DIRECT_ECU_RATE_5E
             }
         } catch (_: Exception) {}
@@ -11134,7 +11181,7 @@ class MainActivity : Activity() {
             val valMaf = parseMaf(rMaf)
             if (valMaf > 0f) {
                 telemetry.mafGps = valMaf
-                telemetry.fuelCalculationSource = "حساس تدفق الهواء MAF (PID 0110) دقة 98% ⚡"
+                telemetry.fuelCalculationSource = "حساس تدفق الهواء MAF (PID 0110)"
                 return FuelSensorMode.MAF_AIR_FLOW_10
             }
         } catch (_: Exception) {}
@@ -11145,13 +11192,13 @@ class MainActivity : Activity() {
             val valMap = parseMap(rMap)
             if (valMap > 0) {
                 telemetry.mapKpa = valMap
-                telemetry.fuelCalculationSource = "حساس ضغط المانيفولد MAP (PID 010B) دقة 93% ⚡"
+                telemetry.fuelCalculationSource = "حساس ضغط المانيفولد MAP (PID 010B)"
                 return FuelSensorMode.MAP_SPEED_DENSITY_0B
             }
         } catch (_: Exception) {}
 
         // Priority 4: Dynamic Engine Load & BSFC Thermodynamic Fusion
-        telemetry.fuelCalculationSource = "الحمل الحراري الديناميكي (Engine Load + TPS) ⚡"
+        telemetry.fuelCalculationSource = "حمل المحرك ودواسة الوقود (Engine Load + TPS)"
         return FuelSensorMode.DYNAMIC_LOAD_FUSION
     }
 
