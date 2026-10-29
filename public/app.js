@@ -35,13 +35,15 @@ async function ensureDemoSession() {
   if (token) return token;
 
   const email = `demo-${Date.now()}@drivecare.local`;
+  const phone = `+2010${String(Date.now()).slice(-8)}`;
   const response = await fetch('/api/auth/signup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: 'Owner Demo',
       email,
-      password: 'demo1234'
+      phone,
+      password: 'DemoPassword1234!'
     })
   });
 

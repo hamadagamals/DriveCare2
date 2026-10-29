@@ -77,18 +77,19 @@ const roleLabels = { owner: 'مالك سيارة', driver: 'سائق', workshop:
 function applyRoleView(role) {
   const ownerMode = role === 'owner';
   const workshopMode = role === 'workshop';
-  ownerManagementCard.hidden = !ownerMode;
+  if (ownerManagementCard) ownerManagementCard.hidden = !ownerMode;
   document.querySelectorAll('[data-owner-only="true"]').forEach((element) => {
     element.hidden = !ownerMode;
   });
   document.querySelectorAll('[data-panel]').forEach((element) => {
     element.hidden = workshopMode;
   });
-  document.querySelector('.nav').hidden = workshopMode;
-  driverModeCard.hidden = role !== 'driver';
-  workshopModeCard.hidden = role !== 'workshop';
-  ownerDriverControls.hidden = !ownerMode;
-  ownerDeviceControls.hidden = !ownerMode;
+  const navEl = document.querySelector('.nav');
+  if (navEl) navEl.hidden = workshopMode;
+  if (driverModeCard) driverModeCard.hidden = role !== 'driver';
+  if (workshopModeCard) workshopModeCard.hidden = role !== 'workshop';
+  if (ownerDriverControls) ownerDriverControls.hidden = !ownerMode;
+  if (ownerDeviceControls) ownerDeviceControls.hidden = !ownerMode;
 }
 
 function showVehicleSetup() {
@@ -192,36 +193,41 @@ function renderRoleSwitcher(roles) {
   const storedRole = localStorage.getItem('drivecare-active-role');
   const activeRole = userRoles.includes(storedRole) ? storedRole : userRoles[0];
   localStorage.setItem('drivecare-active-role', activeRole);
-  activeRoleLabel.textContent = roleLabels[activeRole] || activeRole;
+  if (activeRoleLabel) activeRoleLabel.textContent = roleLabels[activeRole] || activeRole;
   applyRoleView(activeRole);
+  if (!roleSwitchButtons) return;
   roleSwitchButtons.innerHTML = userRoles.map((role) => `
     <button type="button" class="role-switch-btn" data-role="${role}">${roleLabels[role] || role}</button>
   `).join('') || '<span class="small muted">لا توجد أدوار متاحة لهذا الحساب.</span>';
   roleSwitchButtons.querySelectorAll('.role-switch-btn').forEach((button) => {
     button.classList.toggle('active', button.dataset.role === activeRole);
   });
-  roleSwitchStatus.textContent = userRoles.length < 2
-    ? 'هذا الحساب مسجل بدور واحد فقط. للتبديل، سجّل الأدوار المطلوبة أثناء إنشاء الحساب.'
-    : 'اختر أي زر لتطبيق وضع الحساب فورًا.';
+  if (roleSwitchStatus) {
+    roleSwitchStatus.textContent = userRoles.length < 2
+      ? 'هذا الحساب مسجل بدور واحد فقط. للتبديل، سجّل الأدوار المطلوبة أثناء إنشاء الحساب.'
+      : 'اختر أي زر لتطبيق وضع الحساب فورًا.';
+  }
 }
 
-roleSwitchButtons.addEventListener('click', (event) => {
+roleSwitchButtons?.addEventListener('click', (event) => {
   const button = event.target.closest('.role-switch-btn');
   if (!button || !userRoles.includes(button.dataset.role)) return;
   const role = button.dataset.role;
   localStorage.setItem('drivecare-active-role', role);
-  activeRoleLabel.textContent = roleLabels[role] || role;
+  if (activeRoleLabel) activeRoleLabel.textContent = roleLabels[role] || role;
   roleSwitchButtons.querySelectorAll('.role-switch-btn').forEach((item) => {
     item.classList.toggle('active', item.dataset.role === role);
   });
   applyRoleView(role);
   showMobilePanel('home');
   loadDashboard();
-  roleSwitchStatus.textContent = role === 'workshop'
-    ? 'تم التبديل إلى وضع صاحب الورشة.'
-    : role === 'driver'
-     ? 'تم التبديل إلى وضع السائق.'
-     : 'تم التبديل إلى وضع مالك السيارة.';
+  if (roleSwitchStatus) {
+    roleSwitchStatus.textContent = role === 'workshop'
+      ? 'تم التبديل إلى وضع صاحب الورشة.'
+      : role === 'driver'
+       ? 'تم التبديل إلى وضع السائق.'
+       : 'تم التبديل إلى وضع مالك السيارة.';
+  }
 });
 
 function speakTemperatureAlert(temperature, isTest = false) {
@@ -944,7 +950,7 @@ async function changePassword(event) {
   }
 }
 
-authToggle.addEventListener('click', () => {
+authToggle?.addEventListener('click', () => {
   signupMode = !signupMode;
   setAuthButtonText();
 });
@@ -952,16 +958,16 @@ authToggle.addEventListener('click', () => {
 document.querySelectorAll('input[name="roles"]').forEach((input) => {
   input.addEventListener('change', updateWorkshopFields);
 });
-addRoleSelect.addEventListener('change', updateAccountWorkshopFields);
-addRoleButton.addEventListener('click', addAccountRole);
+addRoleSelect?.addEventListener('change', updateAccountWorkshopFields);
+addRoleButton?.addEventListener('click', addAccountRole);
 
-document.getElementById('auth-form').addEventListener('submit', (event) => {
+document.getElementById('auth-form')?.addEventListener('submit', (event) => {
   event.preventDefault();
   authAction();
 });
-vehicleSetupForm.addEventListener('submit', createFirstVehicle);
-changePasswordForm.addEventListener('submit', changePassword);
-logoutBtn.addEventListener('click', async () => {
+vehicleSetupForm?.addEventListener('submit', createFirstVehicle);
+changePasswordForm?.addEventListener('submit', changePassword);
+logoutBtn?.addEventListener('click', async () => {
   const token = getToken();
   if (token) {
     try {
@@ -973,15 +979,15 @@ logoutBtn.addEventListener('click', async () => {
   clearToken();
   setScreen('auth');
 });
-bleConnectBtn.addEventListener('click', connectBle);
-classicConnectBtn.addEventListener('click', connectClassicBluetooth);
-wifiConnectBtn.addEventListener('click', connectWifi);
-testVoiceBtn.addEventListener('click', () => speakTemperatureAlert(null, true));
-addDriverBtn.addEventListener('click', addDriver);
-grantDeviceAccessBtn.addEventListener('click', grantDeviceAccess);
-requestVehicleAccessBtn.addEventListener('click', requestVehicleAccessFromWorkshop);
-requestWorkshopByPhoneBtn.addEventListener('click', requestWorkshopByPhone);
-openWorkshopBtn.addEventListener('click', () => {
+bleConnectBtn?.addEventListener('click', connectBle);
+classicConnectBtn?.addEventListener('click', connectClassicBluetooth);
+wifiConnectBtn?.addEventListener('click', connectWifi);
+testVoiceBtn?.addEventListener('click', () => speakTemperatureAlert(null, true));
+addDriverBtn?.addEventListener('click', addDriver);
+grantDeviceAccessBtn?.addEventListener('click', grantDeviceAccess);
+requestVehicleAccessBtn?.addEventListener('click', requestVehicleAccessFromWorkshop);
+requestWorkshopByPhoneBtn?.addEventListener('click', requestWorkshopByPhone);
+openWorkshopBtn?.addEventListener('click', () => {
   window.location.href = '/garage';
 });
 mobileNavButtons.forEach((button) => {

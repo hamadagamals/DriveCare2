@@ -131,9 +131,9 @@ VALUES
 
 INSERT OR IGNORE INTO diagnostic_codes (id, vehicle_id, code, title, detail, severity, status)
 VALUES
-  ('diag-001', 'veh-001', 'P0301', 'مشكلة في الاسطوانة 1', 'مؤشرات احتراق غير منتظمة.', 'medium', 'open'),
-  ('diag-002', 'veh-001', 'B1024', 'مستشعر البطارية', 'قيمة الجهد متغيرة ضمن الحد المسموح.', 'low', 'monitoring'),
-  ('diag-003', 'veh-001', 'P0420', 'مشكلة في نظام التفريغ', 'مستوى الانبعاثات أعلى من الطبيعي.', 'high', 'review');
+  ('diag-001', 'veh-001', 'P0301', 'فقد إشعال في الأسطوانة 1 (Cylinder 1 Misfire)', 'مؤشرات احتراق غير منتظمة في الأسطوانة الأولى.', 'medium', 'open'),
+  ('diag-002', 'veh-001', 'P0560', 'اضطراب جهد نظام الكهرباء والبطارية (System Voltage)', 'قيمة الجهد متغيرة وتحتاج فحص شحن الدينامو والبطارية.', 'low', 'monitoring'),
+  ('diag-003', 'veh-001', 'P0420', 'انخفاض كفاءة علبة البيئة (المحول الحفاز Catalyst System)', 'كفاءة المحول الحفاز أقل من الحد القياسي.', 'high', 'review');
 
 INSERT OR IGNORE INTO alerts (id, vehicle_id, alert_type, title, detail, severity)
 VALUES

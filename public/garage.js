@@ -58,7 +58,7 @@ async function bootstrap() {
     const vehicles = await loadJson('/api/garage/vehicles');
     const reports = await loadJson('/api/garage/reports');
     document.getElementById('total-cars').textContent = vehicles.length;
-    document.getElementById('critical-cars').textContent = vehicles.filter((v) => v.healthScore < 60).length;
+    document.getElementById('critical-cars').textContent = vehicles.filter((v) => v.healthScore != null && v.healthScore < 60).length;
     document.getElementById('open-reports').textContent = reports.length;
     renderVehicles(vehicles);
     renderReports(reports);

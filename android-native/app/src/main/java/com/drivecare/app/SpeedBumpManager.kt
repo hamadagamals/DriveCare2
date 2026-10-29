@@ -51,9 +51,12 @@ class SpeedBumpManager(
         val id: String,
         val lat: Double,
         val lng: Double,
-        val directionDegrees: Double,
-        val bidirectional: Boolean,
-        val roadClass: String
+        var directionDegrees: Double,
+        var bidirectional: Boolean,
+        var roadClass: String,
+        var active: Boolean = true,
+        var consecutiveNegativePasses: Int = 0,
+        var needsMapMatch: Boolean = false
     )
 
     // Public state
@@ -97,6 +100,11 @@ class SpeedBumpManager(
     private var latestGpsLocation: Location? = null
     private var latestGpsSpeedKmh: Double = 0.0
     private var latestObdSpeedKmh: Double? = null
+    private var lastValidBearingDegrees: Double = 0.0
+    private var hasValidBearing: Boolean = false
+    private var hasGyroSensor: Boolean = false
+    private var peakPositiveShockDelta: Float = 0f
+    private val recentSpeedSamples = ArrayDeque<Pair<Long, Double>>() // (timestampMs, speedKmh)
 
     // Audio & Sensors
     private var toneGenerator: ToneGenerator? = null
@@ -120,9 +128,13 @@ class SpeedBumpManager(
                 }
                 val gyro = sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
                 if (gyro != null) {
+                    hasGyroSensor = true
                     sm.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
+                } else {
+                    hasGyroSensor = false
                 }
             }
+            triggerDailyMapReconciliationIfNeeded()
             Log.i(TAG, "SpeedBumpManager started with sensor listeners")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start sensor listeners: ${e.message}")
@@ -160,14 +172,28 @@ class SpeedBumpManager(
         latestGpsLocation = location
         latestGpsSpeedKmh = if (location.hasSpeed()) location.speed * 3.6 else 0.0
         latestObdSpeedKmh = obdSpeedKmh
+        if (location.hasBearing() && (latestGpsSpeedKmh > 2.5 || (obdSpeedKmh ?: 0.0) > 2.5)) {
+            lastValidBearingDegrees = location.bearing.toDouble()
+            hasValidBearing = true
+        }
 
         val carSpeed = getEffectiveSpeedKmh()
+        val now = System.currentTimeMillis()
+        synchronized(recentSpeedSamples) {
+            recentSpeedSamples.addLast(Pair(now, carSpeed))
+            while (recentSpeedSamples.isNotEmpty() && now - recentSpeedSamples.first().first > 8000L) {
+                recentSpeedSamples.removeFirst()
+            }
+        }
 
         // 1. Dynamic 20km City Cache refresh check
         val lastLoc = lastFetchLocation
         if (lastLoc == null || distanceMeters(location.latitude, location.longitude, lastLoc.latitude, lastLoc.longitude) >= CACHE_REFRESH_DISTANCE_METERS) {
             fetchNearbyHazards(location.latitude, location.longitude, 20.0)
         }
+
+        // 1.5. Once-per-day road map reconciliation for new bumps (counter-traffic fix)
+        triggerDailyMapReconciliationIfNeeded()
 
         // 2. Proximity warning check
         checkProximityWarnings(location, carSpeed)
@@ -193,10 +219,12 @@ class SpeedBumpManager(
             return
         }
 
-        val carBearing = currentLoc.bearing.toDouble()
+        val hasBearingNow = currentLoc.hasBearing() || hasValidBearing
+        val carBearing = if (currentLoc.hasBearing()) currentLoc.bearing.toDouble() else lastValidBearingDegrees
         var nearestWarning: Pair<CachedHazard, Double>? = null // Hazard to distance
 
         for (hazard in cachedHazards) {
+            if (!hazard.active) continue
             val dist = distanceMeters(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
             if (dist > EARLY_WARNING_METERS + 10.0) continue
 
@@ -204,10 +232,12 @@ class SpeedBumpManager(
             val bearingToHazard = initialBearingDegrees(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
 
             // Only warn if hazard is ahead of the car (within 45 degrees of travel direction)
-            if (currentLoc.hasBearing() && speedKmh > 5.0) {
+            // and in the same lane travel direction (prevents warning after passing or on opposite lane)
+            if (hasBearingNow) {
                 if (angularDifference(carBearing, bearingToHazard) > 45.0) continue
-                // Also check road heading direction if not bidirectional
                 if (!hazard.bidirectional && angularDifference(carBearing, hazard.directionDegrees) > 55.0) continue
+            } else if (speedKmh < 2.0) {
+                continue
             }
 
             if (nearestWarning == null || dist < nearestWarning.second) {
@@ -266,14 +296,24 @@ class SpeedBumpManager(
     }
 
     /**
-     * Checks if the car has entered and then exited the 25m zone of a bump.
+     * Checks if the car has entered and then exited the 25m zone of a bump in the same lane direction.
      * Emits pass-check (positive or negative) to the server.
+     * If 3 consecutive cars pass without slowing down (<21 km/h) and experiencing the bump pattern,
+     * the bump is deactivated until the bump pattern returns on another car.
      */
     private fun checkPassHazards(currentLoc: Location, speedKmh: Double) {
+        if (speedKmh < SPEED_GATE_MIN_KMH) return
         val now = System.currentTimeMillis()
+        val hasBearingNow = currentLoc.hasBearing() || hasValidBearing
+        val carBearing = if (currentLoc.hasBearing()) currentLoc.bearing.toDouble() else lastValidBearingDegrees
 
-        // 1. Detect entering <= 25m
+        // 1. Detect entering <= 25m in the SAME direction of travel
         for (hazard in cachedHazards) {
+            if (!hazard.active) continue
+            if (!hazard.bidirectional && hasBearingNow && angularDifference(carBearing, hazard.directionDegrees) > 55.0) {
+                // Opposite lane traffic: do NOT count as passing over this lane's bump
+                continue
+            }
             val dist = distanceMeters(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
             if (dist <= FINAL_WARNING_METERS) {
                 if (!activePassHazards.containsKey(hazard.id)) {
@@ -291,8 +331,18 @@ class SpeedBumpManager(
             if (hazard != null) {
                 val dist = distanceMeters(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
                 if (dist > 35.0) {
-                    // Car passed the bump!
+                    // Car passed the bump! Check if the known bump pattern (<21 km/h + vibration + rebound) occurred:
                     val feltBump = (now - lastBumpFeltTimeMs <= PASS_CHECK_WINDOW_MS)
+                    if (feltBump) {
+                        hazard.consecutiveNegativePasses = 0
+                        hazard.active = true
+                    } else {
+                        hazard.consecutiveNegativePasses += 1
+                        if (hazard.consecutiveNegativePasses >= 3) {
+                            hazard.active = false
+                            Log.i(TAG, "Hazard ${hazard.id} deactivated locally after 3 passes without bump pattern")
+                        }
+                    }
                     sendPassCheckAsync(hId, feltBump, speedKmh)
                     iterator.remove()
                 }
@@ -304,7 +354,7 @@ class SpeedBumpManager(
 
     /**
      * Sensor Event Listener: Kinematic Speed Bump Detection
-     * Strict Speed Gate: Speed MUST be < 21 km/h ($5.83 m/s).
+     * Strict Speed Gate: Speed MUST be <= 21 km/h ($5.83 m/s) with deceleration/low-speed + vertical shock + rebound.
      */
     override fun onSensorChanged(event: SensorEvent?) {
         if (event == null) return
@@ -313,10 +363,10 @@ class SpeedBumpManager(
 
         // Strict User Rule: If vehicle speed > 21 km/h, NEVER record a bump!
         if (speed > SPEED_GATE_MAX_KMH || speed < SPEED_GATE_MIN_KMH) {
-            // Reset kinematic state
             hasPositiveShock = false
             hasPitchRotation = false
             hasNegativeRebound = false
+            peakPositiveShockDelta = 0f
             return
         }
 
@@ -324,43 +374,53 @@ class SpeedBumpManager(
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
-                // Orientation-independent 3D dynamic acceleration shock:
-                // Regardless of whether phone is flat, vertical in dashboard holder, or tilted at an angle:
-                // |a_total| at rest/cruise = 9.81 m/s^2 (gravity).
                 val ax = event.values[0]
                 val ay = event.values[1]
                 val az = event.values[2]
                 val totalMag = sqrt((ax * ax + ay * ay + az * az).toDouble()).toFloat()
-                // Adaptive low-pass filter: converges to phone's mounting gravity baseline & sensor calibration offset
                 filteredGravity = (0.95f * filteredGravity) + (0.05f * totalMag.coerceIn(8.5f, 11.5f))
                 val dynamicShock = totalMag - filteredGravity
 
-                // 1. Positive upward shock (+Shock > 2.8 m/s^2)
-                if (dynamicShock > 2.8f && !hasPositiveShock) {
-                    hasPositiveShock = true
-                    positiveShockTimeMs = now
+                // 1. Positive upward shock (+Shock > 2.6 m/s^2)
+                if (dynamicShock > 2.6f) {
+                    if (!hasPositiveShock) {
+                        hasPositiveShock = true
+                        positiveShockTimeMs = now
+                        peakPositiveShockDelta = dynamicShock
+                    } else if (dynamicShock > peakPositiveShockDelta) {
+                        peakPositiveShockDelta = dynamicShock
+                    }
                 }
 
-                // 2. Downward suspension rebound (-Shock < -1.6 m/s^2) following positive shock
-                if (hasPositiveShock && (now - positiveShockTimeMs <= 1400L)) {
-                    if (dynamicShock < -1.6f) {
+                // 2. Downward suspension rebound (-Shock < -1.5 m/s^2) following positive shock
+                if (hasPositiveShock && (now - positiveShockTimeMs in 80L..1400L)) {
+                    if (dynamicShock < -1.5f) {
                         hasNegativeRebound = true
                     }
                 }
 
-                // 3. Check full sequence completion
-                if (hasPositiveShock && hasNegativeRebound) {
-                    // Kinematic bump confirmed!
+                // 3. Check full sequence completion (deceleration/low speed <= 21 km/h + shock + rebound + gyro pitch if available)
+                val gyroMatched = !hasGyroSensor || hasPitchRotation || peakPositiveShockDelta >= 3.4f
+                val speedPatternMatched = synchronized(recentSpeedSamples) {
+                    val maxRecentSpeed = recentSpeedSamples.maxOfOrNull { it.second } ?: speed
+                    // Either driver decelerated toward the bump or was already traversing cautiously <= 21 km/h
+                    speed <= SPEED_GATE_MAX_KMH && (maxRecentSpeed >= speed || speed <= 18.0)
+                }
+
+                if (hasPositiveShock && hasNegativeRebound && gyroMatched && speedPatternMatched) {
+                    // Kinematic bump pattern confirmed!
                     lastBumpFeltTimeMs = now
                     hasPositiveShock = false
                     hasNegativeRebound = false
                     hasPitchRotation = false
+                    peakPositiveShockDelta = 0f
 
-                    // If not reported recently (10 sec cooldown), report as newly detected bump
-                    if (now - lastRecordedBumpTimeMs > 10000L) {
+                    // If not reported recently (8 sec cooldown), report/confirm or re-activate bump
+                    if (now - lastRecordedBumpTimeMs > 8000L) {
                         lastRecordedBumpTimeMs = now
                         latestGpsLocation?.let { loc ->
-                            reportNewBumpAsync(loc.latitude, loc.longitude, loc.bearing.toDouble())
+                            val dir = if (loc.hasBearing()) loc.bearing.toDouble() else lastValidBearingDegrees
+                            reportNewBumpAsync(loc.latitude, loc.longitude, dir)
                         }
                     }
                 }
@@ -369,13 +429,14 @@ class SpeedBumpManager(
                 if (hasPositiveShock && (now - positiveShockTimeMs > 1500L)) {
                     hasPositiveShock = false
                     hasNegativeRebound = false
+                    hasPitchRotation = false
+                    peakPositiveShockDelta = 0f
                 }
             }
 
             Sensor.TYPE_GYROSCOPE -> {
-                // Pitch/Roll rotation rate (orientation-independent rotational deflection in rad/s)
                 val rotRate = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1]).toDouble()).toFloat()
-                if (hasPositiveShock && rotRate > 0.25f) {
+                if (hasPositiveShock && rotRate > 0.22f) {
                     hasPitchRotation = true
                 }
             }
@@ -415,13 +476,23 @@ class SpeedBumpManager(
                                 lng = obj.optDouble("lng"),
                                 directionDegrees = obj.optDouble("dir", 0.0),
                                 bidirectional = obj.optBoolean("bi", false),
-                                roadClass = obj.optString("road", "unknown")
+                                roadClass = obj.optString("road", "unknown"),
+                                active = true,
+                                consecutiveNegativePasses = 0,
+                                needsMapMatch = false
                             )
                         )
                     }
 
+                    // Preserve any local deactivated/pending bumps not yet on server
+                    val localPending = cachedHazards.filter { it.needsMapMatch }
                     cachedHazards.clear()
                     cachedHazards.addAll(newHazards)
+                    for (lp in localPending) {
+                        if (cachedHazards.none { distanceMeters(it.lat, it.lng, lp.lat, lp.lng) <= 22.0 }) {
+                            cachedHazards.add(lp)
+                        }
+                    }
                     lastFetchLocation = Location("").apply {
                         latitude = lat
                         longitude = lng
@@ -437,9 +508,23 @@ class SpeedBumpManager(
     }
 
     /**
-     * Emits a newly detected bump to the server and adds it immediately to the local cache.
+     * Emits a newly detected bump to the server and adds or re-activates it immediately in the local cache.
+     * If a bump at this location was previously deactivated after 3 passes without vibration,
+     * experiencing the bump pattern again re-activates it immediately!
      */
     private fun reportNewBumpAsync(lat: Double, lng: Double, bearing: Double) {
+        // 1. Check local cache first (including deactivated bumps!)
+        val existingLocal = cachedHazards.firstOrNull { h ->
+            distanceMeters(lat, lng, h.lat, h.lng) <= 22.0 &&
+                (h.bidirectional || angularDifference(bearing, h.directionDegrees) <= 55.0)
+        }
+        var wasReactivated = false
+        if (existingLocal != null) {
+            wasReactivated = !existingLocal.active
+            existingLocal.active = true
+            existingLocal.consecutiveNegativePasses = 0
+        }
+
         thread(name = "ReportBumpThread") {
             try {
                 val baseUrl = apiBaseUrlProvider().trimEnd('/')
@@ -463,31 +548,56 @@ class SpeedBumpManager(
                 if (conn.responseCode in 200..201) {
                     val resp = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                     val newId = resp.optString("id", "temp-${System.currentTimeMillis()}")
-                    
-                    // Add immediately to local cache so driver has it right away
-                    cachedHazards.add(
-                        CachedHazard(
-                            id = newId,
-                            lat = lat,
-                            lng = lng,
-                            directionDegrees = bearing,
-                            bidirectional = false,
-                            roadClass = "reported"
+                    val serverStatus = resp.optString("status", "created")
+
+                    if (existingLocal == null) {
+                        cachedHazards.add(
+                            CachedHazard(
+                                id = newId,
+                                lat = lat,
+                                lng = lng,
+                                directionDegrees = bearing,
+                                bidirectional = false,
+                                roadClass = "reported",
+                                active = true,
+                                consecutiveNegativePasses = 0,
+                                needsMapMatch = true
+                            )
                         )
-                    )
+                    }
 
                     mainHandler.post {
-                        onBumpDetectedNotice?.invoke("تم رصد وتوثيق مطب جديد ✅")
+                        val notice = if (wasReactivated || serverStatus == "reactivated_existing") {
+                            "تم إعادة تفعيل المطب بعد عودة نمط الاهتزاز وتهدئة السرعة ✅"
+                        } else {
+                            "تم رصد وتوثيق مطب جديد (سرعة ≤ 21 كم/س) ✅"
+                        }
+                        onBumpDetectedNotice?.invoke(notice)
                         if (!isMuted) {
                             try {
                                 toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 250)
                             } catch (_: Exception) {}
                         }
                     }
-                    Log.i(TAG, "Successfully reported new bump at ($lat, $lng): $newId")
+                    Log.i(TAG, "Successfully reported/reactivated bump at ($lat, $lng): $newId ($serverStatus)")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Error reporting new bump: ${e.message}")
+                if (existingLocal == null) {
+                    cachedHazards.add(
+                        CachedHazard(
+                            id = "local-${System.currentTimeMillis()}",
+                            lat = lat,
+                            lng = lng,
+                            directionDegrees = bearing,
+                            bidirectional = false,
+                            roadClass = "reported",
+                            active = true,
+                            consecutiveNegativePasses = 0,
+                            needsMapMatch = true
+                        )
+                    )
+                }
+                Log.w(TAG, "Offline/local bump cached: ${e.message}")
             }
         }
     }
@@ -495,7 +605,7 @@ class SpeedBumpManager(
     /**
      * Reports a pass observation to the server:
      * If feltBump == false, increments negative pass.
-     * (Server deactivates if >= 3 negative passes occur).
+     * (Server deactivates if >= 3 negative passes occur, until another car experiences the bump pattern).
      */
     private fun sendPassCheckAsync(hazardId: String, feltBump: Boolean, speedKmh: Double) {
         thread(name = "PassCheckThread") {
@@ -521,13 +631,102 @@ class SpeedBumpManager(
                     val resp = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                     val status = resp.optString("status")
                     if (status == "DEACTIVATED") {
-                        // Remove from local cache immediately
-                        cachedHazards.removeAll { it.id == hazardId }
-                        Log.i(TAG, "Hazard $hazardId deactivated by community verification and removed from cache")
+                        // Mark inactive in local cache (kept so it can be re-activated if bump pattern returns!)
+                        cachedHazards.firstOrNull { it.id == hazardId }?.let {
+                            it.active = false
+                        }
+                        Log.i(TAG, "Hazard $hazardId deactivated after 3 negative passes (awaiting future pattern to re-activate)")
+                    } else if (status == "ACTIVE") {
+                        cachedHazards.firstOrNull { it.id == hazardId }?.let {
+                            it.active = true
+                            it.consecutiveNegativePasses = 0
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error sending pass check: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Runs once per day (every 24 hours) for newly recorded speed bumps ONLY:
+     * Matches new bumps against the road map network (server + OSM road geometry)
+     * to detect if the car was driving counter-traffic (مخالفاً عكس الاتجاه - e.g. heading South in a Northbound lane)
+     * and automatically corrects the bump direction to the true legal direction of that lane.
+     */
+    fun triggerDailyMapReconciliationIfNeeded(forceNow: Boolean = false) {
+        val prefs = context.getSharedPreferences("drivecare_prefs", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val lastRun = prefs.getLong("last_daily_hazard_map_reconcile_ms", 0L)
+        val oneDayMs = 24L * 60L * 60L * 1000L
+        if (!forceNow && (now - lastRun < oneDayMs)) return
+
+        prefs.edit().putLong("last_daily_hazard_map_reconcile_ms", now).apply()
+
+        thread(name = "DailyHazardMapMatchThread") {
+            try {
+                // 1. Trigger server-side daily reconciliation for new bumps (needs_map_match = 1)
+                val baseUrl = apiBaseUrlProvider().trimEnd('/')
+                val conn = URL("$baseUrl/api/hazards/reconcile-daily").openConnection() as HttpURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write("{}") }
+                if (conn.responseCode == 200) {
+                    Log.i(TAG, "Server daily road map reconciliation completed successfully")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Server daily reconcile unreachable, running local OSM road check: ${e.message}")
+            }
+
+            // 2. Also reconcile any locally cached new bumps (needsMapMatch == true) against OSM Overpass road ways
+            val newBumps = cachedHazards.filter { it.needsMapMatch }
+            for (bump in newBumps) {
+                try {
+                    val query = "[out:json][timeout:4];way(around:25,${bump.lat},${bump.lng})[\"highway\"];out geom 1;"
+                    val osmUrl = URL("https://overpass-api.de/api/interpreter?data=" + java.net.URLEncoder.encode(query, "UTF-8"))
+                    val osmConn = osmUrl.openConnection() as HttpURLConnection
+                    osmConn.connectTimeout = 4000
+                    osmConn.readTimeout = 4000
+                    if (osmConn.responseCode == 200) {
+                        val raw = osmConn.inputStream.bufferedReader().use { it.readText() }
+                        val json = JSONObject(raw)
+                        val elements = json.optJSONArray("elements")
+                        if (elements != null && elements.length() > 0) {
+                            val way = elements.getJSONObject(0)
+                            val tags = way.optJSONObject("tags")
+                            val onewayTag = tags?.optString("oneway", "no")?.lowercase() ?: "no"
+                            val geom = way.optJSONArray("geometry")
+                            if (geom != null && geom.length() >= 2) {
+                                val p1 = geom.getJSONObject(0)
+                                val p2 = geom.getJSONObject(geom.length() - 1)
+                                var roadBearing = initialBearingDegrees(
+                                    p1.getDouble("lat"), p1.getDouble("lon"),
+                                    p2.getDouble("lat"), p2.getDouble("lon")
+                                )
+                                val isOneWay = onewayTag in listOf("yes", "1", "true", "-1", "reverse")
+                                if (onewayTag in listOf("-1", "reverse")) {
+                                    roadBearing = (roadBearing + 180.0) % 360.0
+                                }
+                                if (isOneWay) {
+                                    bump.bidirectional = false
+                                    // If car was driving counter-traffic (> 120 deg opposite to legal lane direction),
+                                    // flip the bump direction to the legal lane direction so opposing traffic gets no false alert!
+                                    if (angularDifference(bump.directionDegrees, roadBearing) > 120.0) {
+                                        Log.i(TAG, "Counter-traffic bump detected at (${bump.lat}, ${bump.lng}): correcting direction ${bump.directionDegrees} -> $roadBearing")
+                                        bump.directionDegrees = roadBearing
+                                    }
+                                } else {
+                                    bump.bidirectional = true
+                                }
+                                bump.needsMapMatch = false
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
             }
         }
     }

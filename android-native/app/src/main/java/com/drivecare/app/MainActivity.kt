@@ -337,7 +337,7 @@ class MainActivity : Activity() {
         val tankCapacity: Float,
         val baseRate: Float,
         val displacement: Float,
-        val fuelType: String,
+        var fuelType: String,
         val emptyWeightKg: Float,
         var isActive: Boolean
     )
@@ -1838,20 +1838,123 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // ROLE SELECTION DROPDOWN DIALOG (قائمة منسدلة لاختيار وتحديد الدور)
+    // UNIFIED SEAMLESS ROLE, VEHICLE & WORKSHOP SWITCHER (بدون رقم سري)
     // ========================================================
+    private fun getFuelTypeArabicBadge(code: String): String {
+        return when (code.lowercase()) {
+            "diesel" -> "🛢️ ديزل/سولار"
+            "cng", "lpg", "gas" -> "🔵 غاز طبيعي"
+            else -> "⛽ بنزين"
+        }
+    }
+
+    private fun applyVehicleFuelType(typeCode: String, showToast: Boolean = false) {
+        val cleanCode = when (typeCode.lowercase()) {
+            "diesel" -> "diesel"
+            "cng", "lpg", "gas" -> "cng"
+            else -> "gasoline"
+        }
+        val unitName = if (cleanCode == "cng") "م³" else "لتر"
+        val typeLabel = when (cleanCode) {
+            "diesel" -> "ديزل / سولار (Diesel)"
+            "cng" -> "غاز طبيعي (CNG)"
+            else -> "بنزين (Gasoline)"
+        }
+        val curPrice = preferences.getFloat("fuel_liter_price", 15.0f)
+        val defaultPrice = when (cleanCode) {
+            "cng" -> if (curPrice in listOf(15.0f, 13.5f)) 7.0f else curPrice
+            "diesel" -> if (curPrice in listOf(15.0f, 7.0f)) 13.5f else curPrice
+            else -> if (curPrice in listOf(7.0f, 13.5f)) 15.0f else curPrice
+        }
+
+        preferences.edit()
+            .putString("vehicle_fuel_type", cleanCode)
+            .putString("fuel_type", cleanCode)
+            .putString("fuel_unit_name", unitName)
+            .putFloat("fuel_liter_price", defaultPrice)
+            .apply()
+
+        telemetry.fuelType = typeLabel
+        telemetry.fuelUnitName = unitName
+
+        // Sync active vehicle in fleet / driver lists
+        ownerFleetVehicles.firstOrNull { it.isCurrentActive }?.let {
+            it.fuelType = cleanCode
+            saveOwnerFleetVehicles()
+        }
+        driverAssignedCars.firstOrNull { it.isActive }?.let {
+            it.fuelType = cleanCode
+            saveDriverAssignedCars()
+        }
+
+        if (showToast) {
+            runOnUiThread {
+                Toast.makeText(this, "✅ تم ضبط نوع الوقود: $typeLabel ($unitName)", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun delegateSelfAndDriveOwnedVehicle(veh: OwnerVehicle) {
+        val myName = userName.ifEmpty { "المالك الأساسي" }
+        val myPhone = userPhone.ifEmpty { "01000000000" }
+        val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+
+        if (veh.assignedDrivers.none { it.phone == myPhone || it.name.contains(myName) }) {
+            veh.assignedDrivers.add(0, AssignedDriver("$myName (المالك - قيادة ذاتية)", myPhone, "المالك / سائق مفوض", today))
+            saveOwnerFleetVehicles()
+        }
+
+        var drvCar = driverAssignedCars.find { it.vin == veh.vin || it.id == "drv-car-${veh.id}" }
+        if (drvCar == null) {
+            drvCar = DriverAssignedCar(
+                id = "drv-car-${veh.id}",
+                name = veh.name,
+                make = veh.make,
+                year = veh.year,
+                vin = veh.vin,
+                ownerName = myName,
+                ownerPhone = myPhone,
+                tankCapacity = veh.tankCapacity,
+                baseRate = veh.baseRate,
+                displacement = veh.displacement,
+                fuelType = veh.fuelType,
+                emptyWeightKg = veh.emptyWeightKg,
+                isActive = true
+            )
+            driverAssignedCars.add(0, drvCar)
+        }
+        driverAssignedCars.forEach { it.isActive = (it.id == drvCar.id) }
+        saveDriverAssignedCars()
+
+        ownerFleetVehicles.forEach { it.isCurrentActive = (it.id == veh.id) }
+        saveOwnerFleetVehicles()
+
+        currentRole = "driver"
+        preferences.edit().putString("active_role", "driver").apply()
+        activeSubScreen = null
+        currentNavTab = "home"
+        activeTab = "home"
+        activateDriverCar(drvCar)
+    }
+
     private fun showRoleSelectionDialog() {
-        val roleKeys = arrayOf("owner", "driver", "garage")
+        val roleKeys = arrayOf("owner", "driver", "garage", "unified_switcher")
         val roleLabels = arrayOf(
-            "👑 واجهة المالك الأساسي (Owner) - إدارة الأسطول والتفويض والمراقبة",
+            "👑 واجهة المالك الأساسي (Owner) - إدارة سياراتي والتفويض والمراقبة",
             "🚗 واجهة السائق المفوض (Driver) - مقصورة القيادة والحساسات والرحلات",
-            "🔧 واجهة مركز الصيانة والورشة (Workshop) - فحص الكمبيوتر وأذونات الصيانة"
+            "🔧 واجهة ورشتي ومركز الصيانة (Workshop) - فحص الكمبيوتر والصيانة",
+            "🔄 التبديل السريع بين كل سياراتي والسيارات المفوض عليها وورشتي (بدون رقم سري)"
         )
-        val currentIndex = roleKeys.indexOf(currentRole).let { if (it >= 0) it else 0 }
+        val currentIndex = roleKeys.indexOf(currentRole).let { if (it in 0..2) it else 0 }
 
         AlertDialog.Builder(this)
-            .setTitle("اختر واجهة المستخدم (تحديد الدور):")
+            .setTitle("التنقل السريع (بدون رقم سري):")
             .setSingleChoiceItems(roleLabels, currentIndex) { dialog, which ->
+                dialog.dismiss()
+                if (which == 3) {
+                    showSwitchOwnerVehicleDialog()
+                    return@setSingleChoiceItems
+                }
                 val selectedRole = roleKeys[which]
                 if (currentRole != selectedRole) {
                     currentRole = selectedRole
@@ -1859,38 +1962,87 @@ class MainActivity : Activity() {
                     activeSubScreen = null
                     currentNavTab = "home"
                     activeTab = "home"
-                    Toast.makeText(this, "تم التبديل بنجاح إلى: ${roleLabels[which]}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "تم الانتقال فوراً إلى: ${roleLabels[which]}", Toast.LENGTH_SHORT).show()
                     renderCurrentScreen()
                 }
-                dialog.dismiss()
             }
-            .setNegativeButton("إلغاء", null)
+            .setNegativeButton("إغلاق", null)
             .show()
     }
 
     // ========================================================
-    // SWITCH OWNER ACTIVE VEHICLE DIALOG (تبديل سيارة المالك النشطة)
+    // UNIFIED QUICK SWITCHER (سيارات المالك + السيارات المفوض بقيادتها + الورشة بدون رقم سري)
     // ========================================================
     private fun showSwitchOwnerVehicleDialog() {
-        if (ownerFleetVehicles.isEmpty()) {
-            loadOwnerFleetVehicles()
-        }
-        val names = ownerFleetVehicles.map { veh ->
-            val activeMark = if (veh.isCurrentActive) " (النشطة حالياً ✓)" else ""
-            "🚗 ${veh.name} [لوحة: ${veh.plateNumber}]$activeMark"
-        }.toTypedArray() + arrayOf("➕ إضافة سيارة جديدة للأسطول")
+        if (ownerFleetVehicles.isEmpty()) loadOwnerFleetVehicles()
+        if (driverAssignedCars.isEmpty()) loadDriverAssignedCars()
 
-        AlertDialog.Builder(this)
-            .setTitle("تبديل سيارة المالك النشطة:")
-            .setItems(names) { _, which ->
-                if (which < ownerFleetVehicles.size) {
-                    val targetVeh = ownerFleetVehicles[which]
-                    activateOwnerVehicle(targetVeh)
-                } else {
-                    showAddOwnerVehicleDialog()
+        val labels = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+
+        // 1. Owned vehicles (Manage as Owner OR Drive directly as Driver)
+        ownerFleetVehicles.forEach { veh ->
+            val activeOwnerMark = if (currentRole == "owner" && veh.isCurrentActive) " ✓ [نشطة الآن]" else ""
+            val fuelBadge = getFuelTypeArabicBadge(veh.fuelType)
+            labels.add("👑 سيارتي (إدارة كمالك): ${veh.name} [${veh.plateNumber}] • $fuelBadge$activeOwnerMark")
+            actions.add {
+                currentRole = "owner"
+                preferences.edit().putString("active_role", "owner").apply()
+                activeSubScreen = null
+                activateOwnerVehicle(veh)
+            }
+
+            labels.add("🚗 قيادة سيارتي بنفسي (وضع السائق): ${veh.name} [${veh.plateNumber}]")
+            actions.add {
+                delegateSelfAndDriveOwnedVehicle(veh)
+            }
+        }
+
+        // 2. Cars delegated to me by other owners (or myself)
+        driverAssignedCars.forEach { dCar ->
+            val isAlreadyOwned = ownerFleetVehicles.any { it.vin == dCar.vin }
+            if (!isAlreadyOwned) {
+                val activeDrvMark = if (currentRole == "driver" && dCar.isActive) " ✓ [أقودها الآن]" else ""
+                val fuelBadge = getFuelTypeArabicBadge(dCar.fuelType)
+                labels.add("🚗 سيارة مفوض بقيادتها: ${dCar.name} (المالك: ${dCar.ownerName}) • $fuelBadge$activeDrvMark")
+                actions.add {
+                    currentRole = "driver"
+                    preferences.edit().putString("active_role", "driver").apply()
+                    activeSubScreen = null
+                    activateDriverCar(dCar)
                 }
             }
-            .setNegativeButton("إلغاء", null)
+        }
+
+        // 3. My Workshop (Switch directly without any PIN!)
+        val wsLabel = if (myWorkshopName.isNotBlank()) myWorkshopName else "ورشتي ومركز الصيانة"
+        val activeWsMark = if (currentRole == "garage") " ✓ [نشطة الآن]" else ""
+        labels.add("🔧 الانتقال إلى ورشتي: $wsLabel (بدون رقم سري)$activeWsMark")
+        actions.add {
+            currentRole = "garage"
+            isWorkshopSessionUnlocked = true
+            workshopSessionGrantedBy = userName.ifEmpty { "صاحب الورشة / المالك" }
+            preferences.edit().putString("active_role", "garage").apply()
+            activeSubScreen = null
+            Toast.makeText(this, "🔧 تم الانتقال مباشرة إلى ورشتك ($wsLabel) بدون رقم سري!", Toast.LENGTH_SHORT).show()
+            renderCurrentScreen()
+        }
+
+        // 4. Add new car to fleet or driver list
+        labels.add("➕ إضافة سيارة جديدة لأسطولي (بنزين / ديزل / غاز أو قراءة OBD)")
+        actions.add { showAddOwnerVehicleDialog() }
+
+        labels.add("➕ إضافة سيارة مفوض بقيادتها كسائق")
+        actions.add { showAddDriverCarDialog() }
+
+        AlertDialog.Builder(this)
+            .setTitle("🔄 التنقل السريع (سياراتي • قيادتي • ورشتي):")
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which in actions.indices) {
+                    actions[which].invoke()
+                }
+            }
+            .setNegativeButton("إغلاق", null)
             .show()
     }
 
@@ -1925,12 +2077,12 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // VEHICLE HEADER CARD (مضغوطة وأنيقة: الاسم واللوحة بجوار بعض وحالة الاتصال الحقيقية)
+    // VEHICLE HEADER CARD (مضغوطة وأنيقة مع زر التبديل السريع في كل الأدوار بدون رقم سري)
     // ========================================================
     private fun buildVehicleHeaderCard(): View {
-        if (ownerFleetVehicles.isEmpty()) {
-            loadOwnerFleetVehicles()
-        }
+        if (ownerFleetVehicles.isEmpty()) loadOwnerFleetVehicles()
+        if (driverAssignedCars.isEmpty()) loadDriverAssignedCars()
+
         val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerVehicle(
             id = "default_car",
             name = "شيفروليه أفيو 2015",
@@ -1942,10 +2094,23 @@ class MainActivity : Activity() {
             displacement = 1.5f,
             baseRate = 7.2f,
             emptyWeightKg = 1200.0f,
-            fuelType = "gasoline",
+            fuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline",
             alertsEnabled = true,
             isCurrentActive = true
         )
+        val activeDrvCar = driverAssignedCars.firstOrNull { it.isActive } ?: driverAssignedCars.firstOrNull()
+
+        val headerTitleText = when (currentRole) {
+            "driver" -> {
+                if (activeDrvCar != null) {
+                    "🚗 قيادة: ${activeDrvCar.name} • ${getFuelTypeArabicBadge(activeDrvCar.fuelType)}"
+                } else {
+                    "🚗 قيادة: ${activeVeh.name} • ${getFuelTypeArabicBadge(activeVeh.fuelType)}"
+                }
+            }
+            "garage" -> "🔧 ورشتي: ${myWorkshopName.ifEmpty { "مركز الصيانة" }} • فحص: ${activeVeh.name}"
+            else -> "👑 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber} • ${getFuelTypeArabicBadge(activeVeh.fuelType)}"
+        }
 
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1956,7 +2121,6 @@ class MainActivity : Activity() {
             layoutParams = lp
         }
 
-        // السطر الأول: اسم السيارة واللوحة ملتصقان بجوار بعض مباشرة وبدون أي تباعد
         val titleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1964,30 +2128,28 @@ class MainActivity : Activity() {
             layoutParams = lp
 
             val carInfo = TextView(this@MainActivity).apply {
-                text = "🚗 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber}"
-                textSize = 15f
+                text = headerTitleText
+                textSize = 14f
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                setPadding(0, 0, 0, 0)
+                setPadding(0, 0, dp(4), 0)
             }
             addView(carInfo)
 
-            if (currentRole == "owner") {
-                val btnSwitchCar = Button(this@MainActivity).apply {
-                    text = "تبديل السيارة ▼"
-                    textSize = 11f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.rgb(12, 30, 46))
-                    setBackgroundColor(Color.rgb(248, 199, 74))
-                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32))
-                    layoutParams = blp
-                    setOnClickListener {
-                        showSwitchOwnerVehicleDialog()
-                    }
+            val btnSwitchCar = Button(this@MainActivity).apply {
+                text = "تبديل سريع ▼"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(12, 30, 46))
+                setBackgroundColor(Color.rgb(248, 199, 74))
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32))
+                layoutParams = blp
+                setOnClickListener {
+                    showSwitchOwnerVehicleDialog()
                 }
-                addView(btnSwitchCar)
             }
+            addView(btnSwitchCar)
         }
         card.addView(titleRow)
 
@@ -2963,9 +3125,11 @@ class MainActivity : Activity() {
             .putFloat("fuel_rate_baseline", veh.baseRate)
             .putFloat("vehicle_empty_weight", veh.emptyWeightKg)
             .putString("fuel_type", veh.fuelType)
+            .putString("vehicle_fuel_type", veh.fuelType)
             .putString("vehicle_data_source", "أسطول سيارات المالك 👑")
             .apply()
 
+        applyVehicleFuelType(veh.fuelType)
         vehicleEmptyWeightKg = veh.emptyWeightKg
         val firstDriver = veh.assignedDrivers.firstOrNull()
         if (firstDriver != null) {
@@ -2973,7 +3137,7 @@ class MainActivity : Activity() {
             authorizedDriverPhone = firstDriver.phone
         }
 
-        Toast.makeText(this, "👑 تم التبديل إلى سيارتك: [${veh.name}] بنجاح!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "👑 تم التبديل إلى سيارتك: [${veh.name}] (${getFuelTypeArabicBadge(veh.fuelType)}) بنجاح!", Toast.LENGTH_SHORT).show()
         renderCurrentScreen()
     }
 
@@ -2987,8 +3151,8 @@ class MainActivity : Activity() {
 
     private fun showAddOwnerVehicleDialog() {
         val options = arrayOf(
-            "⚡ فحص وقراءة كمبيوتر السيارة آلياً (OBD Auto-Scan)",
-            "✏️ إضافة يدوية بالكامل (Manual Entry)"
+            "⚡ فحص وقراءة كمبيوتر السيارة آلياً (OBD Auto-Scan + نوع الوقود)",
+            "✏️ إضافة يدوية بالكامل (مع اختيار: بنزين / ديزل / غاز طبيعي)"
         )
         AlertDialog.Builder(this)
             .setTitle("➕ إضافة سيارة جديدة لأسطولك")
@@ -3009,7 +3173,7 @@ class MainActivity : Activity() {
             val pairedMsg = if (detected != null) "\n• تم اكتشاف سيارة مقترنة بالبلوتوث: ${detected.first}" else ""
             AlertDialog.Builder(this)
                 .setTitle("🔌 فحص كمبيوتر السيارة")
-                .setMessage("يرجى توصيل قطعة الـ OBD بالسيارة لقراءة بيانات الشاسيه والمواصفات آلياً.$pairedMsg\n\nهل ترغب في فحص الأجهزة المقترنة ومحاكاة القراءة التلقائية الآن؟")
+                .setMessage("يرجى توصيل قطعة الـ OBD بالسيارة لقراءة بيانات الشاسيه ونوع الوقود والمواصفات آلياً.$pairedMsg\n\nهل ترغب في فحص الأجهزة المقترنة ومحاكاة القراءة التلقائية الآن؟")
                 .setPositiveButton("فحص واستيراد تلقائي ⚡") { _, _ ->
                     val simMake = detected?.second ?: "تويوتا"
                     val simModel = detected?.first ?: "تويوتا كورولا 2023"
@@ -3023,12 +3187,12 @@ class MainActivity : Activity() {
 
         val progress = AlertDialog.Builder(this)
             .setTitle("🔍 جاري فحص كمبيوتر السيارة...")
-            .setMessage("يتم الآن قراءة رقم الشاسيه (Mode 09) والمواصفات من عقل المحرك...")
+            .setMessage("يتم الآن قراءة رقم الشاسيه (Mode 09) ونوع الوقود (PID 0151) والمواصفات من عقل المحرك...")
             .setCancelable(false)
             .create()
         progress.show()
 
-        refreshVehicleEcuData { success, msg ->
+        refreshVehicleEcuData { success, _ ->
             progress.dismiss()
             if (success) {
                 val vin = preferences.getString("vehicle_vin", "") ?: ""
@@ -3045,23 +3209,61 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun buildFuelTypeSpinner(initialFuelCode: String = "gasoline"): Pair<Spinner, () -> String> {
+        val fuelOptions = listOf(
+            "🔌 قراءة تلقائية من كمبيوتر السيارة (ECU PID 0151) / بنزين",
+            "⛽ بنزين 92 / 95 (Gasoline - باللتر)",
+            "🛢️ ديزل / سولار (Diesel - باللتر)",
+            "🔵 غاز طبيعي / غاز (CNG/LPG - بالمتر المكعب م³)"
+        )
+        val spinner = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, fuelOptions)
+            setBackgroundColor(Color.rgb(16, 37, 66))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            lp.topMargin = dp(4)
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+            val initIdx = when (initialFuelCode.lowercase()) {
+                "diesel" -> 2
+                "cng", "lpg", "gas" -> 3
+                else -> 1
+            }
+            setSelection(initIdx)
+        }
+        val codeResolver: () -> String = {
+            when (spinner.selectedItemPosition) {
+                2 -> "diesel"
+                3 -> "cng"
+                0 -> preferences.getString("ecu_detected_fuel_type", "gasoline") ?: "gasoline"
+                else -> "gasoline"
+            }
+        }
+        return Pair(spinner, codeResolver)
+    }
+
     private fun showConfirmAutoScannedVehicleDialog(name: String, make: String, year: String, vin: String, tank: Float, disp: Float) {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(12))
         }
 
+        val detectedFuel = preferences.getString("ecu_detected_fuel_type", preferences.getString("vehicle_fuel_type", "gasoline")) ?: "gasoline"
         root.addView(text("✅ تم التعرف على السيارة وقراءة بياناتها:", 14, Color.rgb(126, 242, 154), true))
-        root.addView(text("• المركبة: $name\n• الماركة: $make • الموديل: $year\n• الشاسيه: $vin\n• سعة التانك: ${tank.toInt()} لتر • سعة المحرك: ${disp}L", 13, Color.WHITE, false).apply {
+        root.addView(text("• المركبة: $name\n• الماركة: $make • الموديل: $year\n• الشاسيه: $vin\n• سعة التانك: ${tank.toInt()} لتر • سعة المحرك: ${disp}L\n• نوع الوقود المقروء: ${getFuelTypeArabicBadge(detectedFuel)}", 13, Color.WHITE, false).apply {
             setPadding(0, dp(6), 0, dp(6))
         })
+
+        root.addView(text("⛽ نوع وقود السيارة (بنزين / ديزل / غاز طبيعي):", 12, Color.rgb(248, 199, 74), true))
+        val (fuelSpinner, resolveFuelCode) = buildFuelTypeSpinner(detectedFuel)
+        root.addView(fuelSpinner)
 
         root.addView(text("رقم اللوحة المرورية (اختياري):", 12, Color.rgb(248, 199, 74), true))
         val etPlate = edit("رقم اللوحة المرورية (مثال: أ ب ج 1234)")
         root.addView(etPlate)
 
-        root.addView(text("تفويض سائق أولي (اختياري):", 12, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, 0) })
-        val etDriverName = edit("اسم السائق المفوض (اختياري)")
+        root.addView(text("تفويض سائق أولي (اتركه فارغاً لتفويض نفسك تلقائياً):", 12, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(6), 0, 0) })
+        val etDriverName = edit("اسم السائق المفوض (اختياري - افتراضياً أنت المالك)")
         val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
         root.addView(etDriverName)
         root.addView(etDriverPhone)
@@ -3073,14 +3275,14 @@ class MainActivity : Activity() {
             .setView(scroll)
             .setPositiveButton("اعتماد وتأمين الملكية") { _, _ ->
                 val plate = etPlate.text.toString().trim().ifEmpty { "بدون لوحة" }
-                val drvName = etDriverName.text.toString().trim()
-                val drvPhone = etDriverPhone.text.toString().trim()
+                val drvName = etDriverName.text.toString().trim().ifEmpty { "${userName.ifEmpty { "المالك" }} (المالك - قيادة ذاتية)" }
+                val drvPhone = etDriverPhone.text.toString().trim().ifEmpty { userPhone.ifEmpty { "01000000000" } }
+                val chosenFuel = resolveFuelCode()
 
-                val driversList = mutableListOf<AssignedDriver>()
-                if (drvName.isNotEmpty()) {
-                    val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
-                    driversList.add(AssignedDriver(drvName, drvPhone.ifEmpty { "01000000000" }, "سائق مفوض", today))
-                }
+                val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+                val driversList = mutableListOf(
+                    AssignedDriver(drvName, drvPhone, "سائق مفوض", today)
+                )
 
                 val newCar = OwnerVehicle(
                     id = "own-veh-${System.currentTimeMillis()}",
@@ -3091,39 +3293,39 @@ class MainActivity : Activity() {
                     plateNumber = plate,
                     tankCapacity = tank,
                     displacement = disp,
-                    baseRate = if (disp > 1.8f) 8.5f else 6.8f,
+                    baseRate = if (chosenFuel == "diesel") 6.2f else if (disp > 1.8f) 8.5f else 6.8f,
                     emptyWeightKg = if (tank > 55f) 1400f else 1200f,
-                    fuelType = "gasoline",
+                    fuelType = chosenFuel,
                     alertsEnabled = true,
-                    isCurrentActive = false,
+                    isCurrentActive = true,
                     assignedDrivers = driversList
                 )
 
-                ownerFleetVehicles.add(newCar)
+                ownerFleetVehicles.forEach { it.isCurrentActive = false }
+                ownerFleetVehicles.add(0, newCar)
                 saveOwnerFleetVehicles()
+                applyVehicleFuelType(chosenFuel)
                 registerAndLockVin(vin, userName.ifEmpty { "المالك الأساسي" }, userPhone.ifEmpty { "01000000000" })
 
-                if (drvName.isNotEmpty()) {
-                    val drvCar = DriverAssignedCar(
-                        id = "drv-car-${newCar.id}",
-                        name = newCar.name,
-                        make = newCar.make,
-                        year = newCar.year,
-                        vin = newCar.vin,
-                        ownerName = userName.ifEmpty { "المالك الأساسي" },
-                        ownerPhone = userPhone.ifEmpty { "01000000000" },
-                        tankCapacity = newCar.tankCapacity,
-                        baseRate = newCar.baseRate,
-                        displacement = newCar.displacement,
-                        fuelType = newCar.fuelType,
-                        emptyWeightKg = newCar.emptyWeightKg,
-                        isActive = driverAssignedCars.none { it.isActive }
-                    )
-                    driverAssignedCars.add(drvCar)
-                    saveDriverAssignedCars()
-                }
+                val drvCar = DriverAssignedCar(
+                    id = "drv-car-${newCar.id}",
+                    name = newCar.name,
+                    make = newCar.make,
+                    year = newCar.year,
+                    vin = newCar.vin,
+                    ownerName = userName.ifEmpty { "المالك الأساسي" },
+                    ownerPhone = userPhone.ifEmpty { "01000000000" },
+                    tankCapacity = newCar.tankCapacity,
+                    baseRate = newCar.baseRate,
+                    displacement = newCar.displacement,
+                    fuelType = newCar.fuelType,
+                    emptyWeightKg = newCar.emptyWeightKg,
+                    isActive = driverAssignedCars.none { it.isActive }
+                )
+                driverAssignedCars.add(0, drvCar)
+                saveDriverAssignedCars()
 
-                Toast.makeText(this@MainActivity, "✅ تمت إضافة [$name] لأسطولك وتأمين ملكيتها آلياً!", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MainActivity, "✅ تمت إضافة [$name] (${getFuelTypeArabicBadge(chosenFuel)}) وتفويضك عليها بنجاح!", Toast.LENGTH_LONG).show()
                 renderCurrentScreen()
             }
             .setNegativeButton("إلغاء", null)
@@ -3132,7 +3334,7 @@ class MainActivity : Activity() {
 
     private fun showManualAddOwnerVehicleDialog() {
         val dialog = AlertDialog.Builder(this)
-        dialog.setTitle("➕ إضافة سيارة يدوياً")
+        dialog.setTitle("➕ إضافة سيارة جديدة")
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3144,15 +3346,22 @@ class MainActivity : Activity() {
         val etYear = edit("سنة الصنع (مثال: 2022)")
         val etVin = edit("رقم الشاسيه VIN (17 خانة)")
         val etPlate = edit("رقم اللوحة المرورية (مثال: س ر ق 7812)")
-        val etDriverName = edit("اسم السائق المفوض الأول (اختياري)")
-        val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
 
         root.addView(etName)
         root.addView(etMake)
         root.addView(etYear)
         root.addView(etVin)
         root.addView(etPlate)
-        root.addView(text("تفويض سائق أولي (اختياري):", 12, Color.rgb(248, 199, 74), true))
+
+        root.addView(text("⛽ نوع وقود السيارة (بنزين / ديزل / غاز طبيعي أو قراءة من الكمبيوتر):", 12, Color.rgb(248, 199, 74), true).apply {
+            setPadding(0, dp(8), 0, dp(2))
+        })
+        val (fuelSpinner, resolveFuelCode) = buildFuelTypeSpinner("gasoline")
+        root.addView(fuelSpinner)
+
+        val etDriverName = edit("اسم السائق المفوض (اتركه فارغاً لتفويض نفسك تلقائياً)")
+        val etDriverPhone = edit("رقم هاتف السائق (اختياري)")
+        root.addView(text("تفويض سائق (يمكنك تفويض نفسك أو سائق آخر):", 12, Color.rgb(110, 231, 255), true))
         root.addView(etDriverName)
         root.addView(etDriverPhone)
 
@@ -3166,8 +3375,9 @@ class MainActivity : Activity() {
             val year = etYear.text.toString().trim().ifEmpty { "2022" }
             val vin = etVin.text.toString().trim().uppercase().ifEmpty { "VIN${System.currentTimeMillis()}" }
             val plate = etPlate.text.toString().trim().ifEmpty { "لوحة جديدة" }
-            val drvName = etDriverName.text.toString().trim()
-            val drvPhone = etDriverPhone.text.toString().trim()
+            val chosenFuel = resolveFuelCode()
+            val drvName = etDriverName.text.toString().trim().ifEmpty { "${userName.ifEmpty { "المالك" }} (المالك - قيادة ذاتية)" }
+            val drvPhone = etDriverPhone.text.toString().trim().ifEmpty { userPhone.ifEmpty { "01000000000" } }
 
             // Check VIN ownership lock
             val (canRegister, lockReason) = checkVinOwnershipLock(vin)
@@ -3184,11 +3394,10 @@ class MainActivity : Activity() {
             val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
             registerAndLockVin(vin, primaryOwner, primaryPhone)
 
-            val driversList = mutableListOf<AssignedDriver>()
-            if (drvName.isNotEmpty()) {
-                val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
-                driversList.add(AssignedDriver(drvName, drvPhone.ifEmpty { "01000000000" }, "سائق مفوض", today))
-            }
+            val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
+            val driversList = mutableListOf(
+                AssignedDriver(drvName, drvPhone, "سائق مفوض", today)
+            )
 
             val newCar = OwnerVehicle(
                 id = "own-veh-${System.currentTimeMillis()}",
@@ -3199,45 +3408,45 @@ class MainActivity : Activity() {
                 plateNumber = plate,
                 tankCapacity = 50.0f,
                 displacement = 1.6f,
-                baseRate = 6.8f,
+                baseRate = if (chosenFuel == "diesel") 6.2f else 6.8f,
                 emptyWeightKg = 1200.0f,
-                fuelType = "gasoline",
+                fuelType = chosenFuel,
                 alertsEnabled = true,
-                isCurrentActive = false,
+                isCurrentActive = true,
                 assignedDrivers = driversList
             )
 
-            ownerFleetVehicles.add(newCar)
+            ownerFleetVehicles.forEach { it.isCurrentActive = false }
+            ownerFleetVehicles.add(0, newCar)
             saveOwnerFleetVehicles()
+            applyVehicleFuelType(chosenFuel)
 
-            if (drvName.isNotEmpty()) {
-                val drvCar = DriverAssignedCar(
-                    id = "drv-car-${newCar.id}",
-                    name = newCar.name,
-                    make = newCar.make,
-                    year = newCar.year,
-                    vin = newCar.vin,
-                    ownerName = userName.ifEmpty { "المالك الأساسي" },
-                    ownerPhone = userPhone.ifEmpty { "01000000000" },
-                    tankCapacity = newCar.tankCapacity,
-                    baseRate = newCar.baseRate,
-                    displacement = newCar.displacement,
-                    fuelType = newCar.fuelType,
-                    emptyWeightKg = newCar.emptyWeightKg,
-                    isActive = driverAssignedCars.none { it.isActive }
-                )
-                driverAssignedCars.add(drvCar)
-                saveDriverAssignedCars()
-            }
+            val drvCar = DriverAssignedCar(
+                id = "drv-car-${newCar.id}",
+                name = newCar.name,
+                make = newCar.make,
+                year = newCar.year,
+                vin = newCar.vin,
+                ownerName = userName.ifEmpty { "المالك الأساسي" },
+                ownerPhone = userPhone.ifEmpty { "01000000000" },
+                tankCapacity = newCar.tankCapacity,
+                baseRate = newCar.baseRate,
+                displacement = newCar.displacement,
+                fuelType = newCar.fuelType,
+                emptyWeightKg = newCar.emptyWeightKg,
+                isActive = driverAssignedCars.none { it.isActive }
+            )
+            driverAssignedCars.add(0, drvCar)
+            saveDriverAssignedCars()
 
             addSecurityNotification(
                 "إضافة سيارة جديدة للأسطول",
-                "تمت إضافة السيارة ($name - لوحة $plate) وتأمين شاسيهها باسمك بنجاح.",
+                "تمت إضافة السيارة ($name - لوحة $plate - وقود: ${getFuelTypeArabicBadge(chosenFuel)}) وتأمين شاسيهها باسمك بنجاح.",
                 "car_added",
                 "info"
             )
 
-            Toast.makeText(this, "✅ تمت إضافة [$name] لأسطولك بنجاح!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "✅ تمت إضافة [$name] (${getFuelTypeArabicBadge(chosenFuel)}) لأسطولك بنجاح!", Toast.LENGTH_SHORT).show()
             renderCurrentScreen()
         }
         dialog.setNegativeButton("إلغاء", null)
@@ -3246,23 +3455,36 @@ class MainActivity : Activity() {
 
     private fun showAddDriverToVehicleDialog(veh: OwnerVehicle) {
         val dialog = AlertDialog.Builder(this)
-        dialog.setTitle("➕ تفويض سائق جديد لـ: ${veh.name}")
+        dialog.setTitle("➕ تفويض سائق لـ: ${veh.name}")
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(12))
         }
 
+        // 1-Tap Self-Delegation Button for Owner (بدون رقم سري)
+        val btnSelfDelegate = Button(this).apply {
+            text = "👑 تفويض نفسي (المالك) لقيادة هذه السيارة فوراً"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(8, 23, 32))
+            setBackgroundColor(Color.rgb(126, 242, 154))
+            val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+            blp.bottomMargin = dp(10)
+            layoutParams = blp
+        }
+        root.addView(btnSelfDelegate)
+
         val tvNotice = TextView(this).apply {
-            text = "💡 ملحوظة: اكتب اسم السائق المفضل لديك لتمييزه (ليس شرطاً أن يطابق اسمه في حسابه)، ولكن يجب إدخال رقم هاتف السائق المسجل به في التطبيق بدقة لتصله دعوة التفويض في واجهته."
+            text = "💡 أو فوّض سائقاً آخر بإدخال اسمه ورقم هاتفه المسجل بالتطبيق (بدون أرقام سرية):"
             textSize = 12f
             setTextColor(Color.rgb(180, 215, 245))
             setPadding(0, 0, 0, dp(8))
         }
         root.addView(tvNotice)
 
-        val etDriverName = edit("اسم السائق لدى المالك (لتمييزه لديك - اختياري للتطابق)")
-        val etDriverPhone = edit("رقم موبايل السائق المسجل به في التطبيق (إلزامي)").apply {
+        val etDriverName = edit("اسم السائق لدى المالك (لتمييزه لديك)")
+        val etDriverPhone = edit("رقم موبايل السائق المسجل به في التطبيق").apply {
             inputType = InputType.TYPE_CLASS_PHONE
         }
         val etDriverRole = edit("صفة / وردية السائق (مثال: سائق نهاري، سائق أوبر، سائق عائلي)")
@@ -3272,7 +3494,7 @@ class MainActivity : Activity() {
         root.addView(etDriverRole)
 
         dialog.setView(root)
-        dialog.setPositiveButton("إرسال دعوة التفويض") { _, _ ->
+        val alert = dialog.setPositiveButton("إرسال دعوة التفويض") { _, _ ->
             val dName = etDriverName.text.toString().trim()
             val dPhone = etDriverPhone.text.toString().trim()
             val dRole = etDriverRole.text.toString().trim().ifEmpty { "سائق مفوض" }
@@ -3284,7 +3506,6 @@ class MainActivity : Activity() {
 
             val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
 
-            // Create pending delegation request
             val reqId = "del-${System.currentTimeMillis()}"
             val req = DriverDelegationRequest(
                 id = reqId,
@@ -3305,32 +3526,60 @@ class MainActivity : Activity() {
             driverDelegationRequests.add(0, req)
             saveDriverDelegationRequests()
 
-            // Also record in vehicle assigned drivers as pending
             val existingInVeh = veh.assignedDrivers.find { it.phone == dPhone }
             if (existingInVeh == null) {
                 veh.assignedDrivers.add(
                     AssignedDriver(
                         name = dName,
                         phone = dPhone,
-                        roleType = "$dRole (بانتظار قبول السائق ⏳)",
+                        roleType = "$dRole (مفوض ✓)",
                         assignedDate = today
                     )
                 )
                 saveOwnerFleetVehicles()
             }
 
+            // Also add to driverAssignedCars so seamless switching works on this device immediately
+            if (driverAssignedCars.none { it.vin == veh.vin }) {
+                driverAssignedCars.add(
+                    DriverAssignedCar(
+                        id = "drv-car-${veh.id}",
+                        name = veh.name,
+                        make = veh.make,
+                        year = veh.year,
+                        vin = veh.vin,
+                        ownerName = userName.ifEmpty { "المالك الأساسي" },
+                        ownerPhone = userPhone.ifEmpty { "01000000000" },
+                        tankCapacity = veh.tankCapacity,
+                        baseRate = veh.baseRate,
+                        displacement = veh.displacement,
+                        fuelType = veh.fuelType,
+                        emptyWeightKg = veh.emptyWeightKg,
+                        isActive = false
+                    )
+                )
+                saveDriverAssignedCars()
+            }
+
             addSecurityNotification(
                 "إرسال دعوة تفويض سائق",
-                "تم إرسال دعوة تفويض قيادة سيارتك (${veh.name}) إلى السائق ($dName - هاتف: $dPhone). ستنضم السيارة لحسابه فور موافقته وقبول الاستلام.",
+                "تم تفويض السائق ($dName - هاتف: $dPhone) لقيادة سيارتك (${veh.name}) بدون أرقام سرية.",
                 "driver_invitation_sent",
                 "info"
             )
 
-            Toast.makeText(this, "📡 تم إرسال دعوة التفويض للسائق ($dPhone). ستظهر له رسالة قبول في واجهته للموافقة واستلام السيارة!", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "✅ تم تفويض السائق ($dName) لقيادة [${veh.name}] بنجاح!", Toast.LENGTH_LONG).show()
             renderCurrentScreen()
         }
-        dialog.setNegativeButton("إلغاء", null)
-        dialog.show()
+        .setNegativeButton("إلغاء", null)
+        .create()
+
+        btnSelfDelegate.setOnClickListener {
+            alert.dismiss()
+            delegateSelfAndDriveOwnedVehicle(veh)
+        }
+
+        alert.show()
     }
 
     private fun showSimulateMultiCarAlertsDialog() {
@@ -3814,14 +4063,22 @@ class MainActivity : Activity() {
             addView(text("📡 مراقبة السيارة اللحظية عن بُعد (Live Fleet Telemetry)", 17, Color.rgb(110, 231, 255), true))
             addView(text("متابعة حية لقراءات السيارة أثناء تواجد السائق على الطريق بعيداً عن المالك:", 13, Color.rgb(167, 203, 226), false))
 
+            val isLiveDriver = telemetry.isConnected || isSimulating
             val statusBox = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
-                setBackgroundColor(Color.rgb(14, 42, 30))
+                setBackgroundColor(if (isLiveDriver) Color.rgb(14, 42, 30) else Color.rgb(42, 28, 18))
                 setPadding(dp(12), dp(8), dp(12), dp(8))
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(8)
                 layoutParams = lp
-                addView(text("🟢 السائق متصل حياً بالمركبة • السائق: $authorizedDriverName ($authorizedDriverPhone)", 13, Color.rgb(126, 242, 154), true))
+                val statusLabel = if (isLiveDriver) {
+                    if (isSimulating) "🟢 محاكاة حية نشطة • السائق: $authorizedDriverName ($authorizedDriverPhone)"
+                    else "🟢 السائق متصل حياً بكمبيوتر المركبة • السائق: $authorizedDriverName ($authorizedDriverPhone)"
+                } else {
+                    "🟡 السائق غير متصل بكمبيوتر السيارة حالياً (تظهر آخر قراءات مخزنة) • السائق: $authorizedDriverName"
+                }
+                val statusColor = if (isLiveDriver) Color.rgb(126, 242, 154) else Color.rgb(248, 199, 74)
+                addView(text(statusLabel, 13, statusColor, true))
             }
             addView(statusBox)
 
@@ -3917,13 +4174,21 @@ class MainActivity : Activity() {
                 layoutParams = lp
             }
 
-            if (telemetryDeltaLog.isEmpty()) {
-                val emptyBox = text("لا توجد تغيرات مسجلة بعد. عند تحرك السيارة ستظهر اللقطات هنا فورياً.", 13, Color.rgb(167, 203, 226), false).apply {
+            val nowMs = System.currentTimeMillis()
+            val maxAgeMs = when (remoteFleetTimeframe) {
+                "1h" -> 3600_000L
+                "24h" -> 24 * 3600_000L
+                else -> 7 * 24 * 3600_000L
+            }
+            val filteredDeltas = telemetryDeltaLog.filter { (nowMs - it.timestamp) <= maxAgeMs }
+
+            if (filteredDeltas.isEmpty()) {
+                val emptyBox = text("لا توجد تغيرات مسجلة خلال هذه الفترة الزمنية. عند تحرك السيارة ستظهر اللقطات هنا فورياً.", 13, Color.rgb(167, 203, 226), false).apply {
                     setPadding(dp(8), dp(12), dp(8), dp(12))
                 }
                 containerDeltas.addView(emptyBox)
             } else {
-                for (record in telemetryDeltaLog.take(25)) {
+                for (record in filteredDeltas.take(25)) {
                     val row = LinearLayout(this@MainActivity).apply {
                         orientation = LinearLayout.VERTICAL
                         setBackgroundColor(Color.rgb(12, 32, 48))
@@ -4285,9 +4550,9 @@ class MainActivity : Activity() {
                     }
                 })
 
-                // 3. Grant Temporary Access PIN
+                // 3. Grant Direct One-Tap Access (No PIN Required)
                 actionRow.addView(Button(this@MainActivity).apply {
-                    text = "🔑 تصريح فحص"
+                    text = "🔓 تصريح فحص مباشر"
                     textSize = 11f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(Color.rgb(8, 23, 32))
@@ -4967,7 +5232,7 @@ class MainActivity : Activity() {
                 // Details
                 addView(text("• الماركة والموديل: ${car.make} - موديل ${car.year}", 13, Color.rgb(200, 220, 240), false))
                 addView(text("• رقم الشاسية (VIN): ${car.vin}", 13, Color.rgb(180, 200, 210), false))
-                addView(text("• سعة التانك: ${car.tankCapacity} لتر | سعة المحرك: ${car.displacement}L | وزن فارغ: ${car.emptyWeightKg.toInt()} كجم", 13, Color.rgb(180, 210, 190), false))
+                addView(text("• نوع الوقود: ${getFuelTypeArabicBadge(car.fuelType)} | سعة التانك: ${car.tankCapacity} | سعة المحرك: ${car.displacement}L", 13, Color.rgb(180, 210, 190), false))
                 addView(text("• مالك السيارة: ${car.ownerName} (هاتف: ${car.ownerPhone})", 13, Color.rgb(240, 200, 150), false))
 
                 // Actions Row
@@ -5033,13 +5298,15 @@ class MainActivity : Activity() {
             .putFloat("fuel_rate_baseline", car.baseRate)
             .putFloat("vehicle_empty_weight", car.emptyWeightKg)
             .putString("fuel_type", car.fuelType)
+            .putString("vehicle_fuel_type", car.fuelType)
             .putString("vehicle_primary_owner", car.ownerName)
             .putString("vehicle_primary_owner_phone", car.ownerPhone)
             .putString("vehicle_data_source", "تم التفعيل من أسطول سيارات السائق 🚗")
             .apply()
 
+        applyVehicleFuelType(car.fuelType)
         vehicleEmptyWeightKg = car.emptyWeightKg
-        Toast.makeText(this@MainActivity, "🚗 تم تفعيل قيادة [${car.name}] وربط العدادات وحسابات الوقود بها بنجاح!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this@MainActivity, "🚗 تم تفعيل قيادة [${car.name}] (${getFuelTypeArabicBadge(car.fuelType)}) بنجاح!", Toast.LENGTH_SHORT).show()
         switchTab("gauges")
     }
 
@@ -5047,17 +5314,27 @@ class MainActivity : Activity() {
         val dialog = AlertDialog.Builder(this)
         dialog.setTitle("➕ إضافة سيارة مفوضة جديدة للسائق")
 
+        val scroll = ScrollView(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(10))
+            setBackgroundColor(Color.rgb(12, 26, 38))
         }
+        scroll.addView(root)
 
-        val etCarName = EditText(this).apply { hint = "اسم السيارة وموديلها (مثال: نيسان صني 2021)" }
-        val etMake = EditText(this).apply { hint = "الماركة (مثال: نيسان)" }
-        val etVin = EditText(this).apply { hint = "رقم الشاسية VIN (17 حرف)" }
-        val etOwnerName = EditText(this).apply { hint = "اسم المالك المفوض" }
-        val etOwnerPhone = EditText(this).apply { hint = "رقم هاتف المالك"; inputType = android.text.InputType.TYPE_CLASS_PHONE }
-        val etTank = EditText(this).apply { hint = "سعة التانك باللتر (مثال: 45)"; inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        val etCarName = edit("اسم السيارة وموديلها (مثال: نيسان صني 2021)")
+        val etMake = edit("الماركة (مثال: نيسان)")
+        val etVin = edit("رقم الشاسية VIN (17 حرف)")
+        val etOwnerName = edit("اسم المالك المفوض").apply { setText(userName) }
+        val etOwnerPhone = edit("رقم هاتف المالك").apply {
+            inputType = android.text.InputType.TYPE_CLASS_PHONE
+            setText(userPhone)
+        }
+        val etTank = edit("سعة التانك باللتر أو م³ (مثال: 45)").apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText("45")
+        }
+        val (fuelSpinLayout, getSelectedFuelType) = buildFuelTypeSpinner("auto_ecu")
 
         root.addView(etCarName)
         root.addView(etMake)
@@ -5065,8 +5342,9 @@ class MainActivity : Activity() {
         root.addView(etOwnerName)
         root.addView(etOwnerPhone)
         root.addView(etTank)
+        root.addView(fuelSpinLayout)
 
-        dialog.setView(root)
+        dialog.setView(scroll)
         dialog.setPositiveButton("إضافة واعتماد") { _, _ ->
             val name = etCarName.text.toString().trim()
             val make = etMake.text.toString().trim()
@@ -5074,6 +5352,7 @@ class MainActivity : Activity() {
             val owner = etOwnerName.text.toString().trim()
             val phone = etOwnerPhone.text.toString().trim()
             val tank = etTank.text.toString().toFloatOrNull() ?: 45.0f
+            val chosenFuel = getSelectedFuelType()
 
             if (name.isEmpty() || vin.isEmpty()) {
                 Toast.makeText(this, "يرجى كتابة اسم السيارة ورقم الشاسية.", Toast.LENGTH_SHORT).show()
@@ -5086,19 +5365,19 @@ class MainActivity : Activity() {
                 make = if (make.isNotEmpty()) make else "سيارة حديثة",
                 year = "2022",
                 vin = vin,
-                ownerName = if (owner.isNotEmpty()) owner else "مالك مفوض",
-                ownerPhone = if (phone.isNotEmpty()) phone else "01000000000",
+                ownerName = if (owner.isNotEmpty()) owner else userName.ifEmpty { "مالك مفوض" },
+                ownerPhone = if (phone.isNotEmpty()) phone else userPhone.ifEmpty { "01000000000" },
                 tankCapacity = tank,
                 baseRate = 7.0f,
                 displacement = 1.6f,
-                fuelType = "gasoline",
+                fuelType = chosenFuel,
                 emptyWeightKg = 1200f,
                 isActive = false
             )
 
             driverAssignedCars.add(newCar)
             saveDriverAssignedCars()
-            Toast.makeText(this, "✅ تمت إضافة السيارة إلى قائمة سياراتك بنجاح!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "✅ تمت إضافة السيارة (${getFuelTypeArabicBadge(chosenFuel)}) إلى قائمة سياراتك بنجاح!", Toast.LENGTH_SHORT).show()
             renderCurrentScreen()
         }
         dialog.setNegativeButton("إلغاء", null)
@@ -5152,7 +5431,7 @@ class MainActivity : Activity() {
                     put("lat", myWorkshopLat)
                     put("lng", myWorkshopLng)
                 }
-                val url = java.net.URL("http://127.0.0.1:8000/api/workshops")
+                val url = java.net.URL("${getApiBaseUrl()}/api/workshops")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json; utf-8")
@@ -6426,42 +6705,44 @@ class MainActivity : Activity() {
     }
 
     private fun showGenerateWorkshopPinDialog(targetWorkshopName: String) {
-        val pin = (1000 + (Math.random() * 9000).toInt()).toString()
-        activeWorkshopPin = pin
-        activeWorkshopTargetName = targetWorkshopName
-        isPinActive = true
-        activePinExpiryTimestamp = System.currentTimeMillis() + (2 * 3600 * 1000L) // 2 hours
-
         val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
-        addSecurityNotification(
-            "🔑 منح تصريح فحص مؤقت لورشة",
-            "قام السائق ($userName) بمنح كود فحص مؤقت (PIN: $pin) لـ ($targetWorkshopName) لفحص كمبيوتر سيارتك ($carName). التصريح ساري لمدة ساعتين.",
-            "workshop_pin_granted",
-            "warning"
+        val ownerPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
+        val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+
+        val directReq = WorkshopAccessRequest(
+            id = "ws-direct-${System.currentTimeMillis()}",
+            workshopName = targetWorkshopName,
+            workshopPhone = myWorkshopPhone.ifBlank { "01099887755" },
+            ownerPhone = ownerPhone,
+            targetVehicleName = carName,
+            serviceReason = "تصريح فحص مباشر لمرة واحدة (بدون رقم سري)",
+            requestDate = today,
+            status = "approved"
         )
+        workshopAccessRequests.add(0, directReq)
+        activeWorkshopTargetName = targetWorkshopName
+        approveWorkshopAccessRequest(directReq)
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(10), dp(20), dp(10))
-            addView(text("تم إنشاء كود الفحص المؤقت لـ:\n$targetWorkshopName", 14, Color.WHITE, true))
-
-            val pinBox = text(pin, 32, Color.rgb(248, 199, 74), true).apply {
-                gravity = Gravity.CENTER
-                setBackgroundColor(Color.rgb(18, 42, 64))
-                setPadding(dp(16), dp(14), dp(16), dp(14))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.setMargins(0, dp(10), 0, dp(10))
-                layoutParams = lp
-            }
-            addView(pinBox)
-
-            addView(text("⏳ صلاحية الكود: ساعتان فقط.\n📡 تم إرسال إشعار فوري لمالك السيارة بإصدار هذا التصريح لحمايتك وضمان الشفافية.", 12, Color.rgb(167, 203, 226), false))
+            setPadding(dp(20), dp(14), dp(20), dp(10))
+            setBackgroundColor(Color.rgb(12, 28, 42))
+            addView(text("✅ تم منح تصريح الفحص المباشر (بدون رقم سري) لـ:\n$targetWorkshopName", 15, Color.rgb(126, 242, 154), true))
+            addView(text("• السيارة: $carName\n• صلاحية الدخول: جلسة واحدة فقط تنتهي تلقائياً فور خروج الورشة أو إلغائها من المالك.\n• تم إرسال إشعار أمني فوري لحساب المالك.", 13, Color.rgb(180, 215, 240), false).apply {
+                setPadding(0, dp(8), 0, 0)
+            })
         }
 
         AlertDialog.Builder(this)
-            .setTitle("🔑 كود فحص مؤقت للورشة")
+            .setTitle("🔓 تصريح فحص مباشر بدون رقم سري")
             .setView(layout)
-            .setPositiveButton("حسناً") { _, _ -> }
+            .setPositiveButton("فتح شاشة فحص الورشة الآن 🔧") { _, _ ->
+                currentRole = "garage"
+                preferences.edit().putString("user_role", "garage").apply()
+                switchTab("workshop_console")
+                renderCurrentScreen()
+            }
+            .setNegativeButton("البقاء في الشاشة الحالية", null)
             .show()
     }
 
@@ -7072,6 +7353,7 @@ class MainActivity : Activity() {
             r1.addView(metricBox("الماركة المصنعة", curMake, Color.rgb(110, 231, 255)).parent as View)
             addView(r1)
 
+            val curFuelType = preferences.getString("vehicle_fuel_type", preferences.getString("fuel_type", "gasoline")) ?: "gasoline"
             val r2 = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -7079,7 +7361,7 @@ class MainActivity : Activity() {
                 layoutParams = lp
             }
             r2.addView(metricBox("سنة الصنع / الموديل", curYear, Color.rgb(248, 199, 74)).parent as View)
-            r2.addView(metricBox("مصدر البيانات", "كمبيوتر ECU 🔌", Color.WHITE).parent as View)
+            r2.addView(metricBox("نوع الوقود المعتمد", getFuelTypeArabicBadge(curFuelType), Color.rgb(126, 242, 154)).parent as View)
             addView(r2)
 
             addView(text("الاسم المعتمد للسيارة: $curName", 14, Color.rgb(248, 199, 74), true).apply {
@@ -7202,16 +7484,20 @@ class MainActivity : Activity() {
         // 3. NEW VEHICLE / ECU VIN SCANNER CARD
         val cardNew = card().apply {
             addView(text("فحص أو تسجيل مركبة أخرى من الشاسيه / الكمبيوتر ➕", 17, Color.WHITE, true))
-            addView(text("أدخل رقم الشاسيه (17 حرفاً ورقم) وسيتم فك تشفير الماركة والموديل وسنة الصنع تلقائياً:", 13, Color.rgb(167, 203, 226), false))
+            addView(text("أدخل رقم الشاسيه (17 حرفاً ورقم) وسيتم فك تشفير الماركة والموديل وسنة الصنع ونوع الوقود:", 13, Color.rgb(167, 203, 226), false))
 
             val etVehVin = edit("رقم الشاسيه VIN (مثال: KMHDH41EBNA123456)")
             addView(etVehVin)
+
+            val (fuelSpinLayout, getSelectedFuelType) = buildFuelTypeSpinner("auto_ecu")
+            addView(fuelSpinLayout)
 
             val tvMsg = text("", 13, Color.rgb(126, 242, 154), false)
             addView(tvMsg)
 
             addView(button("⚡ فك تشفير وتفعيل المركبة الجديدة") {
                 val vinIn = etVehVin.text.toString().trim().uppercase()
+                val chosenFuel = getSelectedFuelType()
                 if (vinIn.length < 10) {
                     tvMsg.text = "يرجى إدخال رقم شاسيه صحيح (10 إلى 17 خانة)."
                     tvMsg.setTextColor(Color.rgb(255, 122, 122))
@@ -7236,6 +7522,7 @@ class MainActivity : Activity() {
                 val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
 
                 registerAndLockVin(vinIn, primaryOwner, primaryPhone)
+                applyVehicleFuelType(chosenFuel)
 
                 preferences.edit()
                     .putString("vehicle_vin", vinIn)
@@ -7247,13 +7534,13 @@ class MainActivity : Activity() {
 
                 addSecurityNotification(
                     "🛡️ تمليك وتأمين شاسيه جديد",
-                    "تم تسجيل وتأمين الشاسيه ($vinIn) بنجاح باسم المالك ($primaryOwner). الشاسيه الآن مقفل ولا يمكن لأي حساب آخر تسجيله.",
+                    "تم تسجيل وتأمين الشاسيه ($vinIn) بنجاح باسم المالك ($primaryOwner) ونوع الوقود (${getFuelTypeArabicBadge(chosenFuel)}).",
                     "vin_claimed",
                     "info"
                 )
 
                 tvMsg.setTextColor(Color.rgb(126, 242, 154))
-                tvMsg.text = "تم فك تشفير وتأمين ملكية المركبة: ${decoded.displayName} بنجاح!"
+                tvMsg.text = "تم فك تشفير وتأمين ملكية المركبة: ${decoded.displayName} (${getFuelTypeArabicBadge(chosenFuel)}) بنجاح!"
                 switchTab("vehicles")
             })
         }
@@ -7360,7 +7647,11 @@ class MainActivity : Activity() {
         if (socket != null && socket.isConnected) {
             thread {
                 try {
-                    val cleanVin = fetchVinFromEcu(socket.outputStream, socket.inputStream)
+                    val out = socket.outputStream
+                    val `in` = socket.inputStream
+                    val cleanVin = fetchVinFromEcu(out, `in`)
+                    val raw51 = sendObdCommand(out, `in`, "0151", 1000)
+                    parseFuelType51(raw51)
 
                     if (cleanVin.isNotBlank()) {
                         val decoded = decodeVin(cleanVin)
@@ -7373,11 +7664,11 @@ class MainActivity : Activity() {
                             .apply()
                         telemetry.vin = cleanVin
                         runOnUiThread {
-                            onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة مباشرة من كمبيوتر السيارة بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• رقم الشاسيه: $cleanVin")
+                            onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة ونوع الوقود مباشرة من كمبيوتر السيارة بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• نوع الوقود (ECU PID 0151): ${telemetry.fuelType}\n• رقم الشاسيه: $cleanVin")
                         }
                     } else {
                         // Attempt Electronic Software CALID Auto-Identification (delphi MR-140/HV-240)
-                        val calid = fetchCalidFromEcu(socket.outputStream, socket.inputStream)
+                        val calid = fetchCalidFromEcu(out, `in`)
                         val calidVehicle = identifyVehicleFromCalid(calid)
 
                         if (calidVehicle != null) {
@@ -7392,7 +7683,7 @@ class MainActivity : Activity() {
                                 .apply()
                             telemetry.vin = "CALID: $calid"
                             runOnUiThread {
-                                onComplete(true, "تم التعرف التلقائي على سيارتك عبر كود السوفت وير (CALID) من عقل المحرك مباشرة:\n\n• المركبة: ${calidVehicle.name}\n• الماركة: ${calidVehicle.make}\n• سعة التانك المعتمدة: ${calidVehicle.tank.toInt()} لتر\n• سعة المحرك: ${calidVehicle.displacement}L\n• كود البرمجة: $calid")
+                                onComplete(true, "تم التعرف التلقائي على سيارتك ونوع الوقود عبر كود السوفت وير (CALID) من عقل المحرك مباشرة:\n\n• المركبة: ${calidVehicle.name}\n• الماركة: ${calidVehicle.make}\n• نوع الوقود: ${telemetry.fuelType}\n• سعة التانك المعتمدة: ${calidVehicle.tank.toInt()} لتر\n• سعة المحرك: ${calidVehicle.displacement}L\n• كود البرمجة: $calid")
                             }
                         } else {
                             val detected = detectCarFromPairedDevices()
@@ -7409,10 +7700,10 @@ class MainActivity : Activity() {
                                         .putFloat("engine_displacement_liters", if (isAveo) 1.5f else 1.6f)
                                         .putString("vehicle_data_source", "بلوتوث السيارة المباشر (${detected.first}) 🚗")
                                         .apply()
-                                    onComplete(true, "تم التعرف فورياً على سيارتك من نظام بلوتوث السيارة المزدوج:\n\n• المركبة: ${detected.first}\n• الماركة: ${detected.second}\n• سعة التانك: ${tankVal.toInt()} لتر")
+                                    onComplete(true, "تم التعرف فورياً على سيارتك من نظام بلوتوث السيارة المزدوج:\n\n• المركبة: ${detected.first}\n• الماركة: ${detected.second}\n• نوع الوقود: ${telemetry.fuelType}\n• سعة التانك: ${tankVal.toInt()} لتر")
                                 } else {
                                     showVehicleSelectorDialog(
-                                        "كمبيوتر سيارتك يعمل ببروتوكول مصنع محمي لا يشارك رقم الشاسيه عبر Mode 09 لحماية السوفت وير (وهذا شائع وطبيعي في سيارات شيفروليه أفيو/أوبترا والعديد من الموديلات العالمية).\n\nيمكنك اختيار سيارتك بلمسة واحدة لتثبيت بياناتها ومواصفات التانك فوراً:"
+                                        "كمبيوتر سيارتك يعمل ببروتوكول مصنع محمي لا يشارك رقم الشاسيه عبر Mode 09 لحماية السوفت وير (وهذا شائع وطبيعي في سيارات شيفروليه أفيو/أوبترا والعديد من الموديلات العالمية).\n• نوع الوقود المكتشف: ${telemetry.fuelType}\n\nيمكنك اختيار سيارتك بلمسة واحدة لتثبيت بياناتها ومواصفات التانك فوراً:"
                                     )
                                 }
                             }
@@ -7430,6 +7721,8 @@ class MainActivity : Activity() {
                     val out = wifiSocket.getOutputStream()
                     val `in` = wifiSocket.getInputStream()
                     val cleanVin = fetchVinFromEcu(out, `in`)
+                    val raw51 = sendObdCommand(out, `in`, "0151", 1000)
+                    parseFuelType51(raw51)
 
                     if (cleanVin.isNotBlank()) {
                         val decoded = decodeVin(cleanVin)
@@ -7442,7 +7735,7 @@ class MainActivity : Activity() {
                             .apply()
                         telemetry.vin = cleanVin
                         runOnUiThread {
-                            onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة مباشرة من Wi-Fi OBD بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• الشاسيه: $cleanVin")
+                            onComplete(true, "تمت قراءة وفك تشفير بيانات السيارة ونوع الوقود مباشرة من Wi-Fi OBD بنجاح:\n\n• المركبة: ${decoded.displayName}\n• الماركة: ${decoded.make}\n• سنة الصنع: ${decoded.year}\n• نوع الوقود: ${telemetry.fuelType}\n• الشاسيه: $cleanVin")
                         }
                     } else {
                         val calid = fetchCalidFromEcu(out, `in`)
@@ -7458,7 +7751,7 @@ class MainActivity : Activity() {
                                 .apply()
                             telemetry.vin = "CALID: $calid"
                             runOnUiThread {
-                                onComplete(true, "تم التعرف على السيارة عبر كود السوفت وير CALID:\n• ${calidVehicle.name} (تانك ${calidVehicle.tank.toInt()}L)")
+                                onComplete(true, "تم التعرف على السيارة عبر كود السوفت وير CALID:\n• ${calidVehicle.name} (تانك ${calidVehicle.tank.toInt()}L - وقود: ${telemetry.fuelType})")
                             }
                         } else {
                             runOnUiThread {
@@ -7549,10 +7842,15 @@ class MainActivity : Activity() {
             setText(preferences.getString("vehicle_vin", ""))
             inputType = InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
         }
+        val curFuelPref = preferences.getString("vehicle_fuel_type", "auto_ecu") ?: "auto_ecu"
+        val (spFuel, getSelectedFuelType) = buildFuelTypeSpinner(curFuelPref)
+
         layout.addView(text("اسم السيارة والموديل:", 13, Color.rgb(110, 231, 255), true))
         layout.addView(etName)
         layout.addView(text("رقم الشاسيه (VIN):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(8), 0, 0) })
         layout.addView(etVin)
+        layout.addView(text("نوع الوقود:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(8), 0, 0) })
+        layout.addView(spFuel)
 
         AlertDialog.Builder(this)
             .setTitle("✏️ إدخال بيانات السيارة")
@@ -7560,6 +7858,7 @@ class MainActivity : Activity() {
             .setPositiveButton("حفظ وتثبيت") { _, _ ->
                 val name = etName.text.toString().trim()
                 var vin = etVin.text.toString().trim().uppercase()
+                val chosenFuel = getSelectedFuelType()
                 if (name.isNotBlank()) {
                     if (vin.isBlank()) vin = "MANUAL" + System.currentTimeMillis().toString().takeLast(11)
                     val decoded = decodeVin(vin)
@@ -7571,7 +7870,8 @@ class MainActivity : Activity() {
                         .putString("vehicle_data_source", "إدخال يدوي معتمد ✏️")
                         .apply()
                     telemetry.vin = vin
-                    Toast.makeText(this, "تم حفظ بيانات: $name", Toast.LENGTH_SHORT).show()
+                    applyVehicleFuelType(chosenFuel)
+                    Toast.makeText(this, "تم حفظ بيانات: $name (${getFuelTypeArabicBadge(chosenFuel)})", Toast.LENGTH_SHORT).show()
                     switchTab("vehicles")
                 }
             }
@@ -8162,7 +8462,7 @@ class MainActivity : Activity() {
             fun fuelTypeBtn(typeKey: String, label: String, defaultPrice: Float, defaultRate: Float): Button {
                 return Button(this@MainActivity).apply {
                     text = label
-                    textSize = 11f
+                    textSize = 10.5f
                     typeface = Typeface.DEFAULT_BOLD
                     val isSel = (curFuelType == typeKey)
                     setTextColor(if (isSel) Color.rgb(8, 23, 32) else Color.WHITE)
@@ -8171,22 +8471,22 @@ class MainActivity : Activity() {
                     lp.setMargins(dp(2), 0, dp(2), 0)
                     layoutParams = lp
                     setOnClickListener {
-                        val unit = if (typeKey == "cng") "م³" else "لتر"
-                        preferences.edit()
-                            .putString("vehicle_fuel_type", typeKey)
-                            .putString("fuel_unit_name", unit)
-                            .putFloat("fuel_liter_price", defaultPrice)
-                            .putFloat("fuel_rate_baseline", defaultRate)
-                            .apply()
-                        telemetry.fuelUnitName = unit
+                        applyVehicleFuelType(typeKey)
+                        if (typeKey != "auto_ecu") {
+                            preferences.edit()
+                                .putFloat("fuel_liter_price", defaultPrice)
+                                .putFloat("fuel_rate_baseline", defaultRate)
+                                .apply()
+                        }
                         switchTab("fuel")
                     }
                 }
             }
 
+            fuelTypeRow.addView(fuelTypeBtn("auto_ecu", "🔌 تلقائي ECU", 15.00f, 8.5f))
             fuelTypeRow.addView(fuelTypeBtn("gasoline", "⛽ بنزين", 15.00f, 8.5f))
-            fuelTypeRow.addView(fuelTypeBtn("diesel", "🛢️ سولار / ديزل", 13.50f, 6.8f))
-            fuelTypeRow.addView(fuelTypeBtn("cng", "💨 غاز طبيعي CNG", 7.00f, 8.0f))
+            fuelTypeRow.addView(fuelTypeBtn("diesel", "🛢️ ديزل/سولار", 13.50f, 6.8f))
+            fuelTypeRow.addView(fuelTypeBtn("cng", "💨 غاز CNG", 7.00f, 8.0f))
             sec.addView(fuelTypeRow)
 
             val unitName = preferences.getString("fuel_unit_name", "لتر") ?: "لتر"
@@ -9124,60 +9424,61 @@ class MainActivity : Activity() {
     private fun showFuelTypeDialog() {
         val currentType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
         val fuelTypes = arrayOf(
+            "🔌 قراءة تلقائية من كمبيوتر السيارة (ECU PID 0151)",
             "⛽ بنزين 92 / 95 (Gasoline) - AFR 14.7 | كثافة 740 g/L",
-            "🔵 غاز طبيعي مضغوط (CNG) - AFR 17.2 | كثافة 720 g/m³ (حساب بالمتر المكعب)",
+            "🔵 غاز طبيعي مضغوط (CNG / LPG) - AFR 17.2 | كثافة 720 g/m³ (حساب بالمتر المكعب)",
             "🛢️ سولار / ديزل (Diesel) - AFR 22.0 | كثافة 840 g/L"
         )
         val selectedIdx = when (currentType) {
-            "cng" -> 1
-            "diesel" -> 2
-            else -> 0
+            "auto_ecu" -> 0
+            "cng" -> 2
+            "diesel" -> 3
+            else -> 1
         }
 
         AlertDialog.Builder(this)
             .setTitle("⛽ تحديد نوع الوقود والمحرك")
             .setSingleChoiceItems(fuelTypes, selectedIdx) { dialog, which ->
-                val typeCode: String
-                val unitName: String
-                val defaultPrice: Float
-                val typeLabel: String
-
-                when (which) {
-                    1 -> {
-                        typeCode = "cng"
-                        unitName = "م³"
-                        defaultPrice = 7.0f
-                        typeLabel = "غاز طبيعي (CNG)"
-                    }
-                    2 -> {
-                        typeCode = "diesel"
-                        unitName = "لتر"
-                        defaultPrice = 13.5f
-                        typeLabel = "ديزل / سولار (Diesel)"
-                    }
-                    else -> {
-                        typeCode = "gasoline"
-                        unitName = "لتر"
-                        defaultPrice = 15.0f
-                        typeLabel = "بنزين (Gasoline)"
-                    }
+                val typeCode = when (which) {
+                    0 -> "auto_ecu"
+                    2 -> "cng"
+                    3 -> "diesel"
+                    else -> "gasoline"
                 }
-
-                preferences.edit()
-                    .putString("vehicle_fuel_type", typeCode)
-                    .putString("fuel_unit_name", unitName)
-                    .putFloat("fuel_liter_price", defaultPrice)
-                    .apply()
-                telemetry.fuelType = typeLabel
-                telemetry.fuelUnitName = unitName
+                applyVehicleFuelType(typeCode)
+                // تحديث السيارة النشطة في أسطول المالك وأسطول السائق أيضاً
+                ownerFleetVehicles.find { it.isCurrentActive }?.let {
+                    it.fuelType = typeCode
+                    saveOwnerFleetVehicles()
+                }
+                driverAssignedCars.find { it.isActive }?.let {
+                    it.fuelType = typeCode
+                    saveDriverAssignedCars()
+                }
                 runOnUiThread {
                     updateLiveUI()
-                    Toast.makeText(this, "تم اعتماد نوع الوقود: $typeLabel ($unitName) بنجاح ⛽", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "تم اعتماد نوع الوقود: ${getFuelTypeArabicBadge(typeCode)} بنجاح ⛽", Toast.LENGTH_SHORT).show()
                 }
                 dialog.dismiss()
             }
             .setNegativeButton("إلغاء", null)
             .show()
+    }
+
+    private fun configureProbeCanHeader(outStream: OutputStream, inStream: InputStream, header: String) {
+        if (header != "7DF") {
+            sendObdCommand(outStream, inStream, "ATSH $header", 250)
+            if (header.startsWith("7E", ignoreCase = true)) {
+                val rxAddr = Integer.toHexString(header.toInt(16) + 8).uppercase()
+                sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
+            } else {
+                // لوحات العدادات (مثل 743, 714, 760, 7A4, 7C0, 7C6) ترد بعناوين غير قياسية (+20 أو غيرها) لذا نفتح فلتر الاستقبال
+                sendObdCommand(outStream, inStream, "ATCRA", 200)
+            }
+        } else {
+            sendObdCommand(outStream, inStream, "ATCRA", 200)
+            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+        }
     }
 
     private fun scanAllFuelComputers() {
@@ -9188,7 +9489,7 @@ class MainActivity : Activity() {
             val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
             AlertDialog.Builder(this)
                 .setTitle("🔍 فحص كمبيوترات السيارة ذاتياً (قراءة الوقود)")
-                .setMessage("⚠️ جهاز الـ OBD غير متصل حالياً بسيارتك ($carName).\n\nعند توصيل الجهاز، يقوم هذا الفحص بمسح كافة كمبيوترات السيارة إلكترونياً:\n• كمبيوترات لوحة العدادات بالطابلوه (GM 7A4/724، Toyota 7C0، Nissan 743، Hyundai 7C6/7A0، وغيرها)\n• كمبيوتر المكينة (Engine ECU 7E0)\n• البث القياسي (7DF)\nويقرأ الوقود الحقيقي ذاتياً دون أي إدخال يدوي.\n\nهل ترغب في تجربة محاكاة الفحص الآن؟")
+                .setMessage("⚠️ جهاز الـ OBD غير متصل حالياً بسيارتك ($carName).\n\nعند توصيل الجهاز، يقوم هذا الفحص بمسح كافة كمبيوترات السيارة إلكترونياً:\n• قراءة نوع الوقود المسجل بكمبيوتر السيارة (PID 0151: بنزين / ديزل / غاز طبيعي)\n• كمبيوترات لوحة العدادات بالطابلوه (GM 7A4/724، Toyota 7C0، Nissan 743، Hyundai 7C6/7A0، وغيرها)\n• كمبيوتر المكينة (Engine ECU 7E0)\n• البث القياسي (7DF)\nويقرأ الوقود الحقيقي ذاتياً دون أي إدخال يدوي.\n\nهل ترغب في تجربة محاكاة الفحص الآن؟")
                 .setPositiveButton("محاكاة الفحص الذاتي ⚡") { _, _ ->
                     simulateFuelComputerScan()
                 }
@@ -9208,19 +9509,25 @@ class MainActivity : Activity() {
             val results = mutableListOf<String>()
             var bestProbe: FuelProbe? = null
             var bestFuel = -1
+            var detectedEcuFuelCode: String? = null
 
             synchronized(obdLock) {
+                try {
+                    sendObdCommand(outStream, inStream, "ATCRA", 200)
+                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                    val r51 = sendObdCommand(outStream, inStream, "0151", 450)
+                    val parsed51 = parseFuelType51(r51)
+                    if (parsed51 != null) {
+                        detectedEcuFuelCode = parsed51.first
+                        preferences.edit().putString("ecu_detected_fuel_type", parsed51.first).apply()
+                        results.add("• نوع الوقود المقروء من كمبيوتر السيارة (PID 0151): ${getFuelTypeArabicBadge(parsed51.first)} 🔌")
+                    }
+                } catch (_: Exception) {}
+
                 // Sweep all cluster and engine probes universally
                 for (probe in universalFuelProbes) {
                     try {
-                        if (probe.header != "7DF") {
-                            sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                            val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
-                            sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
-                        } else {
-                            sendObdCommand(outStream, inStream, "ATCRA", 200)
-                            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-                        }
+                        configureProbeCanHeader(outStream, inStream, probe.header)
                         val resp = sendObdCommand(outStream, inStream, probe.command, 450)
                         val fuel = parseProbeFuel(resp, probe)
                         if (fuel in 0..100) {
@@ -9244,6 +9551,9 @@ class MainActivity : Activity() {
 
             runOnUiThread {
                 progress.dismiss()
+                if (detectedEcuFuelCode != null) {
+                    applyVehicleFuelType(detectedEcuFuelCode!!)
+                }
                 if (bestProbe != null && bestFuel in 0..100) {
                     activeFuelProbe = bestProbe
                     telemetry.fuelLevel = bestFuel
@@ -9320,7 +9630,10 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             hint = "أدخل النسبة من 1 إلى 100 (مثال: 21)"
-            setTextColor(Color.BLACK)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(167, 203, 226))
+            setBackgroundColor(Color.rgb(18, 38, 58))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
         }
         AlertDialog.Builder(this)
             .setTitle("أدخل نسبة البنزين الحالية بالتانك (%)")
@@ -9344,7 +9657,10 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             hint = "أدخل عدد اللترات الحالية (مثال: 9.5)"
-            setTextColor(Color.BLACK)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(167, 203, 226))
+            setBackgroundColor(Color.rgb(18, 38, 58))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
         }
         AlertDialog.Builder(this)
             .setTitle("أدخل كمية الوقود الحالية باللتر")
@@ -9370,7 +9686,10 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             hint = "أدخل اللترات التي تم تزويدها (مثال: 15)"
-            setTextColor(Color.BLACK)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(167, 203, 226))
+            setBackgroundColor(Color.rgb(18, 38, 58))
+            setPadding(dp(12), dp(12), dp(12), dp(12))
         }
         AlertDialog.Builder(this)
             .setTitle("⛽ تموين وقود - إضافة لترات جديدة")
@@ -10420,7 +10739,13 @@ class MainActivity : Activity() {
                             val rIat = sendObdCommand(outStream, inStream, "010F", 350)
                             val iat = parseIat(rIat)
                             if (iat != -999) telemetry.intakeAirTempC = iat
+                            val trimResp = sendObdCommand(outStream, inStream, "0106", 350)
+                            val trim = parseFuelTrim(trimResp)
+                            if (trim > -40f && trim < 40f) {
+                                telemetry.shortTermFuelTrimPercent = trim
+                            }
                         }
+                        val stftFactor = 1.0 + (telemetry.shortTermFuelTrimPercent / 100.0).coerceIn(-0.25, 0.25)
                         val rpmVal = telemetry.rpm.coerceAtLeast(650)
                         val mapKpa = telemetry.mapKpa.coerceAtLeast(20)
                         val tempK = (telemetry.intakeAirTempC + 273.15).coerceIn(250.0, 360.0)
@@ -10428,7 +10753,7 @@ class MainActivity : Activity() {
                         val ve = (0.72 + (0.16 * loadRatio)).coerceIn(0.65, 0.92)
                         // Speed-Density Air Mass: (MAP * Vd/2 * RPM/60 * VE * 28.97) / (R * T)
                         val airMassGps = (mapKpa * 1000.0 * (displacement / 2000.0) * (rpmVal / 60.0) * ve * 28.97) / (8.314 * tempK)
-                        instantLph = (airMassGps * fuelFactor).coerceIn(0.3, 85.0)
+                        instantLph = (airMassGps * fuelFactor * stftFactor).coerceIn(0.3, 85.0)
                     }
                     FuelSensorMode.DYNAMIC_LOAD_FUSION -> {
                         val loadFrac = (telemetry.engineLoadPercent / 100.0).coerceIn(0.12, 1.0)
@@ -10440,7 +10765,8 @@ class MainActivity : Activity() {
                             }
                             instantLph = (idleScale + (0.35 * loadFrac) * (telemetry.rpm.toDouble() / 800.0).coerceIn(0.8, 1.6)).coerceIn(0.6, 3.5)
                         } else {
-                            val airMass = (displacement / 2.0) * (telemetry.rpm.toDouble() / 60.0) * loadFrac * 1.18 * 0.82
+                            // PID 0104 (Calculated Engine Load) already incorporates Volumetric Efficiency (VE)
+                            val airMass = (displacement / 2.0) * (telemetry.rpm.toDouble() / 60.0) * loadFrac * 1.184
                             instantLph = (airMass * fuelFactor).coerceIn(0.8, 65.0)
                         }
                     }
@@ -10537,11 +10863,7 @@ class MainActivity : Activity() {
                 if (!isCalibrated && fuelTrackingMode == "auto" && loopCount % 6 == 0) {
                     val probe = activeFuelProbe
                     if (probe != null) {
-                        if (probe.header != "7DF") {
-                            sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                            val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
-                            sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
-                        }
+                        configureProbeCanHeader(outStream, inStream, probe.header)
                         val fuelResp = sendObdCommand(outStream, inStream, probe.command, 500)
                         if (probe.header != "7DF") {
                             sendObdCommand(outStream, inStream, "ATCRA", 200)
@@ -10779,11 +11101,7 @@ class MainActivity : Activity() {
             val cachedProbe = universalFuelProbes.find { it.header == savedHeader && it.command == savedCmd }
             if (cachedProbe != null) {
                 try {
-                    if (cachedProbe.header != "7DF") {
-                        sendObdCommand(outStream, inStream, "ATSH ${cachedProbe.header}", 250)
-                        val rxAddr = Integer.toHexString(cachedProbe.header.toInt(16) + 8).uppercase()
-                        sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
-                    }
+                    configureProbeCanHeader(outStream, inStream, cachedProbe.header)
                     val resp = sendObdCommand(outStream, inStream, cachedProbe.command, 400)
                     if (cachedProbe.header != "7DF") {
                         sendObdCommand(outStream, inStream, "ATCRA", 200)
@@ -10806,9 +11124,7 @@ class MainActivity : Activity() {
         if (isCan) {
             for (probe in universalFuelProbes.filter { it.isCluster }) {
                 try {
-                    sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 300)
-                    val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
-                    sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 250)
+                    configureProbeCanHeader(outStream, inStream, probe.header)
 
                     val resp = sendObdCommand(outStream, inStream, probe.command, 500)
 
@@ -10880,11 +11196,7 @@ class MainActivity : Activity() {
             val cachedProbe = universalOdometerProbes.find { it.header == savedHeader && it.command == savedCmd }
             if (cachedProbe != null) {
                 try {
-                    if (cachedProbe.header != "7DF") {
-                        sendObdCommand(outStream, inStream, "ATSH ${cachedProbe.header}", 250)
-                        val rxAddr = Integer.toHexString(cachedProbe.header.toInt(16) + 8).uppercase()
-                        sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
-                    }
+                    configureProbeCanHeader(outStream, inStream, cachedProbe.header)
                     val resp = sendObdCommand(outStream, inStream, cachedProbe.command, 450)
                     if (cachedProbe.header != "7DF") {
                         sendObdCommand(outStream, inStream, "ATCRA", 200)
@@ -10929,9 +11241,7 @@ class MainActivity : Activity() {
         if (isCan) {
             for (probe in universalOdometerProbes.filter { it.isCluster }) {
                 try {
-                    sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 300)
-                    val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
-                    sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 250)
+                    configureProbeCanHeader(outStream, inStream, probe.header)
 
                     val resp = sendObdCommand(outStream, inStream, probe.command, 500)
 
@@ -10980,11 +11290,7 @@ class MainActivity : Activity() {
 
     private fun readProbeOdometer(inStream: InputStream, outStream: OutputStream, probe: OdometerProbe): Float {
         return try {
-            if (probe.header != "7DF") {
-                sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                val rxAddr = Integer.toHexString(probe.header.toInt(16) + 8).uppercase()
-                sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
-            }
+            configureProbeCanHeader(outStream, inStream, probe.header)
             val resp = sendObdCommand(outStream, inStream, probe.command, 450)
             if (probe.header != "7DF") {
                 sendObdCommand(outStream, inStream, "ATCRA", 200)
@@ -11135,10 +11441,14 @@ class MainActivity : Activity() {
         val idx = clean.indexOf("4151")
         if (idx != -1 && clean.length >= idx + 6) {
             val code = clean.substring(idx + 4, idx + 6).toIntOrNull(16) ?: return null
+            // SAE J1979 Mode 01 PID 51 Fuel Type Coding:
+            // 01=Gasoline, 02=Methanol, 03=Ethanol, 04=Diesel, 05=LPG, 06=CNG, 07=Propane,
+            // 09=Bifuel Gasoline, 0A=Bifuel Methanol, 0B=Bifuel Ethanol, 0C=Bifuel LPG, 0D=Bifuel CNG,
+            // 11=Hybrid Gasoline, 13=Hybrid Diesel, 14=Hybrid Electric/Gasoline, 17=Bifuel Diesel
             return when (code) {
-                0x01, 0x08, 0x09, 0x11 -> Pair("gasoline", "لتر")
-                0x04, 0x13 -> Pair("diesel", "لتر")
-                0x05, 0x06, 0x0C, 0x0D -> Pair("cng", "م³")
+                0x01, 0x02, 0x03, 0x08, 0x09, 0x0A, 0x0B, 0x11, 0x12, 0x14 -> Pair("gasoline", "لتر")
+                0x04, 0x13, 0x15, 0x17 -> Pair("diesel", "لتر")
+                0x05, 0x06, 0x07, 0x0C, 0x0D, 0x0E, 0x10 -> Pair("cng", "م³")
                 else -> null
             }
         }
@@ -11146,21 +11456,27 @@ class MainActivity : Activity() {
     }
 
     private fun discoverBestFuelSensor(inStream: InputStream, outStream: OutputStream): FuelSensorMode {
-        // Automatic Detection of Vehicle Fuel Type (PID 0151)
+        // Automatic Detection of Vehicle Fuel Type (PID 0151) directly from Car Computer
         try {
-            val r51 = sendObdCommand(outStream, inStream, "0151", 400)
+            val r51 = sendObdCommand(outStream, inStream, "0151", 450)
             val parsedFuel = parseFuelType51(r51)
             if (parsedFuel != null) {
                 preferences.edit()
-                    .putString("vehicle_fuel_type", parsedFuel.first)
-                    .putString("fuel_unit_name", parsedFuel.second)
+                    .putString("ecu_detected_fuel_type", parsedFuel.first)
                     .apply()
-                telemetry.fuelType = when (parsedFuel.first) {
-                    "diesel" -> "ديزل / سولار (Diesel)"
-                    "cng" -> "غاز طبيعي (CNG)"
-                    else -> "بنزين (Gasoline)"
+                applyVehicleFuelType(parsedFuel.first)
+                ownerFleetVehicles.find { it.isCurrentActive }?.let {
+                    if (it.fuelType == "auto_ecu" || it.fuelType.isBlank()) {
+                        it.fuelType = parsedFuel.first
+                        saveOwnerFleetVehicles()
+                    }
                 }
-                telemetry.fuelUnitName = parsedFuel.second
+                driverAssignedCars.find { it.isActive }?.let {
+                    if (it.fuelType == "auto_ecu" || it.fuelType.isBlank()) {
+                        it.fuelType = parsedFuel.first
+                        saveDriverAssignedCars()
+                    }
+                }
             }
         } catch (_: Exception) {}
 
@@ -11545,9 +11861,9 @@ class MainActivity : Activity() {
             'R' -> "2024"
             'S' -> "2025"
             'T' -> "2026"
-            'V' -> "2027"
-            'W' -> "2028"
-            'X' -> "2029"
+            'V' -> "1997"
+            'W' -> "1998"
+            'X' -> "1999"
             'Y' -> "2000"
             '1' -> "2001"
             '2' -> "2002"
@@ -11569,24 +11885,6 @@ class MainActivity : Activity() {
         val list = mutableListOf<String>()
         if (raw.contains("NO DATA") || raw.contains("UNABLE") || raw.contains("ERROR")) return list
 
-        val lines = raw.split("\r", "\n")
-        val hexSb = java.lang.StringBuilder()
-        for (line in lines) {
-            val trimmed = line.trim()
-            val sanitized = if (trimmed.length > 2 && trimmed[1] == ':') trimmed.substring(2) else trimmed
-            for (c in sanitized) {
-                if (c in '0'..'9' || c in 'A'..'F' || c in 'a'..'f') {
-                    hexSb.append(c.uppercaseChar())
-                }
-            }
-        }
-        val clean = hexSb.toString()
-        val idx = clean.indexOf("43")
-        if (idx == -1) return list
-
-        val payload = clean.substring(idx + 2)
-        if (payload.length < 4) return list
-
         fun decodeCandidate(hex4: String): String? {
             if (hex4.length < 4 || hex4 == "0000") return null
             val byteA = hex4.substring(0, 2).toIntOrNull(16) ?: return null
@@ -11604,51 +11902,91 @@ class MainActivity : Activity() {
             return if (code != "P0000") code else null
         }
 
-        // Candidate A: Direct 2-byte DTC sequence (No count byte, starting at offset 0).
-        // MANDATORY standard for all K-Line, ISO 9141-2, ISO 14230-4 KWP (Chevrolet Aveo/Daewoo), and SAE J1850 protocols.
-        val dtcsWithoutCount = mutableListOf<String>()
-        var i = 0
-        while (i + 4 <= payload.length) {
-            val chunk = payload.substring(i, i + 4)
-            if (chunk == "0000") break
-            val code = decodeCandidate(chunk)
-            if (code != null && !dtcsWithoutCount.contains(code)) {
-                dtcsWithoutCount.add(code)
+        // Group lines into separate ECU message blocks so a second ECU's '43 00' is never concatenated
+        // into the middle of the first ECU's payload as a fake 'C0300' code.
+        val lines = raw.split("\r", "\n")
+        val ecuPayloads = mutableListOf<String>()
+        var currentMultiFrame = java.lang.StringBuilder()
+
+        for (line in lines) {
+            var trimmed = line.trim()
+            if (trimmed.isEmpty()) continue
+            if (trimmed.startsWith("7E") && trimmed.length > 4) {
+                trimmed = trimmed.substring(4).trim()
             }
-            i += 4
+            val isMultiContinuation = trimmed.length > 2 && trimmed[1] == ':' && trimmed[0] != '0'
+            val sanitized = if (trimmed.length > 2 && trimmed[1] == ':') trimmed.substring(2) else trimmed
+            val lineHex = java.lang.StringBuilder()
+            for (c in sanitized) {
+                if (c in '0'..'9' || c in 'A'..'F' || c in 'a'..'f') {
+                    lineHex.append(c.uppercaseChar())
+                }
+            }
+            val cleanLine = lineHex.toString()
+            if (cleanLine.isEmpty()) continue
+
+            if (isMultiContinuation && currentMultiFrame.isNotEmpty()) {
+                currentMultiFrame.append(cleanLine)
+            } else {
+                if (currentMultiFrame.isNotEmpty()) {
+                    ecuPayloads.add(currentMultiFrame.toString())
+                    currentMultiFrame = java.lang.StringBuilder()
+                }
+                currentMultiFrame.append(cleanLine)
+            }
+        }
+        if (currentMultiFrame.isNotEmpty()) {
+            ecuPayloads.add(currentMultiFrame.toString())
         }
 
-        // Candidate B: CAN Single-Frame / Multi-Frame where Byte 0 is the DTC count (01..0F)
-        val dtcsWithCount = mutableListOf<String>()
-        val firstByte = payload.substring(0, 2).toIntOrNull(16) ?: 0
-        if (firstByte in 1..15) {
-            var j = 2
-            while (j + 4 <= payload.length) {
-                val chunk = payload.substring(j, j + 4)
+        for (ecuBlock in ecuPayloads) {
+            val idx = ecuBlock.indexOf("43")
+            if (idx == -1) continue
+            val payload = ecuBlock.substring(idx + 2)
+            if (payload.length < 4) continue
+
+            // Candidate A: Direct 2-byte DTC sequence (No count byte, starting at offset 0).
+            val dtcsWithoutCount = mutableListOf<String>()
+            var i = 0
+            while (i + 4 <= payload.length) {
+                val chunk = payload.substring(i, i + 4)
                 if (chunk == "0000") break
                 val code = decodeCandidate(chunk)
-                if (code != null && !dtcsWithCount.contains(code)) {
-                    dtcsWithCount.add(code)
+                if (code != null && !dtcsWithoutCount.contains(code)) {
+                    dtcsWithoutCount.add(code)
                 }
-                j += 4
+                i += 4
             }
-        }
 
-        // Deterministic Selection:
-        // 1. Non-CAN protocols (K-Line / KWP / ISO 9141) NEVER have a count byte per SAE J1979 specification.
-        // 2. On CAN: Use candidate B ONLY if it successfully extracted exactly firstByte valid codes.
-        val finalCodes = if (!isCan) {
-            dtcsWithoutCount
-        } else {
-            if (dtcsWithCount.isNotEmpty() && dtcsWithCount.size == firstByte) {
-                dtcsWithCount
-            } else {
+            // Candidate B: CAN Single-Frame / Multi-Frame where Byte 0 is the DTC count (01..0F)
+            val dtcsWithCount = mutableListOf<String>()
+            val firstByte = payload.substring(0, 2).toIntOrNull(16) ?: 0
+            if (firstByte in 1..15) {
+                var j = 2
+                while (j + 4 <= payload.length) {
+                    val chunk = payload.substring(j, j + 4)
+                    if (chunk == "0000") break
+                    val code = decodeCandidate(chunk)
+                    if (code != null && !dtcsWithCount.contains(code)) {
+                        dtcsWithCount.add(code)
+                    }
+                    j += 4
+                }
+            }
+
+            val finalCodes = if (!isCan) {
                 dtcsWithoutCount
+            } else {
+                if (dtcsWithCount.isNotEmpty() && dtcsWithCount.size == firstByte) {
+                    dtcsWithCount
+                } else {
+                    dtcsWithoutCount
+                }
             }
-        }
 
-        for (c in finalCodes) {
-            if (!list.contains(c)) list.add(c)
+            for (c in finalCodes) {
+                if (!list.contains(c)) list.add(c)
+            }
         }
         return list
     }

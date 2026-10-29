@@ -95,18 +95,22 @@ def init_hazard_tables(conn, seed_json_path=None, seed_tsv_path=None):
             batch = []
             now_str = datetime.now(timezone.utc).isoformat()
             for r in seed_data.get('rows', []):
+                if r.get('type') == 'UNKNOWN_ROAD_ANOMALY':
+                    continue
                 s_id = str(r['sourceId'])
                 tsv_info = tsv_map.get(s_id, {})
+                is_bi = bool(r.get('bidirectional', False))
+                default_oneway = 'B' if is_bi else 'F'
                 batch.append((
                     s_id,
                     s_id,
                     float(r['latitudeDegrees']),
                     float(r['longitudeDegrees']),
                     float(r.get('directionDegrees', 0.0)),
-                    1 if r.get('bidirectional', False) else 0,
+                    1 if is_bi else 0,
                     tsv_info.get('road_type', 'unknown'),
                     tsv_info.get('road_class', 'unknown'),
-                    tsv_info.get('oneway', 'B'),
+                    tsv_info.get('oneway', default_oneway),
                     tsv_info.get('parallel_conflict', 0),
                     'ACTIVE',
                     0,
@@ -181,23 +185,33 @@ def get_nearby_hazards(conn, lat, lng, radius_km=20.0):
     }
 
 
+def initial_bearing_degrees(lat1, lon1, lat2, lon2):
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dlambda = math.radians(lon2 - lon1)
+    y = math.sin(dlambda) * math.cos(phi2)
+    x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlambda)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
 def report_new_hazard(conn, lat, lng, direction_degrees=0.0, bidirectional=False, vehicle_id=None):
     """
-    Registers a newly detected speed bump immediately.
-    Rule 1: Registered and active from the very first observation.
-    Rule 2: Marked needs_map_match=1 for daily server matching.
-    Rule 3: If within 20m of existing active bump, confirms existing rather than duplicate.
+    Registers a newly detected speed bump immediately (or re-activates a deactivated bump).
+    Rule 1: Registered and active from the very first observation (speed <= 21 km/h + bump pattern).
+    Rule 2: Marked needs_map_match=1 for daily server road-map matching.
+    Rule 3: If within 22m of an existing bump (ACTIVE or DEACTIVATED after 3 negative passes)
+            in the same lane direction, confirms/re-activates existing rather than duplicating.
     """
     now_str = datetime.now(timezone.utc).isoformat()
 
-    # Check for existing nearby active bump (<= 20 meters)
-    lat_delta = 30.0 / 111000.0
-    lon_delta = 30.0 / (111000.0 * max(0.1, math.cos(math.radians(lat))))
+    # Check for existing nearby bump (ACTIVE or DEACTIVATED <= 22 meters)
+    lat_delta = 35.0 / 111000.0
+    lon_delta = 35.0 / (111000.0 * max(0.1, math.cos(math.radians(lat))))
 
     cursor = conn.execute('''
-        SELECT id, latitude, longitude, verified_count
+        SELECT id, latitude, longitude, direction_degrees, bidirectional, status, verified_count
         FROM speed_bumps
-        WHERE status = 'ACTIVE'
+        WHERE status IN ('ACTIVE', 'DEACTIVATED')
           AND latitude BETWEEN ? AND ?
           AND longitude BETWEEN ? AND ?
     ''', (lat - lat_delta, lat + lat_delta, lng - lon_delta, lng + lon_delta))
@@ -207,21 +221,29 @@ def report_new_hazard(conn, lat, lng, direction_degrees=0.0, bidirectional=False
         b_id = row['id'] if isinstance(row, sqlite3.Row) else row[0]
         b_lat = row['latitude'] if isinstance(row, sqlite3.Row) else row[1]
         b_lon = row['longitude'] if isinstance(row, sqlite3.Row) else row[2]
-        if haversine_distance_meters(lat, lng, b_lat, b_lon) <= 20.0:
-            # Confirm existing bump!
-            conn.execute('''
-                UPDATE speed_bumps
-                SET verified_count = verified_count + 1,
-                    consecutive_negative_passes = 0,
-                    last_verified_at = ?
-                WHERE id = ?
-            ''', (now_str, b_id))
-            conn.commit()
-            return {
-                'status': 'verified_existing',
-                'id': b_id,
-                'message': 'Confirmed existing speed bump'
-            }
+        b_dir = float((row['direction_degrees'] if isinstance(row, sqlite3.Row) else row[3]) or 0.0)
+        b_bi = bool((row['bidirectional'] if isinstance(row, sqlite3.Row) else row[4]) or 0)
+        b_status = row['status'] if isinstance(row, sqlite3.Row) else row[5]
+
+        if haversine_distance_meters(lat, lng, b_lat, b_lon) <= 22.0:
+            same_dir = b_bi or bidirectional or (angular_difference_degrees(direction_degrees, b_dir) <= 55.0)
+            if same_dir:
+                # Confirm or RE-ACTIVATE existing bump!
+                conn.execute('''
+                    UPDATE speed_bumps
+                    SET status = 'ACTIVE',
+                        verified_count = verified_count + 1,
+                        consecutive_negative_passes = 0,
+                        last_verified_at = ?
+                    WHERE id = ?
+                ''', (now_str, b_id))
+                conn.commit()
+                action_status = 'reactivated_existing' if b_status == 'DEACTIVATED' else 'verified_existing'
+                return {
+                    'status': action_status,
+                    'id': b_id,
+                    'message': 'Re-activated speed bump after pattern returned' if b_status == 'DEACTIVATED' else 'Confirmed existing speed bump'
+                }
 
     # Create new bump
     new_id = f"bump-{datetime.now().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
@@ -305,16 +327,75 @@ def record_hazard_pass_check(conn, hazard_id, felt_bump=True, speed_kmh=0.0, veh
         }
 
 
-def run_daily_map_matching(conn, seed_tsv_path=None):
+def _query_osm_road_segment(lat, lon):
     """
-    Daily server job for new bumps (needs_map_match = 1):
-    1. Matches each new point against the road candidate database / road network.
+    Queries OpenStreetMap Overpass API (with short timeout) for the nearest road way
+    within 25m of (lat, lon) to obtain true road segment bearing and oneway status.
+    Returns dict {'road_type', 'road_class', 'oneway', 'bearing'} or None if offline.
+    """
+    try:
+        import urllib.request
+        import urllib.parse
+        query = f'[out:json][timeout:3];way(around:25,{lat},{lon})["highway"];out geom 1;'
+        url = 'https://overpass-api.de/api/interpreter?data=' + urllib.parse.quote(query)
+        req = urllib.request.Request(url, headers={'User-Agent': 'DriveCare-RoadGuardian/1.0'})
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            elements = data.get('elements') or []
+            if not elements:
+                return None
+            way = elements[0]
+            tags = way.get('tags') or {}
+            hw = tags.get('highway', 'unclassified')
+            oneway_raw = str(tags.get('oneway', 'no')).lower()
+            geom = way.get('geometry') or []
+            if len(geom) < 2:
+                return None
+            # Find closest segment on the way
+            best_bearing = 0.0
+            best_seg_dist = 999999.0
+            for i in range(len(geom) - 1):
+                p1, p2 = geom[i], geom[i + 1]
+                mid_lat = (p1['lat'] + p2['lat']) / 2.0
+                mid_lon = (p1['lon'] + p2['lon']) / 2.0
+                d = haversine_distance_meters(lat, lon, mid_lat, mid_lon)
+                if d < best_seg_dist:
+                    best_seg_dist = d
+                    best_bearing = initial_bearing_degrees(p1['lat'], p1['lon'], p2['lat'], p2['lon'])
+            if oneway_raw in ('-1', 'reverse'):
+                best_bearing = (best_bearing + 180.0) % 360.0
+                oneway_code = 'F'
+            elif oneway_raw in ('yes', '1', 'true'):
+                oneway_code = 'F'
+            else:
+                oneway_code = 'B'
+            r_type = 'service' if 'service' in hw else ('main' if hw in ('motorway', 'trunk', 'primary', 'secondary', 'tertiary') else 'local')
+            return {
+                'road_type': r_type,
+                'road_class': hw,
+                'oneway': oneway_code,
+                'bearing': best_bearing,
+                'parallel_conflict': False
+            }
+    except Exception:
+        return None
+
+
+def run_daily_map_matching(conn, seed_tsv_path=None, seed_json_path=None):
+    """
+    Daily server job for ONLY newly recorded bumps (needs_map_match = 1):
+    1. Matches each new point against the road network (local road candidates + OSM Overpass geometry).
     2. Identifies whether it is on a Main road vs Service road.
-    3. Detects if the recording vehicle was driving counter-traffic / wrong-way (عكس اتجاه).
+    3. Detects if the recording vehicle was driving counter-traffic / wrong-way (عكس اتجاه)
+       (e.g., driving Southbound inside a Northbound one-way lane) and automatically corrects
+       direction_degrees to the true legal direction of that lane (or merges with an existing bump
+       on that legal lane) so opposing traffic never receives a false speed bump alert!
     """
     base_dir = os.path.dirname(os.path.abspath(__file__))
     if not seed_tsv_path:
         seed_tsv_path = os.path.join(base_dir, 'data', 'hazards', 'road_match_candidates_v1.tsv')
+    if not seed_json_path:
+        seed_json_path = os.path.join(base_dir, 'data', 'hazards', 'trusted_seed_hazards_v1.json')
 
     cursor = conn.execute('''
         SELECT id, latitude, longitude, direction_degrees, bidirectional
@@ -323,9 +404,22 @@ def run_daily_map_matching(conn, seed_tsv_path=None):
     ''')
     pending_rows = cursor.fetchall()
     if not pending_rows:
-        return {'reconciled_count': 0, 'message': 'No pending hazards to match'}
+        return {'reconciled_count': 0, 'counter_traffic_fixed': 0, 'message': 'No pending new hazards to match'}
 
-    # Load candidate segments from TSV
+    # Load true road bearings from trusted_seed_hazards_v1.json indexed by sourceId
+    seed_bearing_map = {}
+    if os.path.exists(seed_json_path):
+        try:
+            with open(seed_json_path, 'r', encoding='utf-8') as jf:
+                sdata = json.load(jf)
+                for r in sdata.get('rows', []):
+                    sid = str(r.get('sourceId', ''))
+                    if sid:
+                        seed_bearing_map[sid] = float(r.get('directionDegrees', 0.0))
+        except Exception:
+            pass
+
+    # Load candidate segments from TSV merged with true bearings
     candidates = []
     if os.path.exists(seed_tsv_path):
         with open(seed_tsv_path, 'r', encoding='utf-8') as f:
@@ -333,13 +427,17 @@ def run_daily_map_matching(conn, seed_tsv_path=None):
                 parts = line.strip().split('\t')
                 if len(parts) >= 9:
                     try:
+                        s_id = parts[0].split(':')[-1]
                         c_lat = float(parts[6])
                         c_lon = float(parts[7])
+                        tsv_bearing = float(parts[5]) if parts[5] else 0.0
+                        true_bearing = seed_bearing_map.get(s_id, tsv_bearing)
                         candidates.append({
                             'id': parts[0],
                             'road_type': parts[2],      # main, local, service
                             'road_class': parts[3],     # trunk, tertiary, residential, service
                             'oneway': parts[4],         # F, B
+                            'bearing': true_bearing,    # True legal flow bearing of this lane (0..360)
                             'lat': c_lat,
                             'lon': c_lon,
                             'parallel_conflict': parts[8].strip() == 'True'
@@ -349,18 +447,19 @@ def run_daily_map_matching(conn, seed_tsv_path=None):
 
     now_str = datetime.now(timezone.utc).isoformat()
     reconciled_count = 0
+    counter_traffic_fixed = 0
 
     for row in pending_rows:
         h_id = row['id'] if isinstance(row, sqlite3.Row) else row[0]
-        h_lat = row['latitude'] if isinstance(row, sqlite3.Row) else row[1]
-        h_lon = row['longitude'] if isinstance(row, sqlite3.Row) else row[2]
-        h_dir = row['direction_degrees'] if isinstance(row, sqlite3.Row) else row[3]
+        h_lat = float(row['latitude'] if isinstance(row, sqlite3.Row) else row[1])
+        h_lon = float(row['longitude'] if isinstance(row, sqlite3.Row) else row[2])
+        h_dir = float((row['direction_degrees'] if isinstance(row, sqlite3.Row) else row[3]) or 0.0)
+        h_bi = int((row['bidirectional'] if isinstance(row, sqlite3.Row) else row[4]) or 0)
 
         best_cand = None
         min_dist = 999999.0
 
         for cand in candidates:
-            # Rough pre-filter ~ 200m
             if abs(cand['lat'] - h_lat) > 0.003 or abs(cand['lon'] - h_lon) > 0.003:
                 continue
             dist = haversine_distance_meters(h_lat, h_lon, cand['lat'], cand['lon'])
@@ -368,33 +467,77 @@ def run_daily_map_matching(conn, seed_tsv_path=None):
                 min_dist = dist
                 best_cand = cand
 
+        # If local candidate is > 35m away, try live OSM road segment geometry lookup
+        if not best_cand or min_dist > 35.0:
+            osm_cand = _query_osm_road_segment(h_lat, h_lon)
+            if osm_cand:
+                best_cand = osm_cand
+                min_dist = 10.0
+
         if best_cand and min_dist <= 150.0:
             road_type = best_cand['road_type']
             road_class = best_cand['road_class']
             oneway = best_cand['oneway']
-            parallel_conflict = 1 if best_cand['parallel_conflict'] else 0
+            road_bearing = float(best_cand.get('bearing', h_dir))
+            parallel_conflict = 1 if best_cand.get('parallel_conflict') else 0
+
+            corrected_dir = h_dir
+            corrected_bi = 1 if oneway == 'B' else 0
+            new_status = 'ACTIVE'
+            notes_addon = ""
 
             # Detect counter-traffic (عكس اتجاه):
-            # If road is one-way forward (F), but car direction was opposed (> 120 deg difference)
-            notes_addon = ""
-            if oneway == 'F' and angular_difference_degrees(h_dir, 0.0) > 120.0:
-                # Car was moving opposite to one-way traffic!
-                # Correct directional assignment or mark bidirectional to prevent wrong-lane alerts.
-                notes_addon = " [Counter-traffic / عكس اتجاه detected during observation - re-oriented]"
+            # Example: Road lane is Northbound (0 deg, oneway='F'), but car drove counter-traffic Southbound (180 deg)
+            # in the Northbound lane and hit a bump.
+            if oneway == 'F' and angular_difference_degrees(h_dir, road_bearing) > 120.0:
+                counter_traffic_fixed += 1
+                corrected_dir = road_bearing
+                corrected_bi = 0
+                notes_addon = f" [Counter-traffic / عكس اتجاه corrected: {round(h_dir, 1)}° -> {round(corrected_dir, 1)}°]"
+
+                # Check if an active bump already exists on this legal lane within 22m
+                lat_d = 30.0 / 111000.0
+                lon_d = 30.0 / (111000.0 * max(0.1, math.cos(math.radians(h_lat))))
+                existing_legal = conn.execute('''
+                    SELECT id, latitude, longitude, direction_degrees
+                    FROM speed_bumps
+                    WHERE id != ? AND status = 'ACTIVE'
+                      AND latitude BETWEEN ? AND ?
+                      AND longitude BETWEEN ? AND ?
+                ''', (h_id, h_lat - lat_d, h_lat + lat_d, h_lon - lon_d, h_lon + lon_d)).fetchall()
+
+                for ex in existing_legal:
+                    ex_id = ex['id'] if isinstance(ex, sqlite3.Row) else ex[0]
+                    ex_lat = ex['latitude'] if isinstance(ex, sqlite3.Row) else ex[1]
+                    ex_lon = ex['longitude'] if isinstance(ex, sqlite3.Row) else ex[2]
+                    ex_dir = float((ex['direction_degrees'] if isinstance(ex, sqlite3.Row) else ex[3]) or 0.0)
+                    if haversine_distance_meters(h_lat, h_lon, ex_lat, ex_lon) <= 22.0 and angular_difference_degrees(corrected_dir, ex_dir) <= 55.0:
+                        conn.execute('''
+                            UPDATE speed_bumps
+                            SET verified_count = verified_count + 1,
+                                consecutive_negative_passes = 0,
+                                last_verified_at = ?
+                            WHERE id = ?
+                        ''', (now_str, ex_id))
+                        new_status = 'MERGED_COUNTER_TRAFFIC'
+                        notes_addon += f" [Merged into legal lane bump {ex_id}]"
+                        break
 
             conn.execute('''
                 UPDATE speed_bumps
-                SET road_type = ?,
+                SET direction_degrees = ?,
+                    bidirectional = ?,
+                    road_type = ?,
                     road_class = ?,
                     oneway = ?,
                     parallel_conflict = ?,
+                    status = ?,
                     needs_map_match = 0,
-                    notes = notes || ?,
+                    notes = COALESCE(notes, '') || ?,
                     last_verified_at = ?
                 WHERE id = ?
-            ''', (road_type, road_class, oneway, parallel_conflict, notes_addon, now_str, h_id))
+            ''', (corrected_dir, corrected_bi, road_type, road_class, oneway, parallel_conflict, new_status, notes_addon, now_str, h_id))
         else:
-            # No candidate road within 150m, mark as local unclassified
             conn.execute('''
                 UPDATE speed_bumps
                 SET road_type = 'local',
@@ -409,5 +552,6 @@ def run_daily_map_matching(conn, seed_tsv_path=None):
     conn.commit()
     return {
         'reconciled_count': reconciled_count,
-        'message': f'Successfully reconciled {reconciled_count} speed bumps on map'
+        'counter_traffic_fixed': counter_traffic_fixed,
+        'message': f'Successfully reconciled {reconciled_count} new speed bumps on road map (fixed {counter_traffic_fixed} counter-traffic)'
     }

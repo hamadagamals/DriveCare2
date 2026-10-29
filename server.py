@@ -4,6 +4,8 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
@@ -789,7 +791,7 @@ def create_workshop_access_request(workshop_user_id, data):
             '''INSERT INTO workshop_access_requests
                (id, workshop_id, owner_user_id, vehicle_id, status, permissions, expires_at)
                VALUES (?, ?, ?, ?, 'pending', ?, ?)''',
-            (request_id, workshop['id'], vehicle['user_id'], vehicle_id,
+            (request_id, workshop['id'], vehicle['user_id'], vehicle['id'],
              json.dumps(permissions), data.get('expiresAt'))
         )
         conn.commit()
@@ -873,7 +875,7 @@ def calculate_health(vehicle_id='veh-001'):
     medium_diag_count = sum(1 for item in diagnostics if item['severity'] == 'medium')
 
     score = 100
-    score -= min(abs(trend_delta) * 4.5, 30)
+    score -= min(max(0.0, trend_delta) * 4.5, 30)
     score -= warning_count * 10
     score -= high_diag_count * 12
     score -= medium_diag_count * 5
@@ -1108,6 +1110,10 @@ def manage_vin_lock(user_id, data):
                 '''UPDATE vin_registry SET owner_user_id = ?, owner_name = ?, owner_phone = ? WHERE vin = ?''',
                 (new_user_id, new_name, new_phone, vin)
             )
+            conn.execute(
+                '''UPDATE vehicles SET user_id = ? WHERE id = ? OR vin = ?''',
+                (new_user_id, existing['vehicle_id'] or vehicle_id, vin)
+            )
             # Log security notification
             add_owner_security_notification(
                 vehicle_id,
@@ -1288,8 +1294,8 @@ def refresh_api_data():
             'backup': 'كل 7 أيام',
             'units': 'km / L / SAR'
         },
-        '/api/garage/vehicles': fetch_garage_vehicles(),
-        '/api/garage/reports': fetch_garage_reports(),
+        '/api/garage/vehicles': fetch_garage_vehicles('user-001'),
+        '/api/garage/reports': fetch_garage_reports('user-001'),
     }
 
 
@@ -1410,76 +1416,6 @@ class Handler(SimpleHTTPRequestHandler):
             payload = fetch_garage_vehicles(user_id) if path.endswith('vehicles') else fetch_garage_reports(user_id)
             self._send_json(200, payload)
             return
-
-        if path == '/api/dashboard':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, build_dashboard(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/vehicle':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_vehicle(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/trips':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_trips(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/maintenance':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_maintenance(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/diagnostics':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_diagnostics(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/alerts':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_alerts(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
-
-        if path == '/api/health':
-            user_id = require_auth(self)
-            if user_id:
-                selected_vehicle_id = resolve_user_vehicle_id(user_id, requested_vehicle_id)
-                self._send_json(200, fetch_health(selected_vehicle_id))
-                return
-            if path in API_DATA:
-                self._send_json(200, API_DATA[path])
-                return
 
         if path == '/api/vehicles':
             user_id = require_auth(self)
@@ -1904,8 +1840,24 @@ class Handler(SimpleHTTPRequestHandler):
         return
 
 
+def start_daily_hazard_reconciliation_scheduler():
+    """Run road-map reconciliation once per day (every 24h) for newly recorded speed bumps."""
+    def _worker():
+        while True:
+            try:
+                with get_connection() as conn:
+                    hazard_service.run_daily_map_matching(conn)
+            except Exception:
+                pass
+            time.sleep(86400)  # Once per 24 hours
+
+    t = threading.Thread(target=_worker, name='DailyHazardMapReconciler', daemon=True)
+    t.start()
+
+
 if __name__ == '__main__':
     init_db()
+    start_daily_hazard_reconciliation_scheduler()
     if HOST not in ('127.0.0.1', '::1') and os.environ.get('DRIVECARE_ALLOW_LAN') != '1':
         raise RuntimeError('Refusing non-local bind. Set DRIVECARE_ALLOW_LAN=1 only after a security review.')
     server = ThreadingHTTPServer((HOST, PORT), Handler)
