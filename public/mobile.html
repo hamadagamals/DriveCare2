@@ -503,13 +503,13 @@
             </div>
           </div>
 
-          <!-- Vehicle Management & VIN -->
-          <div class="card" data-panel="home">
+          <!-- Vehicle Management & VIN (Owner Only: Adding/Modifying Ownership) -->
+          <div class="card" id="owner-veh-management-card" data-panel="home" data-owner-only-strict="true">
             <div class="inline-row">
-              <strong>بيانات المركبة والـ VIN</strong>
-              <span class="small muted">صلاحية المالك</span>
+              <strong>إدارة ملكية المركبة والـ VIN</strong>
+              <span class="small muted">صلاحية المالك فقط</span>
             </div>
-            <p class="muted small" style="margin:8px 0;">يمكنك تعديل بيانات سيارتك وتأكيد كود الـ VIN لربطه تلقائياً مع جهاز الفحص.</p>
+            <p class="muted small" style="margin:8px 0;">يمكنك تعديل بيانات ملكية سيارتك وتأكيد كود الـ VIN لربطه تلقائياً مع جهاز الفحص.</p>
             <div class="form">
               <input id="owner-veh-name" type="text" placeholder="اسم السيارة (Toyota Corolla)" value="Toyota Corolla 2021" />
               <input id="owner-veh-vin" type="text" placeholder="رقم الشاسيه VIN" value="JTDBR32E12345678" />
@@ -517,8 +517,8 @@
             </div>
           </div>
 
-          <!-- Driver Delegation & OBD Access Duration -->
-          <div class="card" data-panel="home">
+          <!-- Driver Delegation & OBD Access Duration (Owner Only: Adding Driver) -->
+          <div class="card" id="owner-driver-delegation-card" data-panel="home" data-owner-only-strict="true">
             <div class="inline-row">
               <strong>تفويض السائقين وصلاحية الـ OBD</strong>
               <span class="status-chip chip-amber">تحكم المالك</span>
@@ -566,24 +566,27 @@
         <div id="driver-view-section" class="role-section" hidden>
           <div class="card">
             <div class="inline-row">
-              <strong>وضع القيادة المباشر (Driver Mode)</strong>
-              <span class="status-chip" id="driver-obd-permit">صلاحية OBD سارية (باقي 7 أيام)</span>
+              <strong>وضع السائق المفوض وربط قارئ السيارة (Driver OBD Link)</strong>
+              <span class="status-chip" id="driver-obd-permit">تفويض المالك ساري بالسيرفر 🔗</span>
             </div>
-            <p class="muted small" style="margin:8px 0;">تظهر أمامك مؤشرات السرعة والحرارة. سيصدر تنبيه صوتي فوري في حال تخطي حرارة المحرك 105 مئوية لتفادي أي ضرر.</p>
+            <p class="muted small" style="margin:8px 0;">
+              هاتفك مرتبط بحساب المالك على السيرفر ومصرح له بمسح وإدراج قارئ كمبيوتر السيارة (OBD-II). عند المسح يتحقق البرنامج من رقم شاسيه السيارة (VIN) على السيرفر ويربط القارئ لبث كافة القراءات ومعدل الوقود حياً للمالك:
+            </p>
             <div class="list">
+              <button id="driver-scan-obd-btn" type="button">🔍 مسح وإدراج قارئ كمبيوتر السيارة (OBD-II) بتصريح المالك</button>
               <button id="test-voice-btn" type="button" class="btn-outline">🔊 تجربة التنبيه الصوتي لحرارة المحرك</button>
             </div>
-            <div id="voice-status" class="small muted" style="margin-top:6px;">التنبيه الصوتي: جاهز</div>
+            <div id="voice-status" class="small muted" style="margin-top:6px;">التنبيه الصوتي: جاهز • جميع شاشات المالك ومعدل الوقود متاحة أمامك</div>
           </div>
 
           <div class="card">
             <div class="inline-row">
-              <strong>سجل الرحلة الحالية واستهلاك الوقود</strong>
-              <span class="small muted">الرحلة النشطة</span>
+              <strong>سجل الرحلة الحالية ومعدل استهلاك الوقود</strong>
+              <span class="small muted">بث حي لحساب المالك 📡</span>
             </div>
             <div class="inline-row" style="margin-top:10px;">
               <div>المسافة: <strong id="driver-trip-dist">42.5 كم</strong></div>
-              <div>المعدل: <strong id="driver-trip-rate">6.8 لتر/100كم</strong></div>
+              <div>معدل الوقود: <strong id="driver-trip-rate">6.8 لتر/100كم</strong></div>
             </div>
           </div>
         </div>

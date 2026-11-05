@@ -485,10 +485,18 @@ def driver_has_device_access(driver_user_id, vehicle_id):
                ORDER BY created_at DESC LIMIT 1''',
             (driver_user_id, vehicle_id)
         ).fetchone()
-    if not row:
-        return False
-    expiry = parse_expiry(row['expiresAt'])
-    return bool(expiry and expiry > utc_now())
+        if row:
+            expiry = parse_expiry(row['expiresAt'])
+            if expiry and expiry > utc_now():
+                return True
+        # Also allow if the driver holds an active delegation for this vehicle from its owner
+        delegation = conn.execute(
+            '''SELECT id FROM vehicle_drivers
+               WHERE driver_user_id = ? AND vehicle_id = ? AND status = 'active'
+               LIMIT 1''',
+            (driver_user_id, vehicle_id)
+        ).fetchone()
+        return bool(delegation)
 
 
 def export_vehicle_data(user_id):
@@ -850,8 +858,24 @@ def assign_vehicle_driver(owner_user_id, data):
             (
                 assignment_id, owner_user_id, vehicle_id, driver['id'],
                 1 if data.get('canRequestHelp', True) else 0,
-                1 if data.get('canShareData', False) else 0
+                1 if data.get('canShareData', True) else 0
             )
+        )
+        # Automatically grant OBD scanner pairing & live telemetry link authorization under the owner's account
+        access_days = int(data.get('accessDays', 30) or 30)
+        expires_at = (utc_now() + timedelta(days=max(1, min(access_days, 365)))).isoformat()
+        access_id = f'device-access-{uuid.uuid4().hex[:8]}'
+        conn.execute(
+            '''UPDATE vehicle_device_access SET status = 'revoked', revoked_at = CURRENT_TIMESTAMP
+               WHERE owner_user_id = ? AND vehicle_id = ? AND driver_user_id = ? AND status = 'active' ''',
+            (owner_user_id, vehicle_id, driver['id'])
+        )
+        conn.execute(
+            '''INSERT INTO vehicle_device_access
+               (id, owner_user_id, vehicle_id, driver_user_id, permissions, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (access_id, owner_user_id, vehicle_id, driver['id'],
+             json.dumps(['pair', 'stream_telemetry']), expires_at)
         )
         conn.commit()
     return assignment_id, None
@@ -1058,7 +1082,7 @@ def fetch_live_telemetry(vehicle_id, timeframe='1h'):
 
 
 def manage_vin_lock(user_id, data):
-    """Enforce immutable VIN ownership lock: once claimed, cannot be registered by others."""
+    """Enforce immutable VIN ownership lock and verify OBD pairing for Owner or Delegated Driver."""
     vin = str(data.get('vin', '')).strip().upper()
     action = data.get('action', 'check')
     vehicle_id = data.get('vehicleId', 'veh-001')
@@ -1068,30 +1092,123 @@ def manage_vin_lock(user_id, data):
 
     with get_connection() as conn:
         existing = conn.execute(
-            'SELECT vin, owner_user_id, owner_name, owner_phone, is_locked, registered_at FROM vin_registry WHERE vin = ?',
+            'SELECT vin, owner_user_id, owner_name, owner_phone, vehicle_id, is_locked, registered_at FROM vin_registry WHERE vin = ?',
             (vin,)
         ).fetchone()
 
-        user = conn.execute('SELECT id, name, phone FROM users WHERE id = ?', (user_id,)).fetchone()
-        user_name = user['name'] if user else 'مالك'
-        user_phone = user['phone'] if user else ''
+        user = conn.execute('SELECT id, name, phone FROM users WHERE id = ?', (user_id,)).fetchone() if user_id else None
+        user_name = (user['name'] if user else None) or str(data.get('userName') or data.get('driverName') or 'مستخدم').strip()
+        user_phone = (user['phone'] if user else None) or str(data.get('userPhone') or data.get('driverPhone') or '').strip()
+
+        def _is_delegated_driver_for_vin(reg_row):
+            if not reg_row:
+                return False
+            target_veh_id = reg_row['vehicle_id'] or vehicle_id
+            owner_uid = reg_row['owner_user_id']
+            if user_id:
+                row = conn.execute(
+                    '''SELECT id FROM vehicle_drivers
+                       WHERE vehicle_id = ? AND driver_user_id = ? AND status = 'active'
+                       LIMIT 1''',
+                    (target_veh_id, user_id)
+                ).fetchone()
+                if row or driver_has_device_access(user_id, target_veh_id):
+                    return True
+            if user_phone:
+                drv_user = conn.execute('SELECT id FROM users WHERE phone = ?', (user_phone,)).fetchone()
+                if drv_user:
+                    row = conn.execute(
+                        '''SELECT id FROM vehicle_drivers
+                           WHERE (vehicle_id = ? OR owner_user_id = ?) AND driver_user_id = ? AND status = 'active'
+                           LIMIT 1''',
+                        (target_veh_id, owner_uid, drv_user['id'])
+                    ).fetchone()
+                    if row or driver_has_device_access(drv_user['id'], target_veh_id):
+                        return True
+            # Also allow if explicitly passed an active delegation token/flag matching the owner phone
+            delegated_owner_phone = str(data.get('delegatedByOwnerPhone', '')).strip()
+            if delegated_owner_phone and reg_row['owner_phone'] and delegated_owner_phone == reg_row['owner_phone']:
+                return True
+            return False
 
         if action == 'register' or action == 'lock':
             if existing:
-                if existing['owner_user_id'] != user_id and existing['is_locked']:
+                is_owner = (user_id and existing['owner_user_id'] == user_id) or (user_phone and existing['owner_phone'] == user_phone)
+                if not is_owner and existing['is_locked']:
                     return None, f"الشاسيه ({vin}) مسجل ومملوك رسمياً للمالك ({existing['owner_name']} - هاتف: {existing['owner_phone']}). لا يمكن تسجيله إلا بعد نقل الملكية من المالك الأصلي."
                 # Same user, refresh lock
                 conn.execute('UPDATE vin_registry SET is_locked = 1 WHERE vin = ?', (vin,))
                 conn.commit()
                 return {'status': 'locked', 'vin': vin, 'ownerName': existing['owner_name']}, None
             else:
+                effective_uid = user_id or 'user-001'
                 conn.execute(
                     '''INSERT INTO vin_registry (vin, owner_user_id, owner_name, owner_phone, vehicle_id, is_locked)
                        VALUES (?, ?, ?, ?, ?, 1)''',
-                    (vin, user_id, user_name, user_phone, vehicle_id)
+                    (vin, effective_uid, user_name, user_phone, vehicle_id)
                 )
                 conn.commit()
                 return {'status': 'registered_and_locked', 'vin': vin, 'ownerName': user_name}, None
+
+        elif action == 'verify_obd_pair':
+            if not existing or not existing['is_locked']:
+                return {
+                    'status': 'authorized',
+                    'allowed': True,
+                    'vin': vin,
+                    'isLocked': False,
+                    'authRole': data.get('role', 'owner'),
+                    'ownerName': user_name,
+                    'vehicleId': vehicle_id
+                }, None
+
+            is_owner = (user_id and existing['owner_user_id'] == user_id) or (user_phone and existing['owner_phone'] and existing['owner_phone'] == user_phone)
+            is_delegated = _is_delegated_driver_for_vin(existing)
+            target_veh_id = existing['vehicle_id'] or vehicle_id
+
+            if is_owner:
+                return {
+                    'status': 'authorized',
+                    'allowed': True,
+                    'vin': vin,
+                    'isLocked': True,
+                    'authRole': 'owner',
+                    'ownerName': existing['owner_name'],
+                    'ownerPhone': existing['owner_phone'],
+                    'vehicleId': target_veh_id
+                }, None
+
+            if is_delegated:
+                add_owner_security_notification(
+                    target_veh_id,
+                    '🔗 اقتران قارئ كمبيوتر السيارة بواسطة السائق المفوض',
+                    f'قام السائق المفوض ({user_name} - {user_phone}) بمسح وربط قارئ كمبيوتر السيارة (OBD-II) للشاسيه ({vin}) بتصريح من حسابك، وبدأ البث الحي للقراءات ومعدل الوقود إلى السيرفر.',
+                    'driver_obd_paired',
+                    'info'
+                )
+                return {
+                    'status': 'authorized',
+                    'allowed': True,
+                    'vin': vin,
+                    'isLocked': True,
+                    'authRole': 'driver',
+                    'ownerName': existing['owner_name'],
+                    'ownerPhone': existing['owner_phone'],
+                    'vehicleId': target_veh_id
+                }, None
+
+            # Unauthorized attempt to pair with a locked VIN!
+            add_owner_security_notification(
+                target_veh_id,
+                '🚨 محاولة اقتران مرفوضة بقارئ كمبيوتر سيارتك',
+                f'حاول جهاز غير مصرح له ({user_name} - {user_phone}) الاقتران بقارئ كمبيوتر سيارتك ذات الشاسيه ({vin}). قام السيرفر بحظر الاتصال فوراً لعدم وجود ملكية أو تفويض سائق ساري.',
+                'unauthorized_obd_blocked',
+                'critical'
+            )
+            return None, (
+                f"🛑 رفض الاقتران: شاسيه السيارة ({vin}) مسجل رسمياً بالسيرفر باسم المالك ({existing['owner_name']}). "
+                f"لا يُسمح لأي جهاز بالاقتران بقارئ كمبيوتر هذه السيارة إلا للمالك المسجل أو لسائق يحمل تفويضاً سارياً ومعتمداً من المالك على السيرفر."
+            )
 
         elif action == 'transfer':
             if not existing or existing['owner_user_id'] != user_id:
@@ -1127,13 +1244,26 @@ def manage_vin_lock(user_id, data):
 
         else: # check
             if existing:
+                is_mine = bool((user_id and existing['owner_user_id'] == user_id) or (user_phone and existing['owner_phone'] == user_phone))
+                is_delegated = _is_delegated_driver_for_vin(existing)
                 return {
                     'vin': vin,
                     'isLocked': bool(existing['is_locked']),
                     'ownerName': existing['owner_name'],
-                    'isMine': (existing['owner_user_id'] == user_id)
+                    'ownerPhone': existing['owner_phone'],
+                    'vehicleId': existing['vehicle_id'],
+                    'isMine': is_mine,
+                    'isDelegatedDriver': is_delegated,
+                    'allowedToPairObd': is_mine or is_delegated or not bool(existing['is_locked'])
                 }, None
-            return {'vin': vin, 'isLocked': False, 'ownerName': None, 'isMine': True}, None
+            return {
+                'vin': vin,
+                'isLocked': False,
+                'ownerName': None,
+                'isMine': True,
+                'isDelegatedDriver': False,
+                'allowedToPairObd': True
+            }, None
 
 
 def add_owner_security_notification(vehicle_id, title, message, event_type='warning', severity='warning'):
@@ -1769,11 +1899,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path == '/api/vin/lock':
             user_id = require_auth(self)
             if not user_id:
+                caller_phone = str(payload.get('userPhone') or payload.get('driverPhone') or '').strip()
+                if caller_phone:
+                    found_user = fetch_user_by_phone(caller_phone)
+                    if found_user:
+                        user_id = found_user['id']
+            if not user_id and payload.get('action') not in ('check', 'verify_obd_pair', 'register', 'lock'):
                 self._send_json(401, {'error': 'Unauthorized'})
                 return
             res, err = manage_vin_lock(user_id, payload)
             if err:
-                self._send_json(409 if 'مسجل ومملوك' in err else 400, {'error': err})
+                status_code = 403 if 'رفض الاقتران' in err else (409 if 'مسجل ومملوك' in err else 400)
+                self._send_json(status_code, {'error': err, 'allowed': False})
                 return
             self._send_json(200, res)
             return

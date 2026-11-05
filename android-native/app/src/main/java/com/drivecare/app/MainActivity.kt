@@ -2227,6 +2227,17 @@ class MainActivity : Activity() {
             val tempVal = if (isLive) "${telemetry.coolantTemp}°C" else "--"
             val voltVal = if (isLive) "${String.format("%.1f", telemetry.batteryVoltage)}V" else "--"
             val fuelVal = if (isLive) "${telemetry.fuelLevel}%" else "--"
+            val fuelRateVal = if (isLive) {
+                if (telemetry.speed > 3 && telemetry.instantFuelLPer100Km > 0f) {
+                    "${String.format("%.1f", telemetry.instantFuelLPer100Km)} L/100"
+                } else if (telemetry.instantFuelLitersPerHour > 0f) {
+                    "${String.format("%.1f", telemetry.instantFuelLitersPerHour)} L/h"
+                } else {
+                    "${String.format("%.1f", telemetry.tripAverageFuelRate)} L/100"
+                }
+            } else {
+                "${String.format("%.1f", preferences.getFloat("fuel_rate_baseline", 7.2f))} L/100"
+            }
 
             fun addMiniStat(label: String, value: String, color: Int) {
                 val box = LinearLayout(this@MainActivity).apply {
@@ -2236,7 +2247,7 @@ class MainActivity : Activity() {
                     layoutParams = blp
                     addView(TextView(this@MainActivity).apply {
                         text = value
-                        textSize = 12f
+                        textSize = 11f
                         setTypeface(typeface, Typeface.BOLD)
                         setTextColor(color)
                         gravity = Gravity.CENTER
@@ -2255,6 +2266,7 @@ class MainActivity : Activity() {
             addMiniStat("الحرارة", tempVal, Color.rgb(248, 199, 74))
             addMiniStat("البطارية", voltVal, Color.rgb(126, 242, 154))
             addMiniStat("الوقود", fuelVal, Color.rgb(255, 180, 70))
+            addMiniStat("معدل الوقود", fuelRateVal, Color.rgb(0, 229, 255))
         }
         card.addView(metricsRow)
 
@@ -2451,34 +2463,38 @@ class MainActivity : Activity() {
 
         val cards: List<ServiceCard> = when(currentRole) {
             "owner" -> listOf(
-                // 1. قراءة جهاز كمبيوتر المسح
-                ServiceCard("مسح وفحص كمبيوتر السيارة", "قراءة ومسح كمبيوتر السيارة ECU", "🔍", "scanner"),
-                // 2. إضافة سيارة عند المالك
-                ServiceCard("إضافة وإدارة السيارات", "تسجيل سيارة جديدة وتفويض السائقين", "➕", "owner_fleet"),
-                // 3. قراءة الحساسات للكمبيوتر عند المالك والسائق
-                ServiceCard("قراءة الحساسات الحية", "السرعة والحرارة والشحن والضغط اللحظي", "📊", "gauges"),
+                // 1. مسح وإدراج قارئ كمبيوتر السيارة
+                ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران قارئ OBD-II وفحص الكمبيوتر", "🔍", "scanner"),
+                // 2. إضافة سيارة وتفويض سائق عند المالك فقط
+                ServiceCard("إضافة وإدارة السيارات والسائقين", "تسجيل سيارة جديدة وتفويض السائقين", "➕", "owner_fleet"),
+                // 3. قراءة الحساسات للكمبيوتر ومعدل الوقود عند المالك والسائق
+                ServiceCard("قراءة الحساسات ومعدل الوقود", "السرعة والحرارة والشحن ومعدل الوقود اللحظي", "📊", "gauges"),
                 // 4. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
                 ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
-                // باقي الخدمات
+                // باقي الخدمات المشتركة بالكامل
                 ServiceCard("رادار وتحذيرات المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
-                ServiceCard("حساب وتكلفة الوقود", "تسجيل التفويل وحساب التكلفة", "⛽", "fuel"),
-                ServiceCard("التحليل التنبؤي وصحة المحرك", "معدل البنزين وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
-                ServiceCard("المراقبة والتتبع الحي", "متابعة الموقع والسرعة عبر GPS", "📡", "remote_fleet"),
-                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص والطرد الفوري", "🚨", "owner_security"),
-                ServiceCard("ملكية الشاسيه والقيد", "بيانات الشاسيه والقيد القانوني", "👑", "vehicles"),
-                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر الدورية", "🔧", "maint")
+                ServiceCard("حساب ومعدل استهلاك الوقود", "معدل الوقود اللحظي والتفويل وتكلفة المشوار", "⛽", "fuel"),
+                ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("المراقبة والتتبع الحي", "متابعة قراءات السيارة عن بعد عبر السيرفر", "📡", "remote_fleet"),
+                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص وتأمين الشاسيه والطرد الفوري", "🚨", "owner_security"),
+                ServiceCard("ملكية الشاسيه وبيانات الكمبيوتر", "بيانات الشاسيه والقيد القانوني للمالك", "👑", "vehicles"),
+                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر ومسح الأعطال", "🔧", "maint")
             )
             "driver" -> listOf(
-                // 1. قراءة الحساسات للكمبيوتر عند السائق والمالك
-                ServiceCard("قراءة الحساسات الحية", "مقصورة العدادات والبيانات اللحظية", "🏎️", "gauges"),
-                // 2. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
-                ServiceCard("فحص وتفسير الأعطال", "قراءة أكواد الكمبيوتر وتفسير العطل", "🔍", "scanner"),
-                // باقي الخدمات
-                ServiceCard("رادار وتحذير المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
+                // السائق يرى كافة شاشات المالك تماماً (ما عدا إضافة سائق أو إضافة مالك آخر) لبث كل بيانات السيارة للمالك عبر السيرفر
+                ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران بلوتوث OBD-II بتفويض المالك", "🔍", "scanner"),
+                ServiceCard("سياراتي المفوض بقيادتها", "قبول التفويض وربط قارئ السيارة بالمالك", "🚗", "driver_cars"),
+                ServiceCard("قراءة الحساسات ومعدل الوقود", "السرعة والحرارة والشحن ومعدل الوقود اللحظي", "📊", "gauges"),
+                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
+                ServiceCard("رادار وتحذيرات المطبات", "تنبيه ذكي للمطبات وتوثيق فوري", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
-                ServiceCard("سياراتي المفوض بها", "السيارات المصرح بقيادتها", "🚗", "driver_cars"),
-                ServiceCard("حاسبة الحمولة والوقود", "توزيع الوزن وتكلفة المسار", "⛽", "fuel"),
+                ServiceCard("حساب ومعدل استهلاك الوقود", "معدل الوقود اللحظي والتفويل وتكلفة المشوار", "⛽", "fuel"),
+                ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("المراقبة والبث الحي للمالك", "حالة اتصال السيرفر وبث قراءات السيارة للمالك", "📡", "remote_fleet"),
+                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص وتأمين كمبيوتر السيارة", "🚨", "owner_security"),
+                ServiceCard("ملكية الشاسيه وبيانات الكمبيوتر", "بيانات كمبيوتر السيارة والمالك المسجل", "👑", "vehicles"),
+                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر ومسح الأعطال", "🔧", "maint"),
                 ServiceCard("دليل وأرقام الورش", "أرقام الورش وأوناش الإنقاذ", "🗺️", "workshops_dir"),
                 ServiceCard("اتصال بمالك السيارة", "مكالمة هاتفية أو واتساب مباشر", "📞", "call_owner")
             )
@@ -3992,32 +4008,59 @@ class MainActivity : Activity() {
         req.status = "accepted"
         saveDriverDelegationRequests()
 
+        val cleanVin = req.vehicleVin.uppercase().trim()
+        preferences.edit()
+            .putString("vin_delegated_driver_$cleanVin", req.driverPhone.ifEmpty { userPhone })
+            .putString("vin_delegated_owner_$cleanVin", req.ownerName)
+            .putString("vin_delegated_owner_phone_$cleanVin", req.ownerPhone)
+            .putBoolean("vin_delegation_active_$cleanVin", true)
+            .apply()
+
         // Link vehicle to driver's fleet
-        val existing = driverAssignedCars.find { it.vin == req.vehicleVin }
-        if (existing == null) {
-            val ownerVeh = ownerFleetVehicles.find { it.vin == req.vehicleVin }
-            driverAssignedCars.add(
-                DriverAssignedCar(
-                    id = "drv-car-${req.vehicleId}",
-                    name = req.vehicleName,
-                    make = req.vehicleMake,
-                    year = req.vehicleYear,
-                    vin = req.vehicleVin,
-                    ownerName = req.ownerName,
-                    ownerPhone = req.ownerPhone,
-                    tankCapacity = ownerVeh?.tankCapacity ?: 45f,
-                    baseRate = ownerVeh?.baseRate ?: 7.2f,
-                    displacement = ownerVeh?.displacement ?: 1.5f,
-                    fuelType = ownerVeh?.fuelType ?: "gasoline",
-                    emptyWeightKg = ownerVeh?.emptyWeightKg ?: 1200f,
-                    isActive = driverAssignedCars.none { it.isActive }
-                )
+        val ownerVeh = ownerFleetVehicles.find { it.vin.equals(req.vehicleVin, ignoreCase = true) }
+        var assignedCar = driverAssignedCars.find { it.vin.equals(req.vehicleVin, ignoreCase = true) }
+        if (assignedCar == null) {
+            assignedCar = DriverAssignedCar(
+                id = "drv-car-${req.vehicleId}",
+                name = req.vehicleName,
+                make = req.vehicleMake,
+                year = req.vehicleYear,
+                vin = req.vehicleVin,
+                ownerName = req.ownerName,
+                ownerPhone = req.ownerPhone,
+                tankCapacity = ownerVeh?.tankCapacity ?: 45f,
+                baseRate = ownerVeh?.baseRate ?: 7.2f,
+                displacement = ownerVeh?.displacement ?: 1.5f,
+                fuelType = ownerVeh?.fuelType ?: "gasoline",
+                emptyWeightKg = ownerVeh?.emptyWeightKg ?: 1200f,
+                isActive = true
             )
+            driverAssignedCars.forEach { it.isActive = false }
+            driverAssignedCars.add(assignedCar)
+            saveDriverAssignedCars()
+        } else {
+            driverAssignedCars.forEach { it.isActive = (it.id == assignedCar.id) }
             saveDriverAssignedCars()
         }
 
+        // Activate this delegated car in current context
+        preferences.edit()
+            .putString("vehicle_name", assignedCar.name)
+            .putString("vehicle_make", assignedCar.make)
+            .putString("vehicle_year", assignedCar.year)
+            .putString("vehicle_vin", assignedCar.vin)
+            .putFloat("tank_capacity_liters", assignedCar.tankCapacity)
+            .putFloat("engine_displacement_liters", assignedCar.displacement)
+            .putFloat("fuel_rate_baseline", assignedCar.baseRate)
+            .putFloat("vehicle_empty_weight", assignedCar.emptyWeightKg)
+            .putString("fuel_type", assignedCar.fuelType)
+            .putString("vehicle_fuel_type", assignedCar.fuelType)
+            .putString("vehicle_primary_owner", assignedCar.ownerName)
+            .putString("vehicle_primary_owner_phone", assignedCar.ownerPhone)
+            .putString("vehicle_data_source", "مفوض رسمياً من المالك (${assignedCar.ownerName}) عبر السيرفر 🔗")
+            .apply()
+
         // Update in owner's vehicle assigned driver status
-        val ownerVeh = ownerFleetVehicles.find { it.vin == req.vehicleVin }
         val matchingDriver = ownerVeh?.assignedDrivers?.find { it.phone == req.driverPhone }
         if (matchingDriver != null) {
             matchingDriver.roleType = "${req.driverRole} (مفوض ومستلم ✅)"
@@ -4025,14 +4068,29 @@ class MainActivity : Activity() {
         }
 
         addSecurityNotification(
-            "قبول تفويض قيادة",
-            "وافق السائق (${req.driverCustomName} - هاتف: ${req.driverPhone}) على تفويض قيادة سيارتك (${req.vehicleName}) واستلمها رسمياً.",
+            "قبول تفويض قيادة وتفعيل ربط قارئ السيارة",
+            "وافق السائق (${req.driverCustomName} - هاتف: ${req.driverPhone}) على تفويض قيادة سيارتك (${req.vehicleName}) وأصبح مصرحاً له بمسح وربط قارئ كمبيوتر السيارة (OBD-II) وبث القراءات حياً لحسابك.",
             "driver_delegation_accepted",
             "info"
         )
 
-        Toast.makeText(this, "✅ تم قبول التفويض واستلام السيارة (${req.vehicleName}) بنجاح! متاحة الآن للقيادة بأسطولك 🚗", Toast.LENGTH_LONG).show()
         renderCurrentScreen()
+
+        AlertDialog.Builder(this)
+            .setTitle("✅ تم قبول التفويض وتفعيل صلاحية قارئ السيارة")
+            .setMessage(
+                "تم استلام السيارة (${req.vehicleName}) بنجاح بتفويض رسمي من المالك (${req.ownerName}) على السيرفر!\n\n" +
+                "🔗 صلاحية ربط قارئ الكمبيوتر (OBD-II):\n" +
+                "• شاسيه السيارة المسجل: ${req.vehicleVin}\n" +
+                "• هاتفك الآن مرتبط بحساب المالك ومصرح له بمسح وإدراج قارئ كمبيوتر هذه السيارة.\n" +
+                "• فور الاتصال بالقارئ، يتحقق البرنامج من شاسيه السيارة على السيرفر ويبدأ بث كافة الحساسات ومعدل الوقود حياً للمالك.\n\n" +
+                "هل ترغب في فتح شاشة مسح وإدراج قارئ كمبيوتر السيارة الآن؟"
+            )
+            .setPositiveButton("🔍 مسح وإدراج قارئ كمبيوتر السيارة الآن") { _, _ ->
+                openSubScreen("scanner")
+            }
+            .setNegativeButton("لاحقاً", null)
+            .show()
     }
 
     private fun rejectDriverDelegation(req: DriverDelegationRequest) {
@@ -4117,6 +4175,24 @@ class MainActivity : Activity() {
             val dtcLabel = if (telemetry.dtcCodes.isEmpty()) "سليمة (0 أعطال) ✅" else "${telemetry.dtcCodes.size} أعطال مسجلة ⚠️"
             r3.addView(metricBox("حالة كمبيوتر المحرك", dtcLabel, dtcColor).parent as View)
             addView(r3)
+
+            val r4 = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+            }
+            val liveFuelRateStr = if (telemetry.speed > 3 && telemetry.instantFuelLPer100Km > 0f) {
+                "${String.format("%.1f", telemetry.instantFuelLPer100Km)} L/100km (${String.format("%.1f", telemetry.instantFuelLitersPerHour)} L/h)"
+            } else if (telemetry.instantFuelLitersPerHour > 0f) {
+                "${String.format("%.2f", telemetry.instantFuelLitersPerHour)} L/h (توقف)"
+            } else {
+                "${String.format("%.1f", preferences.getFloat("fuel_rate_baseline", 7.2f))} L/100km"
+            }
+            val avgFuelRateStr = "${String.format("%.1f", telemetry.tripAverageFuelRate)} L/100km (${String.format("%.2f", telemetry.actualTripFuelLiters)} L)"
+            r4.addView(metricBox("معدل الوقود اللحظي", liveFuelRateStr, Color.rgb(248, 199, 74)).parent as View)
+            r4.addView(metricBox("متوسط استهلاك الرحلة", avgFuelRateStr, Color.rgb(110, 231, 255)).parent as View)
+            addView(r4)
 
             addView(text("📍 خط السير والموقع الحالي: $tripStartLocationName ← $tripEndLocationName (على الطريق السريع)", 13, Color.rgb(248, 199, 74), true).apply {
                 setPadding(0, dp(8), 0, dp(4))
@@ -5277,6 +5353,21 @@ class MainActivity : Activity() {
                     })
                 }
                 addView(rowActions)
+
+                // Direct OBD Scanner Discovery & Pairing Button under Owner's Delegation
+                addView(Button(this@MainActivity).apply {
+                    text = "🔍 مسح وإدراج قارئ كمبيوتر هذه السيارة (OBD-II) بتصريح المالك"
+                    textSize = 12f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.rgb(8, 23, 32))
+                    setBackgroundColor(Color.rgb(248, 199, 74))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
+                    blp.topMargin = dp(6)
+                    layoutParams = blp
+                    setOnClickListener {
+                        activateDriverCar(car, goToScanner = true)
+                    }
+                })
             }
             container.addView(cardCar)
         }
@@ -5284,10 +5375,11 @@ class MainActivity : Activity() {
         return container
     }
 
-    private fun activateDriverCar(car: DriverAssignedCar) {
+    private fun activateDriverCar(car: DriverAssignedCar, goToScanner: Boolean = false) {
         driverAssignedCars.forEach { it.isActive = (it.id == car.id) }
         saveDriverAssignedCars()
 
+        val cleanVin = car.vin.uppercase().trim()
         preferences.edit()
             .putString("vehicle_name", car.name)
             .putString("vehicle_make", car.make)
@@ -5301,13 +5393,22 @@ class MainActivity : Activity() {
             .putString("vehicle_fuel_type", car.fuelType)
             .putString("vehicle_primary_owner", car.ownerName)
             .putString("vehicle_primary_owner_phone", car.ownerPhone)
-            .putString("vehicle_data_source", "تم التفعيل من أسطول سيارات السائق 🚗")
+            .putString("vin_delegated_driver_$cleanVin", userPhone.ifEmpty { "driver" })
+            .putString("vin_delegated_owner_$cleanVin", car.ownerName)
+            .putString("vin_delegated_owner_phone_$cleanVin", car.ownerPhone)
+            .putBoolean("vin_delegation_active_$cleanVin", true)
+            .putString("vehicle_data_source", "تم التفعيل من أسطول سيارات السائق المفوض بها 🚗")
             .apply()
 
         applyVehicleFuelType(car.fuelType)
         vehicleEmptyWeightKg = car.emptyWeightKg
-        Toast.makeText(this@MainActivity, "🚗 تم تفعيل قيادة [${car.name}] (${getFuelTypeArabicBadge(car.fuelType)}) بنجاح!", Toast.LENGTH_SHORT).show()
-        switchTab("gauges")
+        if (goToScanner) {
+            Toast.makeText(this@MainActivity, "🔍 تم تفعيل [${car.name}] بتفويض المالك (${car.ownerName}). امسح واختر قارئ كمبيوتر السيارة للربط!", Toast.LENGTH_LONG).show()
+            switchTab("scanner")
+        } else {
+            Toast.makeText(this@MainActivity, "🚗 تم تفعيل قيادة [${car.name}] (${getFuelTypeArabicBadge(car.fuelType)}) بنجاح!", Toast.LENGTH_SHORT).show()
+            switchTab("gauges")
+        }
     }
 
     private fun showAddDriverCarDialog() {
@@ -6901,6 +7002,50 @@ class MainActivity : Activity() {
             if (telemetryDeltaLog.size > 100) telemetryDeltaLog.removeAt(telemetryDeltaLog.size - 1)
             saveTelemetryDeltaLog()
 
+            // Stream live telemetry delta (including fuel rate) from Driver's phone to Owner's Server Account
+            val snapSpeed = telemetry.speed
+            val snapRpm = telemetry.rpm
+            val snapFuel = telemetry.fuelLevel
+            val snapTemp = telemetry.coolantTemp
+            val snapVolt = telemetry.batteryVoltage
+            val snapInstantRate = telemetry.instantFuelLPer100Km
+            val snapTripRate = telemetry.tripAverageFuelRate
+            val snapDtcs = telemetry.dtcCodes.toList()
+            val snapVin = telemetry.vin.ifBlank { preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456" }
+            Thread {
+                try {
+                    val dtcArray = org.json.JSONArray()
+                    snapDtcs.forEach { dtcArray.put(it) }
+                    val jsonPayload = org.json.JSONObject().apply {
+                        put("vehicleId", "veh-001")
+                        put("vin", snapVin)
+                        put("speed", snapSpeed)
+                        put("rpm", snapRpm)
+                        put("fuelLevel", snapFuel)
+                        put("instantFuelRate", snapInstantRate.toDouble())
+                        put("tripAverageFuelRate", snapTripRate.toDouble())
+                        put("coolantTemp", snapTemp)
+                        put("batteryVoltage", snapVolt.toDouble())
+                        put("dtcCodes", dtcArray)
+                        put("changeReason", changeReason)
+                        put("driverName", userName.ifEmpty { authorizedDriverName })
+                        put("driverPhone", userPhone.ifEmpty { authorizedDriverPhone })
+                    }
+                    val url = java.net.URL("${getApiBaseUrl()}/api/telemetry/delta")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                    conn.doOutput = true
+                    conn.connectTimeout = 2500
+                    conn.readTimeout = 2500
+                    conn.outputStream.use { os ->
+                        val input = jsonPayload.toString().toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                        os.write(input, 0, input.size)
+                    }
+                    conn.responseCode
+                } catch (_: Exception) {}
+            }.start()
+
             lastSyncedSpeed = telemetry.speed
             lastSyncedRpm = telemetry.rpm
             lastSyncedFuel = telemetry.fuelLevel
@@ -6923,6 +7068,92 @@ class MainActivity : Activity() {
                 return Pair(false, "🛑 هذا الشاسيه ($cleanVin) مسجل ومملوك رسمياً للمالك ($lockedOwner - هاتف: $lockedPhone).\n🔒 بموجب بروتوكول حماية الملكية، لا يمكن لأي شخص آخر تسجيله أو ادعاء ملكيته!\nللحصول على ملكية السيارة، يجب على المالك الأصلي نقل الملكية لك من حسابه حصرياً.")
             }
         }
+        return Pair(true, null)
+    }
+
+    /**
+     * يتحقق من رقم شاسيه السيارة (VIN) عند مسح واقتران قارئ كمبيوتر السيارة (OBD-II):
+     * - إذا كان الشاسيه مسجلاً بالسيرفر باسم مالك، يُمنع الاقتران بأي جهاز آخر إلا:
+     *   1) للمالك الأساسي أو مالك شريك معتمد على نفس الشاسيه.
+     *   2) لسائق يحمل تفويضاً سارياً ومقبولاً من مالك هذه السيارة على السيرفر.
+     *   3) لورشة حاصلة على موافقة جلسة فحص نشطة من المالك.
+     */
+    private fun verifyVinForObdPairing(vin: String): Pair<Boolean, String?> {
+        val cleanVin = vin.uppercase().trim()
+        if (cleanVin.length < 6 || cleanVin.startsWith("تم التعرف")) {
+            return Pair(true, null)
+        }
+
+        val fleetCar = ownerFleetVehicles.find { it.vin.equals(cleanVin, ignoreCase = true) }
+        val lockedOwner = preferences.getString("vin_lock_owner_$cleanVin", null)
+            ?: if (fleetCar != null) (preferences.getString("vehicle_primary_owner", "المالك المسجل") ?: "المالك المسجل") else null
+        val lockedPhone = preferences.getString("vin_lock_phone_$cleanVin", null)
+            ?: if (fleetCar != null) (preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000") else null
+        val isLocked = preferences.getBoolean("vin_is_locked_$cleanVin", false) || (fleetCar != null)
+
+        // 1. Check Server VIN Lock & Delegation Registry (if server is reachable)
+        try {
+            val activeDriverCar = driverAssignedCars.find { it.vin.equals(cleanVin, ignoreCase = true) } ?: driverAssignedCars.find { it.isActive }
+            val payload = org.json.JSONObject().apply {
+                put("action", "verify_obd_pair")
+                put("vin", cleanVin)
+                put("role", currentRole)
+                put("userName", userName)
+                put("userPhone", userPhone)
+                put("delegatedByOwnerPhone", activeDriverCar?.ownerPhone ?: "")
+            }
+            val url = java.net.URL("${getApiBaseUrl()}/api/vin/lock")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json; utf-8")
+            conn.doOutput = true
+            conn.connectTimeout = 1800
+            conn.readTimeout = 1800
+            conn.outputStream.use { os ->
+                val bytes = payload.toString().toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                os.write(bytes, 0, bytes.size)
+            }
+            val code = conn.responseCode
+            if (code == 403 || code == 409) {
+                val errStream = conn.errorStream ?: conn.inputStream
+                val respText = errStream.bufferedReader().use { it.readText() }
+                val errObj = org.json.JSONObject(respText)
+                val errMsg = errObj.optString("error", "تم رفض الاقتران بقارئ السيارة من السيرفر لعدم وجود ملكية أو تفويض ساري.")
+                return Pair(false, errMsg)
+            }
+        } catch (_: Exception) {
+            // Server offline or unreachable; enforce local VIN & delegation security lock below
+        }
+
+        // 2. Enforce Local + Synced VIN Ownership & Driver Delegation Rules
+        if (isLocked && !lockedOwner.isNullOrEmpty()) {
+            val coOwners = preferences.getString("vehicle_co_owners", "") ?: ""
+            val isAuthorizedOwner = (currentRole == "owner") && (
+                userName.equals(lockedOwner, ignoreCase = true) ||
+                (userPhone.isNotEmpty() && userPhone == lockedPhone) ||
+                lockedOwner == "مالك تجريبي" ||
+                (userName.isNotEmpty() && coOwners.contains(userName, ignoreCase = true))
+            )
+            val hasActiveDriverDelegation = (currentRole == "driver") && (
+                driverAssignedCars.any { it.vin.equals(cleanVin, ignoreCase = true) } ||
+                driverDelegationRequests.any { it.vehicleVin.equals(cleanVin, ignoreCase = true) && it.status == "accepted" } ||
+                preferences.getBoolean("vin_delegation_active_$cleanVin", false) ||
+                (fleetCar?.assignedDrivers?.any { it.phone == userPhone || userPhone.isEmpty() } == true)
+            )
+            val hasWorkshopApproval = (currentRole == "garage" || currentRole == "workshop") && isWorkshopSessionUnlocked
+
+            if (!isAuthorizedOwner && !hasActiveDriverDelegation && !hasWorkshopApproval) {
+                return Pair(
+                    false,
+                    "🛑 تم حظر الاقتران بقارئ كمبيوتر السيارة!\n\n" +
+                    "• رقم الشاسيه المقروء ($cleanVin) مسجل ومقفل بالسيرفر باسم المالك ($lockedOwner - هاتف: $lockedPhone).\n" +
+                    "• لا يُسمح لأي جهاز بالاقتران بكمبيوتر هذه السيارة إلا عن طريق:\n" +
+                    "  1️⃣ حساب المالك المسجل أو مالك شريك معتمد.\n" +
+                    "  2️⃣ حساب سائق يحمل تفويضاً سارياً ومقبولاً من مالك السيارة على السيرفر."
+                )
+            }
+        }
+
         return Pair(true, null)
     }
 
@@ -7544,7 +7775,9 @@ class MainActivity : Activity() {
                 switchTab("vehicles")
             })
         }
-        container.addView(cardNew)
+        if (currentRole == "owner") {
+            container.addView(cardNew)
+        }
 
         return container
     }
@@ -7884,6 +8117,33 @@ class MainActivity : Activity() {
     // ========================================================
     private fun buildScannerTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val activeCarName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+        val activeVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+        val primaryOwner = preferences.getString("vehicle_primary_owner", "المالك المسجل") ?: "المالك المسجل"
+        val primaryOwnerPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+
+        // Server Authorization & VIN Pairing Banner (يوضح آلية ربط السائق أو المالك بقارئ الكمبيوتر عبر السيرفر)
+        val cardAuthBanner = card().apply {
+            if (currentRole == "driver") {
+                setBackgroundColor(Color.rgb(14, 42, 34))
+                addView(text("🔗 مسح وإدراج قارئ كمبيوتر السيارة (بتفويض المالك على السيرفر)", 16, Color.rgb(126, 242, 154), true))
+                addView(text("• السيارة المفوض بقيادتها: $activeCarName", 13, Color.WHITE, true))
+                addView(text("• رقم الشاسيه المسجل بالسيرفر (VIN): $activeVin", 13, Color.rgb(110, 231, 255), false))
+                addView(text("• تصريح الربط صادر من حساب المالك: $primaryOwner (هاتف: $primaryOwnerPhone)", 13, Color.rgb(248, 199, 74), false))
+                addView(text("🛡️ آلية الحماية والربط: عند مسح واختيار جهاز قارئ كمبيوتر السيارة (OBD-II) أدناه، يقرأ البرنامج شاسيه السيارة أولاً ويتحقق من السيرفر؛ وبما أن هاتفك يحمل تفويضاً سارياً من المالك، يتم عمل لينك فوري بين قارئ الكمبيوتر وحساب المالك ليرى المالك كافة القراءات ومعدل الوقود حياً عن بُعد.", 12, Color.rgb(190, 230, 210), false).apply {
+                    setPadding(0, dp(4), 0, 0)
+                })
+            } else if (currentRole == "owner") {
+                setBackgroundColor(Color.rgb(14, 34, 52))
+                addView(text("👑 مسح وإدراج قارئ كمبيوتر السيارة (صلاحية المالك الأساسي)", 16, Color.rgb(248, 199, 74), true))
+                addView(text("• السيارة النشطة: $activeCarName • الشاسيه (VIN): $activeVin", 13, Color.WHITE, false))
+                addView(text("🔒 شاسيه سيارتك محمي بالسيرفر: لا يمكن لأي جهاز آخر الاقتران بقارئ كمبيوتر هذه السيارة إلا من حسابك كمالك أو من هاتف سائق منحته تفويضاً سارياً على السيرفر.", 12, Color.rgb(167, 203, 226), false).apply {
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }
+        }
+        container.addView(cardAuthBanner)
 
         val cardScanner = card().apply {
             addView(text("الاتصال بجهاز الفحص (OBD-II Scanner)", 18, Color.WHITE, true))
@@ -10593,6 +10853,39 @@ class MainActivity : Activity() {
 
         // Read VIN with resilient multi-tier ECU engine
         val cleanVin = fetchVinFromEcu(outStream, inStream)
+        val effectiveVinToCheck = if (cleanVin.isNotBlank()) {
+            cleanVin
+        } else {
+            preferences.getString("vehicle_vin", "") ?: ""
+        }
+
+        // Verify VIN Ownership & Driver Server Delegation Lock BEFORE allowing OBD Pairing!
+        val (isPairAllowed, pairRejectReason) = verifyVinForObdPairing(effectiveVinToCheck)
+        if (!isPairAllowed) {
+            addSecurityNotification(
+                "🚨 حظر محاولة اقتران غير مصرح بها بقارئ السيارة",
+                "حاول جهاز غير مصرح له ($userName - دور: $currentRole) الاقتران بقارئ كمبيوتر السيارة للشاسيه ($effectiveVinToCheck) وتم قطع الاتصال وحظره فوراً.",
+                "unauthorized_obd_blocked",
+                "critical"
+            )
+            runOnUiThread {
+                disconnectObd()
+                statusText.text = "🛑 تم رفض وحظر الاقتران: الشاسيه مقفل لمالك آخر ولا يوجد تفويض ساري!"
+                statusText.setTextColor(Color.rgb(255, 100, 100))
+                selectedText.text = "الجهاز المحدد: تم فصل الاتصال أمنياً 🔒"
+                if (::tvConnectionState.isInitialized) {
+                    tvConnectionState.text = "محظور أمنياً 🔒"
+                    tvConnectionState.setTextColor(Color.rgb(255, 100, 100))
+                }
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("🛑 حظر الاقتران بقارئ كمبيوتر السيارة")
+                    .setMessage(pairRejectReason ?: "هذا الشاسيه مسجل بالسيرفر لمالك آخر ولا يملك هذا الحساب تفويضاً للاقتران به.")
+                    .setPositiveButton("فهمت ذلك", null)
+                    .show()
+            }
+            return
+        }
+
         if (cleanVin.isNotBlank()) {
             telemetry.vin = cleanVin
             val decoded = decodeVin(cleanVin)
@@ -10649,7 +10942,20 @@ class MainActivity : Activity() {
         activeFuelSensorMode = discoverBestFuelSensor(inStream, outStream)
 
         runOnUiThread {
-            statusText.text = "متصل بنجاح 🟢 تم تفعيل القياس الآلي: ${telemetry.fuelCalculationSource}"
+            val ownerNameStr = preferences.getString("vehicle_primary_owner", "المالك المسجل") ?: "المالك المسجل"
+            if (currentRole == "driver") {
+                statusText.text = "🔗 متصل بقارئ السيارة بتصريح المالك ($ownerNameStr) بالسيرفر 🟢 القياس: ${telemetry.fuelCalculationSource}"
+                selectedText.text = "الجهاز المتصل: $devName (بث حي لحساب المالك $ownerNameStr 📡)"
+                addSecurityNotification(
+                    "🔗 ربط قارئ كمبيوتر السيارة بواسطة السائق المفوض",
+                    "قام السائق ($userName) بمسح وربط قارئ كمبيوتر السيارة ($devName) للشاسيه ($effectiveVinToCheck) بتصريح حسابك، وبدأ البث الحي للحساسات ومعدل الوقود.",
+                    "driver_obd_paired",
+                    "info"
+                )
+            } else {
+                statusText.text = "متصل بنجاح 🟢 تم التحقق من الشاسيه وتفعيل القياس الآلي: ${telemetry.fuelCalculationSource}"
+            }
+            checkAndLogTelemetryDelta(force = true)
         }
 
         var loopCount = 0

@@ -492,9 +492,32 @@ function toggleSimulation(forceStart = false) {
 
 async function canConnectToDevice() {
   const activeRole = localStorage.getItem('drivecare-active-role') || 'owner';
-  // Owner inherently owns the vehicle & adapter; direct permanent pairing without any driver delegation
+  const activeVin = (document.getElementById('live-vin')?.textContent || 'JTDBR32E12345678').trim();
+
+  // Verify VIN lock & server delegation authorization before pairing with OBD reader
+  try {
+    const vinRes = await fetch('/api/vin/lock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: getToken() } : {}) },
+      body: JSON.stringify({
+        action: 'verify_obd_pair',
+        vin: activeVin,
+        role: activeRole,
+        vehicleId: currentVehicleId
+      })
+    });
+    if (vinRes.status === 403 || vinRes.status === 409) {
+      const vinErr = await vinRes.json().catch(() => ({}));
+      updateConnectionStatus('غير مصرح (شاسيه محمي)', vinErr.error || 'هذا الشاسيه مسجل بالسيرفر لمالك آخر ولا يملك هذا الحساب تفويضاً للاقتران به.');
+      return false;
+    }
+  } catch (_) {
+    // Continue to role check if offline
+  }
+
   if (activeRole === 'owner') return true;
   if (activeRole === 'workshop') return true;
+  if (!getToken()) return true; // Demo/context preview mode for delegated driver
   const response = await fetch('/api/device-access', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: getToken() },
@@ -502,7 +525,7 @@ async function canConnectToDevice() {
   });
   const data = await response.json();
   if (!response.ok || !data.allowed) {
-    updateConnectionStatus('غير مصرح', 'لا يملك هذا السائق صلاحية اقتران سارية. يجب على مالك السيارة منح الصلاحية لمدة محددة.');
+    updateConnectionStatus('غير مصرح', 'لا يملك هذا السائق صلاحية اقتران سارية. يجب على مالك السيارة منح التفويض من حسابه.');
     return false;
   }
   return true;
@@ -1021,12 +1044,18 @@ function initRoleTabs() {
     localStorage.setItem('drivecare-active-role', role);
     roleTabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.roleSelect === role));
 
+    // Strictly hide ONLY adding a driver or adding/changing an owner when in driver mode;
+    // Driver sees ALL other Owner screens (including fuel rate, trip cost, workshop requests, and OBD scanner).
+    document.querySelectorAll('[data-owner-only-strict="true"]').forEach(el => {
+      el.hidden = (role !== 'owner');
+    });
+
     if (role === 'driver') {
-      if (ownerSection) ownerSection.hidden = true;
+      if (ownerSection) ownerSection.hidden = false;
       if (driverSection) driverSection.hidden = false;
       if (workshopSection) workshopSection.hidden = true;
       if (activeRoleBadge) {
-        activeRoleBadge.textContent = 'وضع السائق 🚗';
+        activeRoleBadge.textContent = 'وضع السائق المفوض 🚗 (يرى شاشات المالك ويبث للسيرفر)';
         activeRoleBadge.className = 'status-chip';
       }
     } else if (role === 'workshop') {
@@ -1060,6 +1089,9 @@ function initRoleTabs() {
 
   const quickObdBtn = document.getElementById('quick-obd-btn');
   if (quickObdBtn) quickObdBtn.addEventListener('click', () => connectBle());
+
+  const driverScanObdBtn = document.getElementById('driver-scan-obd-btn');
+  if (driverScanObdBtn) driverScanObdBtn.addEventListener('click', () => connectBle());
 
   const btnSaveVeh = document.getElementById('btn-save-owner-veh');
   if (btnSaveVeh) {

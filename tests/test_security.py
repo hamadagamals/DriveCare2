@@ -173,6 +173,65 @@ class DriveCareSecurityTests(unittest.TestCase):
         self.assertIsNone(visible[0]['maintenanceCount'])
         self.assertNotIn('ownerName', visible[0])
 
+    def test_vin_lock_blocks_stranger_obd_pair_and_allows_delegated_driver(self):
+        # 1. Owner signs up, creates a vehicle, and locks its VIN on the server
+        status, owner = self.request('POST', '/api/auth/signup', {
+            'name': 'Car Owner', 'phone': '01011112222',
+            'password': 'owner secure password', 'roles': ['owner'],
+        })
+        self.assertEqual(status, 201)
+        status, veh = self.request('POST', '/api/vehicles', {
+            'action': 'create', 'vehicle': {'name': 'Chevrolet Aveo'}
+        }, owner['token'])
+        self.assertEqual(status, 201)
+        veh_id = veh['vehicleId']
+
+        vin = 'KMHDH41EBNA123456'
+        status, locked = self.request('POST', '/api/vin/lock', {
+            'action': 'register', 'vin': vin, 'vehicleId': veh_id
+        }, owner['token'])
+        self.assertEqual(status, 200)
+        self.assertIn('locked', locked['status'])
+
+        # 2. Unauthorized stranger tries to scan & pair OBD with this VIN -> MUST BE BLOCKED (403)
+        status, stranger = self.request('POST', '/api/auth/signup', {
+            'name': 'Stranger User', 'phone': '01099998888',
+            'password': 'stranger secure password', 'roles': ['driver'],
+        })
+        self.assertEqual(status, 201)
+        status, blocked = self.request('POST', '/api/vin/lock', {
+            'action': 'verify_obd_pair', 'vin': vin, 'vehicleId': veh_id
+        }, stranger['token'])
+        self.assertEqual(status, 403)
+        self.assertFalse(blocked.get('allowed', True))
+
+        # 3. Delegated driver signs up and Owner assigns/delegates the car to the driver
+        status, driver = self.request('POST', '/api/auth/signup', {
+            'name': 'Authorized Driver', 'phone': '01055556666',
+            'password': 'driver secure password', 'roles': ['driver'],
+        })
+        self.assertEqual(status, 201)
+        status, assigned = self.request('POST', '/api/drivers', {
+            'action': 'assign', 'phone': '01055556666', 'vehicleId': veh_id
+        }, owner['token'])
+        self.assertEqual(status, 201)
+
+        # 4. Delegated driver scans & pairs with the car's OBD reader -> ALLOWED (200) under Owner's authority!
+        status, allowed_pair = self.request('POST', '/api/vin/lock', {
+            'action': 'verify_obd_pair', 'vin': vin, 'vehicleId': veh_id
+        }, driver['token'])
+        self.assertEqual(status, 200)
+        self.assertTrue(allowed_pair['allowed'])
+        self.assertEqual(allowed_pair['authRole'], 'driver')
+        self.assertEqual(allowed_pair['ownerName'], 'Car Owner')
+
+        # 5. Device access check also confirms the delegated driver can pair & stream telemetry
+        status, dev_check = self.request('POST', '/api/device-access', {
+            'action': 'check', 'vehicleId': veh_id
+        }, driver['token'])
+        self.assertEqual(status, 200)
+        self.assertTrue(dev_check['allowed'])
+
 
 if __name__ == '__main__':
     unittest.main()
