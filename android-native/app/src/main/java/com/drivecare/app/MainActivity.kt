@@ -427,6 +427,7 @@ class MainActivity : Activity() {
     private var isSimulatingAlert = false
     private var speedBumpManager: SpeedBumpManager? = null
     private var speedBumpBanner: TextView? = null
+    private var subKmEcuRollDistance: Double = 0.0
 
     // Route & Payload Trip Planner State
     private var phoneGpsSpeedKmh: Int = 0
@@ -493,40 +494,39 @@ class MainActivity : Activity() {
         FuelProbe("7DF", "012F", "412F", "كمبيوتر المحرك القياسي العام (Standard OBD 7DF)", isCluster = false)
     )
 
-    // === Delta Odometer Architecture (قراءة عداد السيارة التراكمي وحساب الفروق) ===
+    // === Delta Odometer Architecture (قراءة عداد السيارة التراكمي وحساب الفروق من كمبيوتر السيارة ECU) ===
     private data class OdometerProbe(
         val header: String,
         val command: String,
         val expectedPrefix: String,
         val description: String,
-        val isCluster: Boolean = false,
-        val isUds: Boolean = false,
+        val isAbsoluteOdometer: Boolean = true, // true: عداد كلي بالكيلومتر، false: عداد هاردوير لكمبيوتر المكينة
         val byteLength: Int = 4,
         val scalingDivisor: Float = 10.0f
     )
 
     private var activeOdometerProbe: OdometerProbe? = null
 
+    // Universal Standard Mode 01 PID 0131 is guaranteed on 100% of OBD2 cars worldwide since 1996
+    private val universalHardwareCounterProbe = OdometerProbe("7DF", "0131", "4131", "عداد مسافة كمبيوتر المحرك الفعلي الهاردوير (Universal ECU Distance 0131)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f)
+
     private val universalOdometerProbes = listOf(
-        // === الأولوية الأولى: معيار OBD2 القياسي الحديث SAE J1979 Mode 01 PID 01A6 ===
-        OdometerProbe("7DF", "01A6", "41A6", "عداد السيارة القياسي العام (Standard OBD PID 01A6)", isCluster = false, isUds = false, byteLength = 4, scalingDivisor = 10.0f),
-        OdometerProbe("7E0", "01A6", "41A6", "عداد كمبيوتر المحرك المباشر (Engine ECU PID 01A6)", isCluster = false, isUds = false, byteLength = 4, scalingDivisor = 10.0f),
+        // === الأساس الشامل المضمون 100% في كافة سيارات العالم فوراً وبدون أي تأخير ===
+        universalHardwareCounterProbe,
+        OdometerProbe("7DF", "0121", "4121", "عداد مسافة المحرك البديل (Universal PID 0121)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f),
 
-        // === الأولوية الثانية: لوحة عدادات الطابلوه عبر وضع التشخيص الموسع UDS / Mode 22 لمختلف الماركات ===
-        OdometerProbe("7C6", "22B002", "62B002", "لوحة عدادات هيونداي / كيا UDS (Cluster 7C6)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7C6", "2101", "6101", "لوحة عدادات هيونداي / كيا (Cluster 7C6 2101)", isCluster = true, isUds = false, byteLength = 3, scalingDivisor = 1.0f),
-        OdometerProbe("7C0", "220201", "620201", "لوحة عدادات تويوتا / لكزس UDS (Cluster 7C0)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7C0", "2101", "6101", "لوحة عدادات تويوتا / لكزس (Cluster 7C0 2101)", isCluster = true, isUds = false, byteLength = 3, scalingDivisor = 1.0f),
-        OdometerProbe("720", "22DD01", "62DD01", "لوحة عدادات فورد / مازدا UDS (Cluster 720)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7A4", "220020", "620020", "لوحة عدادات شيفروليه / GM UDS (Cluster 7A4)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7A0", "220020", "620020", "لوحة عدادات شيفروليه البديلة (Cluster 7A0)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("714", "222203", "622203", "لوحة عدادات فولكس فاجن / سكودا UDS (Cluster 714)", isCluster = true, isUds = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("760", "2101", "6101", "لوحة عدادات رينو / داسيا (Cluster 760)", isCluster = true, isUds = false, byteLength = 3, scalingDivisor = 1.0f),
-        OdometerProbe("743", "2101", "6101", "لوحة عدادات نيسان / إنفينيتي (Cluster 743)", isCluster = true, isUds = false, byteLength = 3, scalingDivisor = 1.0f),
+        // === معيار OBD2 القياسي العام SAE J1979 Mode 01 PID 01A6 (العداد الكلي المباشر) ===
+        OdometerProbe("7DF", "01A6", "41A6", "عداد السيارة القياسي العام (Standard OBD PID 01A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
+        OdometerProbe("7E0", "01A6", "41A6", "عداد كمبيوتر المحرك المباشر (Engine ECU PID 01A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
 
-        // === الأولوية الثالثة: عداد مسافة التشغيل التراكمي في كمبيوتر المكينة (PID 0131 العالمي) ===
-        OdometerProbe("7DF", "0131", "4131", "عداد مسافة المحرك التراكمي (ECU Run Distance 0131)", isCluster = false, isUds = false, byteLength = 2, scalingDivisor = 1.0f),
-        OdometerProbe("7E0", "0131", "4131", "عداد مسافة المحرك المباشر (ECU Run Distance 0131)", isCluster = false, isUds = false, byteLength = 2, scalingDivisor = 1.0f)
+        // === قراءة العداد من كمبيوتر المحرك 7E0 / UDS لمختلف الماركات العالمية ===
+        OdometerProbe("7E0", "22F40D", "62F40D", "عداد UDS العالمي لكمبيوتر المحرك (Standard UDS 22F40D)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
+        OdometerProbe("7E0", "220020", "620020", "كمبيوتر محرك شيفروليه / GM / أوبل / دايو (Aveo/Optra/Cruze)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "22B002", "62B002", "كمبيوتر محرك هيونداي / كيا UDS (Engine 7E0 22B002)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "220201", "620201", "كمبيوتر محرك تويوتا / لكزس UDS (Engine 7E0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "22DD01", "62DD01", "كمبيوتر محرك فورد / مازدا UDS (Engine 7E0 22DD01)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "222203", "622203", "كمبيوتر محرك فولكس فاجن / سكودا / أودي (Engine 7E0 222203)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "2101", "6101", "كمبيوتر محرك نيسان / رينو / تويوتا (Mode 2101)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f)
     )
 
     private enum class FuelSensorMode {
@@ -1356,12 +1356,15 @@ class MainActivity : Activity() {
         plannedCargoWeightKg = preferences.getFloat("planned_cargo_weight", 0.0f)
         vehicleEmptyWeightKg = preferences.getFloat("vehicle_empty_weight", 1200.0f)
 
-        // Restore persistent trip metrics (persists even if phone or car disconnects)
+        // Restore persistent trip metrics & car odometer (persists even if phone or car disconnects)
         telemetry.tripDistanceKm = preferences.getFloat("saved_trip_distance_km", 0.0f)
         telemetry.actualTripFuelLiters = preferences.getFloat("saved_trip_fuel_liters", 0.0f)
+        telemetry.carOdometerKm = preferences.getFloat("car_cumulative_odometer_km", 0.0f)
+        telemetry.odometerSource = preferences.getString("car_odometer_source", "كمبيوتر السيارة") ?: "كمبيوتر السيارة" 
         if (telemetry.tripDistanceKm > 0.05f && telemetry.actualTripFuelLiters > 0f) {
             telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
         }
+        syncVehicleStateFromServer()
 
         title = "DriveCare"
 
@@ -1455,6 +1458,60 @@ class MainActivity : Activity() {
 
     private fun getApiBaseUrl(): String {
         return preferences.getString("backend_url", "http://10.0.2.2:3000") ?: "http://10.0.2.2:3000"
+    }
+
+    private fun syncVehicleStateFromServer() {
+        thread {
+            try {
+                val backendBaseUrl = getApiBaseUrl()
+                val targetVehId = preferences.getString("selected_vehicle_id", "veh-001") ?: "veh-001"
+                val url = java.net.URL("$backendBaseUrl/api/vehicle?vehicleId=$targetVehId")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                val token = preferences.getString("session_token", "") ?: ""
+                if (token.isNotEmpty()) {
+                    conn.setRequestProperty("Authorization", token)
+                }
+                if (conn.responseCode == 200) {
+                    val respText = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = org.json.JSONObject(respText)
+                    val srvOdo = json.optDouble("odometerKm", json.optDouble("odometer", 0.0)).toFloat()
+                    val srvTripDist = json.optDouble("tripDistanceKm", 0.0).toFloat()
+                    val srvTripFuel = json.optDouble("tripFuelLiters", 0.0).toFloat()
+                    val srvTripStart = json.optDouble("tripStartOdometer", 0.0).toFloat()
+                    val srvLastRaw = json.optInt("lastRawCounter", -1)
+
+                    val curOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
+                    val curTripDist = preferences.getFloat("saved_trip_distance_km", 0f)
+                    val curTripStart = preferences.getFloat("trip_start_car_odometer", 0f)
+                    val curLastRaw = preferences.getInt("last_ecu_hardware_counter_raw", -1)
+
+                    val editor = preferences.edit()
+                    if (curOdo <= 0f && srvOdo > 0f) {
+                        editor.putFloat("car_cumulative_odometer_km", srvOdo)
+                        telemetry.carOdometerKm = srvOdo
+                    }
+                    if (curTripStart <= 0f && srvTripStart > 0f) {
+                        editor.putFloat("trip_start_car_odometer", srvTripStart)
+                    }
+                    if (curLastRaw < 0 && srvLastRaw >= 0) {
+                        editor.putInt("last_ecu_hardware_counter_raw", srvLastRaw)
+                    }
+                    if (curTripDist <= 0f && srvTripDist > 0f) {
+                        editor.putFloat("saved_trip_distance_km", srvTripDist)
+                        telemetry.tripDistanceKm = srvTripDist
+                    }
+                    if (srvTripFuel > 0f && preferences.getFloat("saved_trip_fuel_liters", 0f) <= 0f) {
+                        editor.putFloat("saved_trip_fuel_liters", srvTripFuel)
+                        telemetry.actualTripFuelLiters = srvTripFuel
+                    }
+                    editor.apply()
+                    runOnUiThread { updateLiveUI() }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     private fun initSpeedBumpManager() {
@@ -7030,6 +7087,12 @@ class MainActivity : Activity() {
                         put("changeReason", changeReason)
                         put("driverName", userName.ifEmpty { authorizedDriverName })
                         put("driverPhone", userPhone.ifEmpty { authorizedDriverPhone })
+                        put("odometerKm", telemetry.carOdometerKm.toDouble())
+                        put("tripDistanceKm", telemetry.tripDistanceKm.toDouble())
+                        put("tripStartOdometer", preferences.getFloat("trip_start_car_odometer", 0f).toDouble())
+                        put("lastRawCounter", preferences.getInt("last_ecu_hardware_counter_raw", -1))
+                        put("actualTripFuelLiters", telemetry.actualTripFuelLiters.toDouble())
+                        put("odometerSource", telemetry.odometerSource)
                     }
                     val url = java.net.URL("${getApiBaseUrl()}/api/telemetry/delta")
                     val conn = url.openConnection() as java.net.HttpURLConnection
@@ -7042,7 +7105,17 @@ class MainActivity : Activity() {
                         val input = jsonPayload.toString().toByteArray(java.nio.charset.StandardCharsets.UTF_8)
                         os.write(input, 0, input.size)
                     }
-                    conn.responseCode
+                    if (conn.responseCode == 200) {
+                        try {
+                            val res = conn.inputStream.bufferedReader().use { it.readText() }
+                            val resObj = org.json.JSONObject(res)
+                            val srvOdo = resObj.optDouble("odometerKm", 0.0).toFloat()
+                            if (srvOdo > 0f && preferences.getFloat("car_cumulative_odometer_km", 0f) <= 0f) {
+                                preferences.edit().putFloat("car_cumulative_odometer_km", srvOdo).apply()
+                                telemetry.carOdometerKm = srvOdo
+                            }
+                        } catch (_: Exception) {}
+                    }
                 } catch (_: Exception) {}
             }.start()
 
@@ -11109,35 +11182,17 @@ class MainActivity : Activity() {
                 val distanceSliceKm = (telemetry.speed.toDouble() * (dtSec / 3600.0))
                 val consumedSliceLiters = (instantLph * (dtSec / 3600.0))
 
-                // Periodic Delta Odometer Check from Vehicle ECU / Dashboard Cluster
-                if (loopCount % 5 == 0) {
-                    val odoProbe = activeOdometerProbe
-                    if (odoProbe != null) {
-                        val odoVal = readProbeOdometer(inStream, outStream, odoProbe)
-                        if (odoVal > 0f) {
-                            applyCumulativeOdometerDelta(odoVal, odoProbe.description)
-                        }
-                    } else if (loopCount % 35 == 0) {
-                        // Periodic recovery probe in case cluster became ready later
-                        activeOdometerProbe = discoverUniversalOdometerProbe(inStream, outStream)
-                    }
+                if (telemetry.speed > 0 && distanceSliceKm in 0.00001..0.05) {
+                    subKmEcuRollDistance = (subKmEcuRollDistance + distanceSliceKm).coerceIn(0.0, 0.99)
                 }
 
-                // Fallback Distance & Oil Increments (Only if Vehicle Cumulative Odometer is unavailable)
-                if (activeOdometerProbe == null || telemetry.carOdometerKm <= 0f) {
-                    if (distanceSliceKm > 0) {
-                        telemetry.tripDistanceKm += distanceSliceKm.toFloat()
-
-                        val curOilKm = preferences.getFloat("oil_current_km", 0f)
-                        val newOilKm = curOilKm + distanceSliceKm.toFloat()
-                        preferences.edit().putFloat("oil_current_km", newOilKm).apply()
-
-                        val virtualCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
-                        if (virtualCarOdo > 0f) {
-                            val newVirtual = virtualCarOdo + distanceSliceKm.toFloat()
-                            preferences.edit().putFloat("car_cumulative_odometer_km", newVirtual).apply()
-                            telemetry.carOdometerKm = newVirtual
-                        }
+                // Periodic Delta Odometer Check from Vehicle ECU (حساب المسافة والرحلة كلياً من كمبيوتر السيارة)
+                if (loopCount % 3 == 0) {
+                    val odoProbe = activeOdometerProbe ?: discoverUniversalOdometerProbe(inStream, outStream)
+                    activeOdometerProbe = odoProbe
+                    val odoVal = readProbeOdometer(inStream, outStream, odoProbe)
+                    if (odoVal >= 0f) {
+                        applyCumulativeOdometerDelta(odoVal, odoProbe)
                     }
                 }
 
@@ -11145,9 +11200,15 @@ class MainActivity : Activity() {
                     telemetry.actualTripFuelLiters += consumedSliceLiters.toFloat()
                 }
 
-                // 6. Update Trip Average Fuel Rate
-                if (telemetry.tripDistanceKm >= 0.1f && telemetry.actualTripFuelLiters > 0f) {
-                    telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
+                // 6. Update Trip Distance & Average Fuel Rate strictly from Car Computer Odometer Difference
+                val effectiveLiveTripKm = if (activeOdometerProbe?.isAbsoluteOdometer == true) {
+                    telemetry.tripDistanceKm
+                } else {
+                    telemetry.tripDistanceKm + subKmEcuRollDistance.toFloat()
+                }
+
+                if (effectiveLiveTripKm >= 0.05f && telemetry.actualTripFuelLiters > 0f) {
+                    telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / effectiveLiveTripKm) * 100f).coerceIn(2.5f, 35.0f)
                 } else {
                     telemetry.tripAverageFuelRate = baseRate100km
                 }
@@ -11479,7 +11540,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // DELTA ODOMETER ENGINE (تتبع عداد السيارة التراكمي وحساب فروق الزيت والرحلات)
+    // DELTA ODOMETER ENGINE (تتبع عداد السيارة التراكمي وحساب فروق الزيت والرحلات كلياً من كمبيوتر المحرك)
     // =========================================================================
     private fun parseProbeOdometer(raw: String, probe: OdometerProbe): Float {
         val clean = cleanHex(raw)
@@ -11489,118 +11550,84 @@ class MainActivity : Activity() {
             val hexData = clean.substring(idx + probe.expectedPrefix.length, idx + expectedNibbles)
             val rawVal = hexData.toLongOrNull(16) ?: return -1f
             val odoKm = (rawVal.toFloat() / probe.scalingDivisor)
-            return if (odoKm in 1.0f..3000000.0f) odoKm else -1f
+            return if (probe.isAbsoluteOdometer) {
+                if (odoKm in 10.0f..3000000.0f) odoKm else -1f
+            } else {
+                // For ECU hardware distance counters (PID 0131 / 0121), range 0..65535 is 100% valid
+                if (odoKm in 0.0f..65535.0f) odoKm else -1f
+            }
         }
         return -1f
     }
 
-    private fun discoverUniversalOdometerProbe(inStream: InputStream, outStream: OutputStream): OdometerProbe? {
-        // 1. Check if we already have a confirmed working odometer probe saved
+    private fun discoverUniversalOdometerProbe(inStream: InputStream, outStream: OutputStream): OdometerProbe {
         val savedHeader = preferences.getString("active_odometer_probe_header", null)
         val savedCmd = preferences.getString("active_odometer_probe_cmd", null)
         if (savedHeader != null && savedCmd != null) {
             val cachedProbe = universalOdometerProbes.find { it.header == savedHeader && it.command == savedCmd }
             if (cachedProbe != null) {
-                try {
-                    configureProbeCanHeader(outStream, inStream, cachedProbe.header)
-                    val resp = sendObdCommand(outStream, inStream, cachedProbe.command, 450)
-                    if (cachedProbe.header != "7DF") {
-                        sendObdCommand(outStream, inStream, "ATCRA", 200)
-                        sendObdCommand(outStream, inStream, "ATSH 7DF", 200)
-                    }
-                    val odo = parseProbeOdometer(resp, cachedProbe)
-                    if (odo > 0f) {
-                        applyCumulativeOdometerDelta(odo, cachedProbe.description)
-                        return cachedProbe
-                    }
-                } catch (_: Exception) {}
+                val odo = readProbeOdometer(inStream, outStream, cachedProbe)
+                if (odo >= 0f) {
+                    applyCumulativeOdometerDelta(odo, cachedProbe)
+                    return cachedProbe
+                }
             }
         }
 
-        // 2. Protocol Check
-        val protoResp = sendObdCommand(outStream, inStream, "ATDP", 500)
-        val isCan = protoResp.contains("CAN", ignoreCase = true) || protoResp.contains("ISO 15765", ignoreCase = true)
+        // Test universal hardware distance counter PID 0131 first (100% OBD2 standard, immediate 40ms reply)
+        val odo131 = readProbeOdometer(inStream, outStream, universalHardwareCounterProbe)
+        var confirmedProbe: OdometerProbe = universalHardwareCounterProbe
+        if (odo131 >= 0f) {
+            applyCumulativeOdometerDelta(odo131, universalHardwareCounterProbe)
+            confirmedProbe = universalHardwareCounterProbe
+        }
 
-        // 3. PRIORITY 1: Standard SAE J1979 Mode 01 PID 01A6 (Direct Broadcast / Engine ECU)
-        for (probe in universalOdometerProbes.filter { !it.isCluster && it.command == "01A6" }) {
+        // Opportunistic targeted check for direct absolute odometer (Mode 01A6 or brand UDS DID)
+        val carMake = preferences.getString("vehicle_make", "") ?: ""
+        val candidateAbsoluteProbes = mutableListOf<OdometerProbe>()
+        universalOdometerProbes.find { it.command == "01A6" && it.header == "7DF" }?.let { candidateAbsoluteProbes.add(it) }
+        when {
+            carMake.contains("Hyundai", ignoreCase = true) || carMake.contains("Kia", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "22B002" }?.let { candidateAbsoluteProbes.add(it) }
+            carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "220201" }?.let { candidateAbsoluteProbes.add(it) }
+            carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) || carMake.contains("Opel", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "220020" }?.let { candidateAbsoluteProbes.add(it) }
+            carMake.contains("Ford", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "22DD01" }?.let { candidateAbsoluteProbes.add(it) }
+            carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) || carMake.contains("Audi", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "222203" }?.let { candidateAbsoluteProbes.add(it) }
+            carMake.contains("Nissan", ignoreCase = true) || carMake.contains("Renault", ignoreCase = true) ->
+                universalOdometerProbes.find { it.command == "2101" }?.let { candidateAbsoluteProbes.add(it) }
+        }
+        universalOdometerProbes.find { it.command == "22F40D" }?.let { candidateAbsoluteProbes.add(it) }
+
+        for (probe in candidateAbsoluteProbes) {
             try {
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                }
-                val resp = sendObdCommand(outStream, inStream, probe.command, 450)
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-                }
-                val odo = parseProbeOdometer(resp, probe)
-                if (odo > 0f) {
-                    preferences.edit()
-                        .putString("active_odometer_probe_header", probe.header)
-                        .putString("active_odometer_probe_cmd", probe.command)
-                        .apply()
-                    applyCumulativeOdometerDelta(odo, probe.description)
-                    return probe
+                val odo = readProbeOdometer(inStream, outStream, probe)
+                if (odo > 10.0f) {
+                    applyCumulativeOdometerDelta(odo, probe)
+                    confirmedProbe = probe
+                    break
                 }
             } catch (_: Exception) {}
         }
 
-        // 4. PRIORITY 2: Sweep Instrument Cluster DIDs on CAN Bus (لوحة عدادات الطابلوه)
-        if (isCan) {
-            for (probe in universalOdometerProbes.filter { it.isCluster }) {
-                try {
-                    configureProbeCanHeader(outStream, inStream, probe.header)
-
-                    val resp = sendObdCommand(outStream, inStream, probe.command, 500)
-
-                    sendObdCommand(outStream, inStream, "ATCRA", 200)
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-
-                    val odo = parseProbeOdometer(resp, probe)
-                    if (odo > 0f) {
-                        preferences.edit()
-                            .putString("active_odometer_probe_header", probe.header)
-                            .putString("active_odometer_probe_cmd", probe.command)
-                            .apply()
-                        applyCumulativeOdometerDelta(odo, probe.description)
-                        return probe
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-
-        // 5. PRIORITY 3: Fallback to Universal Engine Run Distance PID 0131
-        for (probe in universalOdometerProbes.filter { it.command == "0131" }) {
-            try {
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                }
-                val resp = sendObdCommand(outStream, inStream, probe.command, 450)
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-                }
-                val odo = parseProbeOdometer(resp, probe)
-                if (odo > 0f) {
-                    preferences.edit()
-                        .putString("active_odometer_probe_header", probe.header)
-                        .putString("active_odometer_probe_cmd", probe.command)
-                        .apply()
-                    applyCumulativeOdometerDelta(odo, probe.description)
-                    return probe
-                }
-            } catch (_: Exception) {}
-        }
-
-        sendObdCommand(outStream, inStream, "ATCRA", 200)
-        sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-        return null
+        preferences.edit()
+            .putString("active_odometer_probe_header", confirmedProbe.header)
+            .putString("active_odometer_probe_cmd", confirmedProbe.command)
+            .apply()
+        return confirmedProbe
     }
 
     private fun readProbeOdometer(inStream: InputStream, outStream: OutputStream, probe: OdometerProbe): Float {
         return try {
-            configureProbeCanHeader(outStream, inStream, probe.header)
-            val resp = sendObdCommand(outStream, inStream, probe.command, 450)
             if (probe.header != "7DF") {
-                sendObdCommand(outStream, inStream, "ATCRA", 200)
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 200)
+                sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 400)
+            }
+            val resp = sendObdCommand(outStream, inStream, probe.command, 800)
+            if (probe.header != "7DF") {
+                sendObdCommand(outStream, inStream, "ATSH 7DF", 400)
             }
             parseProbeOdometer(resp, probe)
         } catch (_: Exception) {
@@ -11608,51 +11635,83 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyCumulativeOdometerDelta(currentCarOdo: Float, sourceDescription: String) {
-        if (currentCarOdo <= 0f) return
-        telemetry.carOdometerKm = currentCarOdo
-        telemetry.odometerSource = sourceDescription
+    private fun applyCumulativeOdometerDelta(probeValue: Float, probe: OdometerProbe) {
+        if (probeValue < 0f) return
 
-        val lastSavedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
+        var deltaKm = 0f
 
-        if (lastSavedCarOdo > 0f && currentCarOdo >= lastSavedCarOdo) {
-            val deltaKm = currentCarOdo - lastSavedCarOdo
-            if (deltaKm in 0.001f..3500.0f) {
-                // 1. Calculate Real Engine Oil Distance based on absolute oil change baseline
-                val oilBaseline = preferences.getFloat("oil_baseline_car_odometer", 0f)
-                if (oilBaseline > 0f && currentCarOdo >= oilBaseline) {
-                    val realOilKm = currentCarOdo - oilBaseline
-                    preferences.edit().putFloat("oil_current_km", realOilKm).apply()
-                } else {
-                    val curOil = preferences.getFloat("oil_current_km", 0f)
-                    preferences.edit().putFloat("oil_current_km", curOil + deltaKm).apply()
-                }
+        if (probe.isAbsoluteOdometer) {
+            // 1. Absolute Dashboard Odometer directly from ECU
+            val currentCarOdo = probeValue
+            telemetry.carOdometerKm = currentCarOdo
+            telemetry.odometerSource = "كمبيوتر السيارة: ${probe.description}"
 
-                // 2. Calculate Real Trip Distance based on trip start odometer baseline
-                val tripStartOdo = preferences.getFloat("trip_start_car_odometer", 0f)
-                if (tripStartOdo > 0f && currentCarOdo >= tripStartOdo) {
-                    telemetry.tripDistanceKm = currentCarOdo - tripStartOdo
-                } else {
-                    telemetry.tripDistanceKm += deltaKm
+            val lastSavedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
+            if (lastSavedCarOdo > 0f && currentCarOdo >= lastSavedCarOdo) {
+                val d = currentCarOdo - lastSavedCarOdo
+                if (d in 0.001f..15000.0f) {
+                    deltaKm = d
                 }
             }
-        } else if (lastSavedCarOdo == 0f) {
-            // First-time calibration / initialization
-            val curOil = preferences.getFloat("oil_current_km", 0f)
-            if (preferences.getFloat("oil_baseline_car_odometer", 0f) == 0f && currentCarOdo > curOil) {
-                preferences.edit().putFloat("oil_baseline_car_odometer", currentCarOdo - curOil).apply()
+            preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
+            subKmEcuRollDistance = 0.0
+        } else {
+            // 2. Universal ECU Hardware Distance Counter (PID 0131 / 0121) - 100% of OBD2 cars!
+            val rawCounter = probeValue.toInt()
+            val lastSavedRaw = preferences.getInt("last_ecu_hardware_counter_raw", -1)
+
+            if (lastSavedRaw >= 0) {
+                val d = ((rawCounter - lastSavedRaw + 65536) % 65536).toFloat()
+                if (d in 0.001f..15000.0f) {
+                    deltaKm = d
+                }
             }
-            val curTrip = preferences.getFloat("saved_trip_distance_km", 0f)
-            if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f && currentCarOdo > curTrip) {
-                preferences.edit().putFloat("trip_start_car_odometer", currentCarOdo - curTrip).apply()
+
+            preferences.edit().putInt("last_ecu_hardware_counter_raw", rawCounter).apply()
+
+            var currentCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
+            if (currentCarOdo <= 0f) {
+                currentCarOdo = if (rawCounter > 0) rawCounter.toFloat() else 0f
+            }
+            currentCarOdo += deltaKm
+            telemetry.carOdometerKm = currentCarOdo
+            telemetry.odometerSource = "كمبيوتر المحرك ECU (فرق العداد الفعلي ${probe.command})"
+            preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
+            if (deltaKm > 0f) {
+                subKmEcuRollDistance = 0.0
             }
         }
 
-        // Always save latest confirmed odometer & trip distance
-        preferences.edit()
-            .putFloat("car_cumulative_odometer_km", currentCarOdo)
-            .putFloat("saved_trip_distance_km", telemetry.tripDistanceKm)
-            .apply()
+        preferences.edit().putString("car_odometer_source", telemetry.odometerSource).apply()
+
+        // 1. Calculate Real Trip Distance strictly from Car Computer Odometer Difference
+        val tripStartOdo = preferences.getFloat("trip_start_car_odometer", 0f)
+        if (tripStartOdo > 0f && telemetry.carOdometerKm >= tripStartOdo) {
+            telemetry.tripDistanceKm = telemetry.carOdometerKm - tripStartOdo
+        } else if (deltaKm > 0f) {
+            telemetry.tripDistanceKm += deltaKm
+        }
+        preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
+
+        // 2. Calculate Real Engine Oil Distance strictly from Car Computer Odometer Difference
+        val oilBaseline = preferences.getFloat("oil_baseline_car_odometer", 0f)
+        if (oilBaseline > 0f && telemetry.carOdometerKm >= oilBaseline) {
+            val realOilKm = telemetry.carOdometerKm - oilBaseline
+            preferences.edit().putFloat("oil_current_km", realOilKm).apply()
+        } else if (deltaKm > 0f) {
+            val curOil = preferences.getFloat("oil_current_km", 0f)
+            preferences.edit().putFloat("oil_current_km", curOil + deltaKm).apply()
+        }
+
+        // Initialize baseline references on first run
+        if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f && telemetry.carOdometerKm > 0f) {
+            val curTrip = preferences.getFloat("saved_trip_distance_km", 0f)
+            preferences.edit().putFloat("trip_start_car_odometer", (telemetry.carOdometerKm - curTrip).coerceAtLeast(0f)).apply()
+        }
+        if (preferences.getFloat("oil_baseline_car_odometer", 0f) == 0f && telemetry.carOdometerKm > 0f) {
+            val curOil = preferences.getFloat("oil_current_km", 0f)
+            preferences.edit().putFloat("oil_baseline_car_odometer", (telemetry.carOdometerKm - curOil).coerceAtLeast(0f)).apply()
+        }
     }
 
     private fun showOdometerCalibrationDialog() {

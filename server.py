@@ -50,6 +50,16 @@ def init_db():
     column_names = [col[1] for col in columns]
     if 'password_hash' not in column_names:
         conn.execute('ALTER TABLE users ADD COLUMN password_hash TEXT')
+    veh_cols = [col[1] for col in conn.execute("PRAGMA table_info(vehicles)").fetchall()]
+    for col_name, col_def in [
+        ('trip_start_odometer_km', 'REAL DEFAULT 0'),
+        ('last_raw_counter', 'INTEGER DEFAULT -1'),
+        ('trip_distance_km', 'REAL DEFAULT 0'),
+        ('trip_fuel_liters', 'REAL DEFAULT 0'),
+        ('odometer_source', 'TEXT DEFAULT ""')
+    ]:
+        if col_name not in veh_cols:
+            conn.execute(f'ALTER TABLE vehicles ADD COLUMN {col_name} {col_def}')
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS workshops (
           id TEXT PRIMARY KEY,
@@ -352,7 +362,12 @@ def fetch_user_vehicles(user_id):
         rows = conn.execute(
             '''
             SELECT id, name, make, model, year, fuel_type AS fuelType,
-                   odometer_km AS odometerKm, status, health_score AS healthScore
+                   odometer_km AS odometerKm, status, health_score AS healthScore,
+                   trip_start_odometer_km AS tripStartOdometer,
+                   last_raw_counter AS lastRawCounter,
+                   trip_distance_km AS tripDistanceKm,
+                   trip_fuel_liters AS tripFuelLiters,
+                   odometer_source AS odometerSource
             FROM vehicles WHERE user_id = ? ORDER BY created_at DESC
             ''', (user_id,)
         ).fetchall()
@@ -524,7 +539,13 @@ def fetch_vehicle(vehicle_id='veh-001'):
                    9.0 AS currentConsumption, ROUND((68 * 55 / 100) / 9.0 * 100, 0) AS estimatedRangeKm,
                    13.9 AS battery, 88 AS engineTemp, 62 AS speed,
                    'اليوم 18:40' AS lastTrip, 'في 380 كم' AS nextService,
-                   odometer_km AS odometer, 'km' AS unit
+                   odometer_km AS odometer, odometer_km AS odometerKm,
+                   trip_start_odometer_km AS tripStartOdometer,
+                   last_raw_counter AS lastRawCounter,
+                   trip_distance_km AS tripDistanceKm,
+                   trip_fuel_liters AS tripFuelLiters,
+                   odometer_source AS odometerSource,
+                   'km' AS unit
             FROM vehicles WHERE id = ?
             ''', (vehicle_id,)
         ).fetchone()
@@ -1025,16 +1046,53 @@ def record_telemetry_delta(vehicle_id, data):
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
             (record_id, vehicle_id, speed, rpm, fuel_level, coolant_temp, latitude, longitude, battery_voltage, dtc_codes, change_reason, now_iso)
         )
-        # Update current vehicle status
-        conn.execute(
-            '''UPDATE vehicles SET
-               status = CASE WHEN ? >= 100 THEN 'critical' WHEN ? > 0 THEN 'warning' ELSE 'healthy' END,
-               odometer_km = odometer_km + ?
-               WHERE id = ?''',
-            (coolant_temp, len(data.get('dtcCodes', [])), float(data.get('distDeltaKm', 0)), vehicle_id)
-        )
+        # Update current vehicle status with direct ECU odometer & trip metrics
+        odometer_val = float(data.get('odometerKm', 0))
+        trip_distance = float(data.get('tripDistanceKm', 0))
+        trip_start_odo = float(data.get('tripStartOdometer', 0))
+        last_raw_counter = int(data.get('lastRawCounter', -1))
+        trip_fuel_liters = float(data.get('actualTripFuelLiters', 0))
+        odometer_source = str(data.get('odometerSource', ''))
+        dist_delta = float(data.get('distDeltaKm', 0))
+
+        status_calc = 'critical' if coolant_temp >= 100 else ('warning' if len(data.get('dtcCodes', [])) > 0 else 'healthy')
+
+        if odometer_val > 0:
+            conn.execute(
+                '''UPDATE vehicles SET
+                   status = ?,
+                   odometer_km = ?,
+                   trip_start_odometer_km = CASE WHEN ? > 0 THEN ? ELSE trip_start_odometer_km END,
+                   last_raw_counter = CASE WHEN ? >= 0 THEN ? ELSE last_raw_counter END,
+                   trip_distance_km = CASE WHEN ? > 0 THEN ? ELSE trip_distance_km END,
+                   trip_fuel_liters = CASE WHEN ? > 0 THEN ? ELSE trip_fuel_liters END,
+                   odometer_source = CASE WHEN ? != '' THEN ? ELSE odometer_source END
+                   WHERE id = ?''',
+                (status_calc, odometer_val,
+                 trip_start_odo, trip_start_odo,
+                 last_raw_counter, last_raw_counter,
+                 trip_distance, trip_distance,
+                 trip_fuel_liters, trip_fuel_liters,
+                 odometer_source, odometer_source,
+                 vehicle_id)
+            )
+        else:
+            conn.execute(
+                '''UPDATE vehicles SET
+                   status = ?,
+                   odometer_km = odometer_km + ?,
+                   trip_distance_km = CASE WHEN ? > 0 THEN ? ELSE trip_distance_km END
+                   WHERE id = ?''',
+                (status_calc, dist_delta, trip_distance, vehicle_id)
+            )
         conn.commit()
-    return {'status': 'logged', 'recordId': record_id, 'changeReason': change_reason}
+    return {
+        'status': 'logged',
+        'recordId': record_id,
+        'changeReason': change_reason,
+        'odometerKm': odometer_val if odometer_val > 0 else None,
+        'tripDistanceKm': trip_distance if trip_distance > 0 else None
+    }
 
 
 def fetch_live_telemetry(vehicle_id, timeframe='1h'):

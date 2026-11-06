@@ -374,15 +374,24 @@ function connectClassicBluetooth() {
 let liveTripDistanceKm = 14.2;
 let liveTripLitersUsed = 0.95;
 
-function updateOwnerFuelEconomics(speed, rpm) {
-  const dtHours = 0.6 / 3600; // 600ms tick in hours
-  const incrementalDist = (speed * dtHours);
-  liveTripDistanceKm += incrementalDist;
+function updateOwnerFuelEconomics(speed, rpm, explicitDistKm = null, explicitLiters = null) {
+  let incrementalDist = 0;
+  if (explicitDistKm !== null && explicitDistKm >= 0) {
+    liveTripDistanceKm = explicitDistKm;
+  } else {
+    const dtHours = 0.6 / 3600; // 600ms tick in hours
+    incrementalDist = (speed * dtHours);
+    liveTripDistanceKm += incrementalDist;
+  }
 
   // Fuel consumption rate formula: base idle 1.2L/h + dynamic displacement load
   const fuelRateL100 = (5.2 + (rpm / 1000) * 0.95 + (speed > 80 ? (speed - 80) * 0.04 : 0)).toFixed(1);
-  const incrementalLiters = incrementalDist * (parseFloat(fuelRateL100) / 100);
-  liveTripLitersUsed += incrementalLiters;
+  if (explicitLiters !== null && explicitLiters >= 0) {
+    liveTripLitersUsed = explicitLiters;
+  } else {
+    const incrementalLiters = incrementalDist * (parseFloat(fuelRateL100) / 100);
+    liveTripLitersUsed += incrementalLiters;
+  }
 
   const priceInput = document.getElementById('owner-fuel-price-input');
   const fuelPrice = priceInput ? (parseFloat(priceInput.value) || 14.50) : 14.50;
@@ -907,6 +916,13 @@ async function loadDashboard() {
     document.getElementById('engine-temp').textContent = `${vehicle.engineTemp || 88}°C`;
     document.getElementById('speed').textContent = `${vehicle.speed || 62} km/h`;
     document.getElementById('estimated-range').textContent = `${vehicle.estimatedRangeKm || 0} كم`;
+    if (vehicle.tripDistanceKm !== undefined && vehicle.tripDistanceKm !== null) {
+      liveTripDistanceKm = parseFloat(vehicle.tripDistanceKm) || 0.0;
+      const distEl = document.getElementById('owner-live-trip-dist');
+      const dDist = document.getElementById('driver-trip-dist');
+      if (distEl) distEl.textContent = `${liveTripDistanceKm.toFixed(1)} كم`;
+      if (dDist) dDist.textContent = `${liveTripDistanceKm.toFixed(1)} كم`;
+    }
     checkTemperatureAlert(vehicle);
     document.getElementById('alert-count').textContent = alerts.length;
 
