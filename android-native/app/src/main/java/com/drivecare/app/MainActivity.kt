@@ -12305,6 +12305,13 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun applyCumulativeOdometerDelta(currentCarOdo: Float, sourceDescription: String) {
+        applyCumulativeOdometerDelta(
+            currentCarOdo,
+            OdometerProbe("MANUAL", "MANUAL", "MANUAL", sourceDescription, isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f)
+        )
+    }
+
     private fun showOdometerCalibrationDialog() {
         val currentOdo = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
         val input = EditText(this).apply {
