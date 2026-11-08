@@ -3,13 +3,18 @@ package com.drivecare.app
 import android.content.Context
 import android.content.SharedPreferences
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.media.ToneGenerator
+import android.os.Build
 import android.util.Log
 
 /**
  * Centralized Audio & Natural Voice Alert Manager for DriveCare.
  * Plays high-quality concise Arabic human voice announcements and acoustic chimes
- * with independent volume control per hazard category.
+ * with independent volume control per hazard category and Bluetooth-proof speaker routing.
  */
 class AlertSoundPlayer(private val context: Context) {
 
@@ -24,10 +29,21 @@ class AlertSoundPlayer(private val context: Context) {
         const val KEY_SOUND_DTC_ERROR = "sound_dtc_error"
         const val KEY_SOUND_BATTERY = "sound_battery"
         const val KEY_SOUND_OIL_MAINT = "sound_oil_maint"
+        const val KEY_FORCE_PHONE_SPEAKER_BT = "force_phone_speaker_bt"
     }
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private var currentPlayer: MediaPlayer? = null
+    private var fallbackToneGen: ToneGenerator? = null
+
+    /**
+     * When true (default), forces alerts to play through the phone's built-in speaker
+     * using USAGE_ALARM + TYPE_BUILTIN_SPEAKER so Bluetooth (OBD-II or inactive car A2DP/FM)
+     * never swallows or mutes the voice warning.
+     */
+    var forcePhoneSpeakerOverBluetooth: Boolean
+        get() = prefs.getBoolean(KEY_FORCE_PHONE_SPEAKER_BT, true)
+        set(value) { prefs.edit().putBoolean(KEY_FORCE_PHONE_SPEAKER_BT, value).apply() }
 
     data class SoundOption(
         val id: String,
@@ -106,13 +122,58 @@ class AlertSoundPlayer(private val context: Context) {
             stopCurrent()
             val safeVol = volume.coerceIn(0.0f, 1.0f)
             if (safeVol <= 0.02f) return // Volume muted
-            val player = MediaPlayer.create(context, resId) ?: return
-            player.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                    .build()
-            )
+
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val useSpeakerBypass = forcePhoneSpeakerOverBluetooth
+
+            // Ensure STREAM_ALARM volume is audible if muted/very low on the device
+            if (audioManager != null) {
+                try {
+                    val maxAlarm = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                    val curAlarm = audioManager.getStreamVolume(AudioManager.STREAM_ALARM)
+                    if (curAlarm == 0 && maxAlarm > 0) {
+                        audioManager.setStreamVolume(AudioManager.STREAM_ALARM, (maxAlarm * 0.75).toInt().coerceAtLeast(1), 0)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            val attrs = AudioAttributes.Builder()
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .setUsage(
+                    if (useSpeakerBypass) AudioAttributes.USAGE_ALARM
+                    else AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
+                )
+                .build()
+
+            // Request transient audio focus (ducks music/radio if playing)
+            if (audioManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(attrs)
+                        .build()
+                    audioManager.requestAudioFocus(focusReq)
+                } catch (_: Exception) {}
+            }
+
+            val afd = context.resources.openRawResourceFd(resId) ?: return
+            val player = MediaPlayer()
+            player.setAudioAttributes(attrs)
+            player.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+            afd.close()
+
+            // Force built-in phone speaker on Android M+ when Bluetooth bypass is enabled
+            // so silent car Bluetooth A2DP / FM mode / Bluetooth OBD adapters never swallow the alert!
+            if (useSpeakerBypass && audioManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+                    val builtInSpeaker = outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+                    if (builtInSpeaker != null) {
+                        player.setPreferredDevice(builtInSpeaker)
+                    }
+                } catch (_: Exception) {}
+            }
+
+            player.prepare()
             player.setVolume(safeVol, safeVol)
             player.setOnCompletionListener {
                 try {
@@ -123,7 +184,13 @@ class AlertSoundPlayer(private val context: Context) {
             player.start()
             currentPlayer = player
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to play sound: ${e.message}")
+            Log.w(TAG, "Failed to play raw sound, triggering alarm tone fallback: ${e.message}")
+            try {
+                if (fallbackToneGen == null) {
+                    fallbackToneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
+                }
+                fallbackToneGen?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 400)
+            } catch (_: Exception) {}
         }
     }
 
