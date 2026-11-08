@@ -146,9 +146,9 @@ class MainActivity : Activity() {
     private var activeSubScreen: String? = null // When null, displays the sleek 3x3 Home Grid Dashboard matching the reference design
     private var currentNavTab: String = "home" // "home", "scanner", "gauges", "reports", "more"
 
-    // Multi-Persona State
-    private var authorizedDriverName: String = "محمد السائق (مفوض)"
-    private var authorizedDriverPhone: String = "01099887766"
+    // Multi-Persona State (بيانات حقيقية فقط بدون بيانات افتراضية)
+    private var authorizedDriverName: String = ""
+    private var authorizedDriverPhone: String = ""
 
     // Delta-Deadband Telemetry State (التخزين عند التغير فقط)
     data class TelemetryDeltaRecord(
@@ -188,86 +188,7 @@ class MainActivity : Activity() {
         val rating: Float
     )
     private var workshopSelectedCategory: String = "all"
-    private val registeredWorkshops = mutableListOf<RegisteredWorkshop>(
-        RegisteredWorkshop(
-            "ws-1",
-            "المركز الألماني لصيانة وفحص السيارات",
-            "م. شريف عبد الفتاح",
-            "فحص كمبيوتر وبرمجة أعطال + كهرباء وحساسات",
-            "computer",
-            "01023456781",
-            "شارع النصر، المعادي، القاهرة",
-            2.1f,
-            29.9602,
-            31.2569,
-            4.9f
-        ),
-        RegisteredWorkshop(
-            "ws-2",
-            "مركز الأهرام لصيانة المحركات والعمرة",
-            "الأسطى محمود الأهرام",
-            "ميكانيكا وعمرة محركات وفتيس أوتوماتيك",
-            "mechanic",
-            "01134567892",
-            "شارع فيصل الرئيسي، الجيزة",
-            3.4f,
-            30.0074,
-            31.1892,
-            4.8f
-        ),
-        RegisteredWorkshop(
-            "ws-3",
-            "ورشة النصر لكهرباء وحساسات السيارات",
-            "م. أحمد النصر",
-            "كهرباء، ضفيرة، مارش، دينامو، شحن بطاريات",
-            "electricity",
-            "01245678903",
-            "الحي السابع، مدينة نصر، القاهرة",
-            4.1f,
-            30.0561,
-            31.3301,
-            4.7f
-        ),
-        RegisteredWorkshop(
-            "ws-4",
-            "مركز عرابي لضبط الزوايا والعفشة والميزان",
-            "كابتن إبراهيم عرابي",
-            "ضبط زوايا وميزان ليزر، عفشة ومساعدين وشاسيه",
-            "chassis",
-            "01056789014",
-            "طريق الحرية، سموحة، الإسكندرية",
-            1.8f,
-            31.2156,
-            29.9553,
-            4.9f
-        ),
-        RegisteredWorkshop(
-            "ws-5",
-            "البرنس لصيانة وتعبئة تكييف السيارات",
-            "المعلم سامح البرنس",
-            "تكييف وتبريد، فريون أصلي، كباس، كشف تسريب ليزر",
-            "ac",
-            "01167890125",
-            "شارع مصدق، الدقي، الجيزة",
-            2.8f,
-            30.0381,
-            31.2064,
-            4.8f
-        ),
-        RegisteredWorkshop(
-            "ws-6",
-            "مركز النيل المتكامل للصيانة السريعة",
-            "م. طارق النيل",
-            "صيانة سريعة، زيوت وفلاتر، بوجيهات وتيل فرامل",
-            "mechanic",
-            "01098765432",
-            "ميدان لبنان، المهندسين، الجيزة",
-            3.9f,
-            30.0520,
-            31.2010,
-            4.8f
-        )
-    )
+    private val registeredWorkshops = mutableListOf<RegisteredWorkshop>()
 
     // Security & Workshop Notifications Model
     data class SecurityNotificationItem(
@@ -284,12 +205,12 @@ class MainActivity : Activity() {
 
     // Workshop Authorized Inspection Session
     private var isWorkshopSessionUnlocked: Boolean = false
-    private var unlockedVehicleName: String = "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
-    private var unlockedVehicleVin: String = "KMHDH41EBNA123456"
+    private var unlockedVehicleName: String = ""
+    private var unlockedVehicleVin: String = ""
     private var workshopSessionExpiryTime: Long = 0L
-    private var workshopSessionGrantedBy: String = "السائق المفوض"
-    private var activeWorkshopPin: String = "7429"
-    private var activeWorkshopTargetName: String = "المركز الألماني"
+    private var workshopSessionGrantedBy: String = ""
+    private var activeWorkshopPin: String = ""
+    private var activeWorkshopTargetName: String = ""
     private var activePinExpiryTimestamp: Long = 0L
     private var isPinActive: Boolean = true
 
@@ -314,15 +235,15 @@ class MainActivity : Activity() {
     private var telemetrySyncMode: String = "live" // "live" or "periodic_batch"
     private var lastBatchSyncTimestamp: Long = 0L
 
-    // My Workshop Profile Registration State
-    private var myWorkshopName: String = "مركز النجم لصيانة وفحص السيارات"
-    private var myWorkshopManager: String = "م. إسلام النجم"
-    private var myWorkshopSpecialty: String = "فحص كمبيوتر وبرمجة أعطال + كهرباء وحساسات"
+    // My Workshop Profile Registration State (بدون بيانات افتراضية)
+    private var myWorkshopName: String = ""
+    private var myWorkshopManager: String = ""
+    private var myWorkshopSpecialty: String = ""
     private var myWorkshopCategory: String = "computer" // "computer", "electricity", "mechanic", "chassis", "ac", "all"
-    private var myWorkshopPhone: String = "01099887755"
-    private var myWorkshopAddress: String = "شارع الهرم الرئيسي، الجيزة"
-    private var myWorkshopLat: Double = 29.9870
-    private var myWorkshopLng: Double = 31.1500
+    private var myWorkshopPhone: String = ""
+    private var myWorkshopAddress: String = ""
+    private var myWorkshopLat: Double = 0.0
+    private var myWorkshopLng: Double = 0.0
     private var isMyWorkshopRegistered: Boolean = false
 
     // Driver Assigned Vehicles Model & Data
@@ -866,8 +787,8 @@ class MainActivity : Activity() {
 
         // Hero Card: Master Audio Warning Toggle, Bluetooth Speaker Bypass & Sound Settings Link
         val hero = card().apply {
-            addView(text("🛑 اكتشاف وعرض المطبات", 16, Color.rgb(255, 180, 70), true))
-            addView(text("اكتشاف تلقائي للمطبات وعرضها مع تنبيه صوتي مسموع قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
+            addView(text("🛑 المطبات الصناعية", 16, Color.rgb(255, 180, 70), true))
+            addView(text("اكتشاف وتحذير مطبات صناعية تلقائياً مع تنبيه صوتي مسموع قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
                 setPadding(0, dp(4), 0, dp(10))
             })
 
@@ -1351,8 +1272,8 @@ class MainActivity : Activity() {
     private var tvFuelTabActualConsumed: TextView? = null
     private var tvFuelTabInstantRate: TextView? = null
     private var tvFuelTabCurrentCost: TextView? = null
+    private var tvFuelTabCurrentOilCost: TextView? = null
     private var tvFuelTabActiveCostPerKm: TextView? = null
-    private var tvFuelTabTankPercent: TextView? = null
     private var tvFuelTabEffectiveRate: TextView? = null
     private var tvFuelTabLiveTripDepPercent: TextView? = null
     private var tvFuelTabOilCurrentKm: TextView? = null
@@ -1477,14 +1398,17 @@ class MainActivity : Activity() {
         }
         isAudioMuted = preferences.getBoolean("is_audio_alert_muted", false)
 
-        // Restore Route & Payload Trip Settings
-        tripStartLocationName = preferences.getString("trip_start_name", "القاهرة") ?: "القاهرة"
-        tripEndLocationName = preferences.getString("trip_end_name", "الإسكندرية") ?: "الإسكندرية"
+        // One-time purge of any previously saved demo/default data so only real car/account data remains
+        purgeAllDemoDefaultsOnce()
+
+        // Restore Route & Payload Trip Settings (real user/car data only)
+        tripStartLocationName = preferences.getString("trip_start_name", "نقطة البداية") ?: "نقطة البداية"
+        tripEndLocationName = preferences.getString("trip_end_name", "نقطة الوصول") ?: "نقطة الوصول"
         tripStartLat = preferences.getFloat("trip_start_lat", 30.0444f).toDouble()
         tripStartLng = preferences.getFloat("trip_start_lng", 31.2357f).toDouble()
-        tripEndLat = preferences.getFloat("trip_end_lat", 31.2001f).toDouble()
-        tripEndLng = preferences.getFloat("trip_end_lng", 29.9187f).toDouble()
-        plannedRouteDistanceKm = preferences.getFloat("planned_route_distance", 218.0f)
+        tripEndLat = preferences.getFloat("trip_end_lat", 30.0500f).toDouble()
+        tripEndLng = preferences.getFloat("trip_end_lng", 31.2400f).toDouble()
+        plannedRouteDistanceKm = preferences.getFloat("planned_route_distance", 0.0f)
         plannedCargoWeightKg = preferences.getFloat("planned_cargo_weight", 0.0f)
         vehicleEmptyWeightKg = preferences.getFloat("vehicle_empty_weight", 1200.0f)
 
@@ -1492,7 +1416,7 @@ class MainActivity : Activity() {
         telemetry.tripDistanceKm = preferences.getFloat("saved_trip_distance_km", 0.0f)
         telemetry.actualTripFuelLiters = preferences.getFloat("saved_trip_fuel_liters", 0.0f)
         telemetry.carOdometerKm = preferences.getFloat("car_cumulative_odometer_km", 0.0f)
-        telemetry.odometerSource = preferences.getString("car_odometer_source", "كمبيوتر السيارة") ?: "كمبيوتر السيارة" 
+        telemetry.odometerSource = preferences.getString("car_odometer_source", "كمبيوتر السيارة") ?: "كمبيوتر السيارة"
         if (telemetry.tripDistanceKm > 0.05f && telemetry.actualTripFuelLiters > 0f) {
             telemetry.tripAverageFuelRate = ((telemetry.actualTripFuelLiters / telemetry.tripDistanceKm) * 100f).coerceIn(2.5f, 35.0f)
         }
@@ -1500,32 +1424,25 @@ class MainActivity : Activity() {
 
         title = "DriveCare"
 
-        // Initialize Default Vehicle & Ownership if first run
-        if (preferences.getString("vehicle_primary_owner", null).isNullOrEmpty()) {
-            val initialOwner = if (userName.isNotEmpty() && currentRole == "owner") userName else "مالك تجريبي"
-            val initialPhone = if (userPhone.isNotEmpty()) userPhone else "01000000000"
+        // Only bind vehicle owner if a real user is logged in as owner (never seed a fake owner)
+        if (preferences.getString("vehicle_primary_owner", null).isNullOrEmpty() && userName.isNotEmpty() && userName != "مالك تجريبي" && currentRole == "owner") {
+            val today = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
             preferences.edit()
-                .putString("vehicle_primary_owner", initialOwner)
-                .putString("vehicle_primary_owner_phone", initialPhone)
-                .putString("vehicle_owner_since", "2026/10/17")
+                .putString("vehicle_primary_owner", userName)
+                .putString("vehicle_primary_owner_phone", userPhone)
+                .putString("vehicle_owner_since", today)
                 .putBoolean("vehicle_owner_locked", true)
                 .apply()
         }
 
+        // Only auto-populate vehicle if actually detected from paired Bluetooth car
         val detectedOnStart = detectCarFromPairedDevices()
         val currentStoredVin = preferences.getString("vehicle_vin", null)
-        if (currentStoredVin.isNullOrEmpty() || currentStoredVin == "JTDBR32E12345678") {
-            val initialName = detectedOnStart?.first ?: "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
-            val initialMake = detectedOnStart?.second ?: "شيفروليه (Chevrolet)"
+        if (detectedOnStart != null && currentStoredVin.isNullOrEmpty()) {
             preferences.edit()
-                .putString("vehicle_vin", "بانتظار فحص OBD المباشر")
-                .putString("vehicle_name", initialName)
-                .putString("vehicle_make", initialMake)
-                .putString("vehicle_year", "2018")
-                .putFloat("tank_capacity_liters", 45.0f)
-                .putFloat("engine_displacement_liters", 1.5f)
-                .putFloat("fuel_rate_baseline", 7.2f)
-                .putString("vehicle_data_source", "تم التعرف آلياً من سيارتك 🚗")
+                .putString("vehicle_name", detectedOnStart.first)
+                .putString("vehicle_make", detectedOnStart.second)
+                .putString("vehicle_data_source", "بلوتوث السيارة المقترن 🚗")
                 .apply()
         }
 
@@ -1536,8 +1453,8 @@ class MainActivity : Activity() {
         initSecurityNotificationsAndDelta()
         initNotificationChannel()
         loadWorkshopProfile()
-        loadDriverAssignedCars()
         loadOwnerFleetVehicles()
+        loadDriverAssignedCars()
         loadDriverDelegationRequests()
         loadWorkshopAccessRequests()
         startPhoneGpsTracking()
@@ -1546,6 +1463,132 @@ class MainActivity : Activity() {
         uiUpdateHandler.post(uiUpdateRunnable)
 
         renderCurrentScreen()
+    }
+
+    /**
+     * يمسح أي بيانات افتراضية أو تجريبية قديمة لمرة واحدة ويضمن أن البرنامج لا يحتفظ إلا بالبيانات الحقيقية
+     * المقروءة من السيارة أو المدخلة من المستخدم والمرتبطة بحساب المستخدم أو حساب السيارة.
+     */
+    private fun purgeAllDemoDefaultsOnce() {
+        if (preferences.getBoolean("purged_all_demo_defaults_v4", false)) return
+        val editor = preferences.edit()
+
+        val fleetRaw = preferences.getString("owner_fleet_vehicles_json", "") ?: ""
+        if (fleetRaw.contains("KL1TD69E29B123456") || fleetRaw.contains("KNAFK411BF5123456") || fleetRaw.contains("JTDBR32E12345678")) {
+            editor.remove("owner_fleet_vehicles_json")
+        }
+
+        val drvRaw = preferences.getString("driver_assigned_cars_json", "") ?: ""
+        if (drvRaw.contains("KL1TD69E29B123456") || drvRaw.contains("KNAFK411BF5123456") || drvRaw.contains("JTDBR32E12345678")) {
+            editor.remove("driver_assigned_cars_json")
+        }
+
+        val secRaw = preferences.getString("security_notifications_json", "") ?: ""
+        if (secRaw.contains("مالك تجريبي") || secRaw.contains("sec-1")) {
+            editor.remove("security_notifications_json")
+        }
+
+        val bumpsRaw = preferences.getString("persisted_speed_bumps_json", "") ?: ""
+        if (bumpsRaw.contains("bump-seed-")) {
+            editor.remove("persisted_speed_bumps_json")
+        }
+
+        val storedVin = preferences.getString("vehicle_vin", "") ?: ""
+        val storedName = preferences.getString("vehicle_name", "") ?: ""
+        if (storedVin == "KL1TD69E29B123456" || storedVin == "JTDBR32E12345678" || storedVin == "بانتظار فحص OBD المباشر" || storedName.contains("شيفروليه أفيو")) {
+            editor.remove("vehicle_vin")
+            editor.remove("vehicle_name")
+            editor.remove("vehicle_make")
+            editor.remove("vehicle_year")
+            editor.remove("vehicle_plate")
+        }
+
+        if (preferences.getString("vehicle_primary_owner", "") == "مالك تجريبي") {
+            editor.remove("vehicle_primary_owner")
+            editor.remove("vehicle_primary_owner_phone")
+        }
+
+        if (preferences.getString("my_workshop_name", "") == "مركز النجم لصيانة وفحص السيارات") {
+            editor.remove("my_workshop_name")
+            editor.remove("my_workshop_manager")
+            editor.remove("my_workshop_specialty")
+            editor.remove("my_workshop_phone")
+            editor.remove("my_workshop_address")
+        }
+
+        editor.remove("consumption_time_logs_json")
+        editor.remove("daily_snapshots_veh-001")
+        editor.remove("daily_snapshots_veh-002")
+        editor.remove("daily_snapshots_veh-003")
+        editor.remove("daily_snapshots_default_car")
+        editor.remove("dep_tracking_baseline_odo_km")
+        editor.remove("dep_tracking_start_date")
+
+        editor.putBoolean("purged_all_demo_defaults_v4", true)
+        editor.apply()
+    }
+
+    /**
+     * يعيد المعرف الفريد للسيارة النشطة حالياً لربط بيانات القراءات والتقارير والملكية بحساب هذه السيارة تحديداً.
+     */
+    private fun getActiveVehicleScopeId(): String {
+        val activeDrv = if (currentRole == "driver") (driverAssignedCars.firstOrNull { it.isActive } ?: driverAssignedCars.firstOrNull()) else null
+        if (activeDrv != null) {
+            return activeDrv.vin.ifBlank { activeDrv.id }.replace(" ", "_")
+        }
+        val activeOwn = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull()
+        if (activeOwn != null) {
+            return activeOwn.vin.ifBlank { activeOwn.id }.replace(" ", "_")
+        }
+        val prefVin = preferences.getString("vehicle_vin", "")?.trim() ?: ""
+        if (prefVin.isNotEmpty() && !prefVin.startsWith("بانتظار")) {
+            return prefVin.replace(" ", "_")
+        }
+        return "unassigned_${userPhone.ifBlank { "account" }}"
+    }
+
+    private fun getActiveVehicleProfile(): OwnerVehicle {
+        val activeDrv = if (currentRole == "driver") (driverAssignedCars.firstOrNull { it.isActive } ?: driverAssignedCars.firstOrNull()) else null
+        if (activeDrv != null) {
+            return OwnerVehicle(
+                id = activeDrv.id,
+                name = activeDrv.name,
+                make = activeDrv.make,
+                year = activeDrv.year,
+                vin = activeDrv.vin,
+                plateNumber = preferences.getString("vehicle_plate", "") ?: "",
+                tankCapacity = activeDrv.tankCapacity,
+                displacement = activeDrv.displacement,
+                baseRate = activeDrv.baseRate,
+                emptyWeightKg = activeDrv.emptyWeightKg,
+                fuelType = activeDrv.fuelType,
+                alertsEnabled = true,
+                isCurrentActive = true
+            )
+        }
+        val activeOwn = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull()
+        if (activeOwn != null) return activeOwn
+
+        val savedName = preferences.getString("vehicle_name", "")?.trim() ?: ""
+        val savedVin = preferences.getString("vehicle_vin", "")?.trim() ?: ""
+        val savedMake = preferences.getString("vehicle_make", "")?.trim() ?: ""
+        val savedYear = preferences.getString("vehicle_year", "")?.trim() ?: ""
+        val savedPlate = preferences.getString("vehicle_plate", "")?.trim() ?: ""
+        return OwnerVehicle(
+            id = getActiveVehicleScopeId(),
+            name = savedName.ifEmpty { "لم يتم تسجيل سيارة بعد" },
+            make = savedMake.ifEmpty { "--" },
+            year = savedYear.ifEmpty { "--" },
+            vin = savedVin.ifEmpty { "بانتظار قراءة الشاسيه من OBD" },
+            plateNumber = savedPlate,
+            tankCapacity = preferences.getFloat("tank_capacity_liters", 50.0f),
+            displacement = preferences.getFloat("engine_displacement_liters", 1.6f),
+            baseRate = preferences.getFloat("fuel_rate_baseline", 7.2f),
+            emptyWeightKg = preferences.getFloat("vehicle_empty_weight", 1200.0f),
+            fuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline",
+            alertsEnabled = true,
+            isCurrentActive = true
+        )
     }
 
     override fun onResume() {
@@ -2272,21 +2315,7 @@ class MainActivity : Activity() {
         if (ownerFleetVehicles.isEmpty()) loadOwnerFleetVehicles()
         if (driverAssignedCars.isEmpty()) loadDriverAssignedCars()
 
-        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerVehicle(
-            id = "default_car",
-            name = "شيفروليه أفيو 2015",
-            make = "Chevrolet",
-            year = "2015",
-            vin = "KL1TA69...2015",
-            plateNumber = "أ ب ج 123",
-            tankCapacity = 45.0f,
-            displacement = 1.5f,
-            baseRate = 7.2f,
-            emptyWeightKg = 1200.0f,
-            fuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline",
-            alertsEnabled = true,
-            isCurrentActive = true
-        )
+        val activeVeh = getActiveVehicleProfile()
         val activeDrvCar = driverAssignedCars.firstOrNull { it.isActive } ?: driverAssignedCars.firstOrNull()
 
         val headerTitleText = when (currentRole) {
@@ -2298,7 +2327,10 @@ class MainActivity : Activity() {
                 }
             }
             "garage" -> "🔧 ورشتي: ${myWorkshopName.ifEmpty { "مركز الصيانة" }} • فحص: ${activeVeh.name}"
-            else -> "👑 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber} • ${getFuelTypeArabicBadge(activeVeh.fuelType)}"
+            else -> {
+                val plateInfo = if (activeVeh.plateNumber.isNotBlank()) " • لوحة: ${activeVeh.plateNumber}" else ""
+                "👑 ${activeVeh.name}$plateInfo • ${getFuelTypeArabicBadge(activeVeh.fuelType)}"
+            }
         }
 
         val card = LinearLayout(this).apply {
@@ -2661,7 +2693,7 @@ class MainActivity : Activity() {
                 // 4. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
                 ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
                 // باقي الخدمات المشتركة بالكامل
-                ServiceCard("اكتشاف وعرض المطبات", "اكتشاف وعرض المطبات وتنبيه صوتي", "🛑", "speed_bumps"),
+                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
                 ServiceCard("حساب ومعدل استهلاك الوقود", "الوقود والزيت ونسبة الهالك والتقارير", "⛽", "fuel"),
                 ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
@@ -2676,7 +2708,7 @@ class MainActivity : Activity() {
                 ServiceCard("سياراتي المفوض بقيادتها", "قبول التفويض وربط قارئ السيارة بالمالك", "🚗", "driver_cars"),
                 ServiceCard("قراءة الحساسات ومعدل الوقود", "السرعة والحرارة والشحن ومعدل الوقود اللحظي", "📊", "gauges"),
                 ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
-                ServiceCard("اكتشاف وعرض المطبات", "اكتشاف وعرض المطبات وتنبيه صوتي", "🛑", "speed_bumps"),
+                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
                 ServiceCard("حساب ومعدل استهلاك الوقود", "الوقود والزيت ونسبة الهالك والتقارير", "⛽", "fuel"),
                 ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
@@ -2848,7 +2880,7 @@ class MainActivity : Activity() {
             "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
             "predictive_health" -> "📈 التحليل التنبؤي وصحة السيارة (المعدلات والأعطال)"
             "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
-            "speed_bumps" -> "🛑 اكتشاف وعرض المطبات"
+            "speed_bumps" -> "🛑 المطبات الصناعية (اكتشاف وتحذير مطبات صناعية)"
             "audio_settings" -> "🔊 استوديو الأصوات البشرية والنغمات التنبيهية"
             "fuel" -> "⛽ استهلاك الوقود والزيت ونسبة الهالك والتقارير"
             "maint" -> "🔧 جدول وتذكيرات الصيانة الدورية"
@@ -3906,11 +3938,11 @@ class MainActivity : Activity() {
                     ownerFleetVehicles.add(
                         OwnerVehicle(
                             id = obj.optString("id", "own-veh-$i"),
-                            name = obj.optString("name", "سيارة المالك"),
-                            make = obj.optString("make", "عامة"),
-                            year = obj.optString("year", "2020"),
-                            vin = obj.optString("vin", "KL1TD69E29B123456"),
-                            plateNumber = obj.optString("plateNumber", "س ص ع 1234"),
+                            name = obj.optString("name", ""),
+                            make = obj.optString("make", ""),
+                            year = obj.optString("year", ""),
+                            vin = obj.optString("vin", ""),
+                            plateNumber = obj.optString("plateNumber", ""),
                             tankCapacity = obj.optDouble("tankCapacity", 45.0).toFloat(),
                             displacement = obj.optDouble("displacement", 1.5).toFloat(),
                             baseRate = obj.optDouble("baseRate", 7.2).toFloat(),
@@ -3924,78 +3956,7 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) {}
         }
-
-        if (ownerFleetVehicles.isEmpty()) {
-            val curName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو (Chevrolet Aveo 1.5L)"
-            val curVin = preferences.getString("vehicle_vin", "KL1TD69E29B123456") ?: "KL1TD69E29B123456"
-            val curMake = preferences.getString("vehicle_make", "شيفروليه") ?: "شيفروليه"
-            val curYear = preferences.getString("vehicle_year", "2018") ?: "2018"
-
-            ownerFleetVehicles.add(
-                OwnerVehicle(
-                    id = "own-veh-1",
-                    name = curName,
-                    make = curMake,
-                    year = curYear,
-                    vin = curVin,
-                    plateNumber = "أ ب ج 4589",
-                    tankCapacity = 45.0f,
-                    displacement = 1.5f,
-                    baseRate = 7.2f,
-                    emptyWeightKg = 1070.0f,
-                    fuelType = "gasoline",
-                    alertsEnabled = true,
-                    isCurrentActive = true,
-                    assignedDrivers = mutableListOf(
-                        AssignedDriver("محمد علي (سائق أساسي)", "01012345678", "سائق أساسي", "2026/10/18"),
-                        AssignedDriver("عمر حسن (سائق بديل)", "01198765432", "سائق وردية مسائية", "2026/10/19")
-                    )
-                )
-            )
-
-            ownerFleetVehicles.add(
-                OwnerVehicle(
-                    id = "own-veh-2",
-                    name = "كيا سيراتو (Kia Cerato 1.6L)",
-                    make = "كيا",
-                    year = "2022",
-                    vin = "KNAFK411BF5123456",
-                    plateNumber = "س ر ق 7812",
-                    tankCapacity = 50.0f,
-                    displacement = 1.6f,
-                    baseRate = 6.8f,
-                    emptyWeightKg = 1230.0f,
-                    fuelType = "gasoline",
-                    alertsEnabled = true,
-                    isCurrentActive = false,
-                    assignedDrivers = mutableListOf(
-                        AssignedDriver("أحمد فتحي (سائق الشركة)", "01234567890", "سائق مفوض", "2026/10/19")
-                    )
-                )
-            )
-
-            ownerFleetVehicles.add(
-                OwnerVehicle(
-                    id = "own-veh-3",
-                    name = "تويوتا كورولا (Toyota Corolla 1.6L)",
-                    make = "تويوتا",
-                    year = "2023",
-                    vin = "JTDBR32E12345678",
-                    plateNumber = "ط ن م 3344",
-                    tankCapacity = 50.0f,
-                    displacement = 1.6f,
-                    baseRate = 6.5f,
-                    emptyWeightKg = 1280.0f,
-                    fuelType = "gasoline",
-                    alertsEnabled = false,
-                    isCurrentActive = false,
-                    assignedDrivers = mutableListOf(
-                        AssignedDriver("كابتن إبراهيم محمود", "01511223344", "سائق عائلي", "2026/10/20")
-                    )
-                )
-            )
-            saveOwnerFleetVehicles()
-        }
+        // لا يتم وضع أي سيارات افتراضية — فقط السيارات الحقيقية المقروءة أو المضافة لحساب المالك
     }
 
     private fun saveDriverDelegationRequests() {
@@ -5747,24 +5708,26 @@ class MainActivity : Activity() {
         myWorkshopLat = preferences.getFloat("my_workshop_lat", myWorkshopLat.toFloat()).toDouble()
         myWorkshopLng = preferences.getFloat("my_workshop_lng", myWorkshopLng.toFloat()).toDouble()
 
-        val existingIdx = registeredWorkshops.indexOfFirst { it.id == "my-ws-profile" }
-        val wsItem = RegisteredWorkshop(
-            id = "my-ws-profile",
-            name = myWorkshopName,
-            managerName = myWorkshopManager,
-            specialty = myWorkshopSpecialty,
-            categoryKey = myWorkshopCategory,
-            phone = myWorkshopPhone,
-            address = myWorkshopAddress,
-            distanceKm = 0.5f,
-            lat = myWorkshopLat,
-            lng = myWorkshopLng,
-            rating = 5.0f
-        )
-        if (existingIdx >= 0) {
-            registeredWorkshops[existingIdx] = wsItem
-        } else {
-            registeredWorkshops.add(0, wsItem)
+        if (myWorkshopName.isNotBlank()) {
+            val existingIdx = registeredWorkshops.indexOfFirst { it.id == "my-ws-profile" }
+            val wsItem = RegisteredWorkshop(
+                id = "my-ws-profile",
+                name = myWorkshopName,
+                managerName = myWorkshopManager,
+                specialty = myWorkshopSpecialty,
+                categoryKey = myWorkshopCategory,
+                phone = myWorkshopPhone,
+                address = myWorkshopAddress,
+                distanceKm = 0.5f,
+                lat = myWorkshopLat,
+                lng = myWorkshopLng,
+                rating = 5.0f
+            )
+            if (existingIdx >= 0) {
+                registeredWorkshops[existingIdx] = wsItem
+            } else {
+                registeredWorkshops.add(0, wsItem)
+            }
         }
     }
 
@@ -5948,10 +5911,7 @@ class MainActivity : Activity() {
             }
         }
 
-        if (list.isEmpty()) {
-            list.addAll(generateInitialSnapshotHistory(vehicleId))
-            saveDailySnapshots(vehicleId, list)
-        }
+        // لا يتم وضع أي قراءات افتراضية — فقط اللقطات الحقيقية التي يسجلها البرنامج من السيارة أو يدخلها المستخدم
         return list
     }
 
@@ -6344,6 +6304,138 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
+    // PREDICTIVE CONSUMABLES & DEDICATED PER-ITEM ALERTS (تحليل تنبؤي للكاوتش والزيوت والفلاتر)
+    // ========================================================
+    data class PredictiveConsumableItem(
+        val key: String,
+        val title: String,
+        val icon: String,
+        var requiredKm: Float = 0f,
+        var baselineOdoKm: Float = 0f,
+        var isConfigured: Boolean = false,
+        var lastUpdatedDate: String = "",
+        var storedAlertText: String = "",
+        var storedAlertTimestamp: String = ""
+    )
+
+    private fun getDefaultPredictiveConsumableCatalog(): List<PredictiveConsumableItem> = listOf(
+        PredictiveConsumableItem("steering_oil", "زيت الدركسيون (الباور)", "🛢️"),
+        PredictiveConsumableItem("tire_front_right", "كاوتش العربية - يمين أمام", "🛞"),
+        PredictiveConsumableItem("tire_front_left", "كاوتش العربية - شمال يسرا (أمام)", "🛞"),
+        PredictiveConsumableItem("tire_rear_right", "كاوتش العربية - يمين خلف", "🛞"),
+        PredictiveConsumableItem("tire_rear_left", "كاوتش العربية - شمال يسرا (خلف)", "🛞"),
+        PredictiveConsumableItem("air_filter", "فلتر الهواء", "🌬️"),
+        PredictiveConsumableItem("fuel_filter", "فلتر البنزين / السولار", "⛽"),
+        PredictiveConsumableItem("engine_oil", "زيت المحرك والفلتر", "🛢️")
+    )
+
+    private fun loadPredictiveConsumables(vehicleId: String = getActiveVehicleScopeId()): MutableList<PredictiveConsumableItem> {
+        val catalog = getDefaultPredictiveConsumableCatalog().toMutableList()
+        val raw = preferences.getString("predictive_consumables_$vehicleId", null) ?: return catalog
+        return try {
+            val arr = org.json.JSONArray(raw)
+            val mapByKey = mutableMapOf<String, org.json.JSONObject>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                mapByKey[obj.optString("key", "")] = obj
+            }
+            catalog.map { item ->
+                val saved = mapByKey[item.key]
+                if (saved != null) {
+                    item.copy(
+                        requiredKm = saved.optDouble("requiredKm", 0.0).toFloat(),
+                        baselineOdoKm = saved.optDouble("baselineOdoKm", 0.0).toFloat(),
+                        isConfigured = saved.optBoolean("isConfigured", false),
+                        lastUpdatedDate = saved.optString("lastUpdatedDate", ""),
+                        storedAlertText = saved.optString("storedAlertText", ""),
+                        storedAlertTimestamp = saved.optString("storedAlertTimestamp", "")
+                    )
+                } else {
+                    item
+                }
+            }.toMutableList()
+        } catch (_: Exception) {
+            catalog
+        }
+    }
+
+    private fun savePredictiveConsumables(vehicleId: String = getActiveVehicleScopeId(), items: List<PredictiveConsumableItem>) {
+        val arr = org.json.JSONArray()
+        items.forEach { item ->
+            val obj = org.json.JSONObject()
+            obj.put("key", item.key)
+            obj.put("title", item.title)
+            obj.put("icon", item.icon)
+            obj.put("requiredKm", item.requiredKm.toDouble())
+            obj.put("baselineOdoKm", item.baselineOdoKm.toDouble())
+            obj.put("isConfigured", item.isConfigured)
+            obj.put("lastUpdatedDate", item.lastUpdatedDate)
+            obj.put("storedAlertText", item.storedAlertText)
+            obj.put("storedAlertTimestamp", item.storedAlertTimestamp)
+            arr.put(obj)
+        }
+        preferences.edit().putString("predictive_consumables_$vehicleId", arr.toString()).apply()
+    }
+
+    private fun getConsumableElapsedKm(item: PredictiveConsumableItem, currentOdoKm: Float): Float {
+        if (!item.isConfigured || item.requiredKm <= 0f) return 0f
+        return if (currentOdoKm > 0f && currentOdoKm >= item.baselineOdoKm) {
+            (currentOdoKm - item.baselineOdoKm).coerceAtLeast(0f)
+        } else {
+            telemetry.tripDistanceKm.coerceAtLeast(0f)
+        }
+    }
+
+    private fun evaluateAndStoreConsumableAlerts(vehicleId: String = getActiveVehicleScopeId(), triggerSystemAlert: Boolean = false): List<PredictiveConsumableItem> {
+        val items = loadPredictiveConsumables(vehicleId)
+        val currentOdo = getEffectiveCarOdometerKm()
+        val nowStr = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        var changed = false
+
+        items.forEach { item ->
+            if (item.isConfigured && item.requiredKm > 0f) {
+                val elapsed = getConsumableElapsedKm(item, currentOdo)
+                val remaining = (item.requiredKm - elapsed).coerceAtLeast(0f)
+                val alertKey = "pred_alert_notified_${vehicleId}_${item.key}_${item.baselineOdoKm.toInt()}_${item.requiredKm.toInt()}"
+
+                if (elapsed >= item.requiredKm) {
+                    val msg = "🚨 تنبيه خاص (${item.title}): تم الوصول إلى الكيلومترات المطلوبة للتغيير (${String.format("%.0f", elapsed)} / ${String.format("%.0f", item.requiredKm)} كم). يرجى تغيير ${item.title} فوراً."
+                    if (item.storedAlertText != msg) {
+                        item.storedAlertText = msg
+                        item.storedAlertTimestamp = nowStr
+                        changed = true
+                    }
+                    if (triggerSystemAlert && !preferences.getBoolean(alertKey, false)) {
+                        preferences.edit().putBoolean(alertKey, true).apply()
+                        setSafetyAlert(
+                            "consumable_due_${item.key}",
+                            "🚨 حان موعد تغيير: ${item.title}",
+                            msg,
+                            critical = true
+                        )
+                    }
+                } else if (remaining <= 500f && item.requiredKm > 500f) {
+                    val msg = "⚠️ تنبيه مبكر خاص (${item.title}): متبقي ${String.format("%.0f", remaining)} كم فقط على موعد التغيير المحدد (${String.format("%.0f", item.requiredKm)} كم)."
+                    if (item.storedAlertText != msg) {
+                        item.storedAlertText = msg
+                        item.storedAlertTimestamp = nowStr
+                        changed = true
+                    }
+                } else if (item.storedAlertText.isNotEmpty()) {
+                    item.storedAlertText = ""
+                    item.storedAlertTimestamp = ""
+                    changed = true
+                }
+            }
+        }
+
+        if (changed) {
+            savePredictiveConsumables(vehicleId, items)
+        }
+        return items
+    }
+
+    // ========================================================
     // BUILD PREDICTIVE HEALTH TAB CONTENT (التحليل التنبؤي وصحة السيارة)
     // ========================================================
     private fun buildPredictiveHealthTabContent(): View {
@@ -6352,23 +6444,8 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_RTL
         }
 
-        val activeVeh = ownerFleetVehicles.firstOrNull { it.isCurrentActive } ?: ownerFleetVehicles.firstOrNull() ?: OwnerVehicle(
-            id = "veh-001",
-            name = "شيفروليه أفيو",
-            make = "Chevrolet",
-            year = "2018",
-            vin = "KL1TD69E29B123456",
-            plateNumber = "س ق ص ٩١٨٢",
-            tankCapacity = 45.0f,
-            displacement = 1.5f,
-            baseRate = 7.5f,
-            emptyWeightKg = 1200.0f,
-            fuelType = "gasoline",
-            alertsEnabled = true,
-            isCurrentActive = true
-        )
-
-        val vehicleId = activeVeh.id
+        val activeVeh = getActiveVehicleProfile()
+        val vehicleId = getActiveVehicleScopeId()
         val allSnapshots = loadDailySnapshots(vehicleId)
 
         // Filter snapshots based on selected time window (7d, 30d, 90d, 365d)
@@ -6379,35 +6456,239 @@ class MainActivity : Activity() {
             else -> allSnapshots.take(30)
         }
 
+        val todayStr = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date())
         val todaySnapshot = filteredSnapshots.firstOrNull() ?: DailyVehicleSnapshot(
             vehicleId = vehicleId,
-            date = "2026/10/25",
-            avgFuelRateL100km = 11.0f,
+            date = todayStr,
+            avgFuelRateL100km = 0.0f,
             baselineL100km = activeVeh.baseRate,
-            fuelRateDeltaPercent = Math.round(((11.0f - activeVeh.baseRate) / activeVeh.baseRate) * 1000f) / 10f,
-            maxCoolantTemp = 93,
-            minCrankVoltage = 10.4f,
-            estCrankAmps = 122,
-            hasFuelAnomaly = true
+            fuelRateDeltaPercent = 0.0f,
+            maxCoolantTemp = 0,
+            minCrankVoltage = 0.0f,
+            estCrankAmps = 0,
+            hasFuelAnomaly = false
         )
 
         val periodAvgFuel = if (filteredSnapshots.isNotEmpty()) {
             Math.round((filteredSnapshots.map { it.avgFuelRateL100km }.average()) * 10.0) / 10.0
-        } else 11.0
+        } else 0.0
 
         val heatAnomalyCount = filteredSnapshots.count { it.hasHeatAnomaly }
         val crankAnomalyCount = filteredSnapshots.count { it.hasCrankAnomaly }
         val fuelAnomalyCount = filteredSnapshots.count { it.hasFuelAnomaly }
         val totalAnomalies = heatAnomalyCount + crankAnomalyCount + fuelAnomalyCount
 
-        // ----------------------------------------------------
-        // CARD 1: VEHICLE BASELINE & PERIOD FILTER (COMPACT)
-        // ----------------------------------------------------
-        val headerCard = card().apply {
-            setBackgroundColor(Color.rgb(13, 29, 45))
+        // Evaluate and load predictive consumables & stored per-item alerts
+        val consumableItems = evaluateAndStoreConsumableAlerts(vehicleId, triggerSystemAlert = false)
+        val activeConsumableAlerts = consumableItems.filter { it.isConfigured && it.storedAlertText.isNotBlank() }
+        val currentOdoForPred = getEffectiveCarOdometerKm()
 
-            addView(text("🚗 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber}", 15, Color.WHITE, true))
-            addView(text("• معدل الفابريكا المرجعي القياسي: ${activeVeh.baseRate} لتر لكل 100 كم (محرك ${activeVeh.displacement} لتر)", 12, Color.rgb(0, 229, 255), false))
+        // ----------------------------------------------------
+        // SECTION 1: DEDICATED PER-ITEM CONSUMABLES & ALERTS (تنبيه خاص عند كل نوع فلتر أو كاوتش أو زيت دركسيون)
+        // ----------------------------------------------------
+        val consumablesSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(text("أدخل مقدار الكيلومترات المطلوبة لكل بند (زيت الدركسيون، كل فردة كاوتش، فلتر الهواء، فلتر البنزين/السولار، زيت المحرك). يصدر البرنامج تنبيهاً عند وصول الوقت ويتم تخزينه هنا كتنبيه خاص عند كل نوع:", 12, Color.rgb(185, 220, 245), false))
+
+            if (activeConsumableAlerts.isNotEmpty()) {
+                val alertsSummaryBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(52, 18, 24))
+                    setPadding(dp(10), dp(10), dp(10), dp(10))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(8)
+                    lp.bottomMargin = dp(6)
+                    layoutParams = lp
+                }
+                alertsSummaryBox.addView(text("🔔 التنبيهات الخاصة المخزنة حالياً (${activeConsumableAlerts.size}):", 13, Color.rgb(255, 130, 130), true))
+                activeConsumableAlerts.forEach { alertedItem ->
+                    alertsSummaryBox.addView(text("• ${alertedItem.icon} ${alertedItem.title}: ${alertedItem.storedAlertText}", 11, Color.rgb(255, 215, 215), false).apply {
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                }
+                addView(alertsSummaryBox)
+            }
+
+            consumableItems.forEach { item ->
+                val elapsedKm = getConsumableElapsedKm(item, currentOdoForPred)
+                val remainingKm = if (item.isConfigured && item.requiredKm > 0f) (item.requiredKm - elapsedKm).coerceAtLeast(0f) else 0f
+                val isDue = item.isConfigured && item.requiredKm > 0f && elapsedKm >= item.requiredKm
+                val isWarning = item.isConfigured && item.requiredKm > 0f && !isDue && remainingKm <= 500f
+
+                val statusSuffix = when {
+                    !item.isConfigured || item.requiredKm <= 0f -> "غير مسجل بعد"
+                    isDue -> "🚨 حان موعد التغيير!"
+                    isWarning -> "⚠️ اقترب الموعد (متبقي ${String.format("%.0f", remainingKm)} كم)"
+                    else -> "✅ متبقي ${String.format("%.0f", remainingKm)} كم"
+                }
+
+                val itemBody = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+
+                    // Dedicated Stored Alert Banner inside this specific type's card
+                    if (item.isConfigured && item.storedAlertText.isNotBlank()) {
+                        val itemAlertBox = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setBackgroundColor(if (isDue) Color.rgb(68, 18, 22) else Color.rgb(60, 42, 14))
+                            setPadding(dp(10), dp(8), dp(10), dp(8))
+                            val alp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                            alp.bottomMargin = dp(8)
+                            layoutParams = alp
+                        }
+                        itemAlertBox.addView(text("🔔 تنبيه خاص محفوظ لـ ${item.title}:", 12, Color.rgb(255, 190, 120), true))
+                        itemAlertBox.addView(text(item.storedAlertText, 12, Color.WHITE, true).apply { setPadding(0, dp(3), 0, 0) })
+                        if (item.storedAlertTimestamp.isNotBlank()) {
+                            itemAlertBox.addView(text("وقت تسجيل التنبيه: ${item.storedAlertTimestamp}", 10, Color.rgb(210, 210, 210), false))
+                        }
+                        addView(itemAlertBox)
+                    } else {
+                        addView(text("🔕 التنبيه الخاص لهذا النوع: لا يوجد تنبيه مستحق حالياً.", 11, Color.rgb(140, 200, 170), false).apply {
+                            setPadding(0, 0, 0, dp(6))
+                        })
+                    }
+
+                    // Live Status Row
+                    if (item.isConfigured && item.requiredKm > 0f) {
+                        addView(text("• مقدار الكيلومترات المطلوبة للتغيير: ${String.format("%.0f", item.requiredKm)} كم", 12, Color.rgb(0, 229, 255), true))
+                        addView(text("• قراءة العداد عند بداية الحساب: ${String.format("%.1f", item.baselineOdoKm)} كم | المقطوع: ${String.format("%.1f", elapsedKm)} كم", 11, Color.WHITE, false))
+                        addView(text("• الكيلومترات المتبقية حتى التنبيه: ${String.format("%.1f", remainingKm)} كم (تاريخ التسجيل: ${item.lastUpdatedDate.ifBlank { "--" }})", 11, if (isDue) Color.rgb(255, 100, 100) else Color.rgb(126, 242, 154), true))
+                    } else {
+                        addView(text("• لم يتم إدخال مقدار الكيلومترات المطلوبة لـ (${item.title}) بعد.", 11, Color.rgb(180, 195, 210), false))
+                    }
+
+                    // Input for Required Kilometers
+                    addView(text("إدخال مقدار الكيلومترات المطلوبة لـ (${item.title}):", 11, Color.rgb(200, 230, 255), true).apply {
+                        setPadding(0, dp(8), 0, dp(4))
+                    })
+                    val inputRequiredKm = EditText(this@MainActivity).apply {
+                        hint = "اكتب عدد الكيلومترات المطلوبة (مثلاً 40000 أو 10000)"
+                        setHintTextColor(Color.rgb(130, 160, 185))
+                        setTextColor(Color.WHITE)
+                        textSize = 12f
+                        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        if (item.isConfigured && item.requiredKm > 0f) {
+                            setText(String.format(java.util.Locale.US, "%.0f", item.requiredKm))
+                        }
+                        setBackgroundColor(Color.rgb(16, 36, 54))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                    }
+                    addView(inputRequiredKm)
+
+                    addView(text("قراءة عداد السيارة وقت التغيير/الضبط (كم) - يقرأ تلقائياً من العداد الحالي:", 11, Color.rgb(175, 210, 235), false).apply {
+                        setPadding(0, dp(6), 0, dp(4))
+                    })
+                    val inputBaselineOdo = EditText(this@MainActivity).apply {
+                        hint = "قراءة عداد طبلون السيارة الحالي (كم)"
+                        setHintTextColor(Color.rgb(130, 160, 185))
+                        setTextColor(Color.WHITE)
+                        textSize = 12f
+                        inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                        val defaultBase = if (item.isConfigured && item.baselineOdoKm > 0f) item.baselineOdoKm else currentOdoForPred
+                        if (defaultBase > 0f) {
+                            setText(String.format(java.util.Locale.US, "%.1f", defaultBase))
+                        }
+                        setBackgroundColor(Color.rgb(16, 36, 54))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                    }
+                    addView(inputBaselineOdo)
+
+                    val actionsRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        rlp.topMargin = dp(8)
+                        layoutParams = rlp
+                    }
+
+                    actionsRow.addView(Button(this@MainActivity).apply {
+                        text = "💾 حفظ الكيلومترات وتفعيل التنبيه"
+                        textSize = 11f
+                        setBackgroundColor(Color.rgb(18, 128, 92))
+                        setTextColor(Color.WHITE)
+                        val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.2f)
+                        blp.leftMargin = dp(4)
+                        layoutParams = blp
+                        setOnClickListener {
+                            val reqKm = inputRequiredKm.text.toString().trim().toFloatOrNull()
+                            if (reqKm == null || reqKm <= 0f) {
+                                android.widget.Toast.makeText(this@MainActivity, "يرجى إدخال عدد الكيلومترات المطلوبة بشكل صحيح", android.widget.Toast.LENGTH_SHORT).show()
+                                return@setOnClickListener
+                            }
+                            val baseOdo = inputBaselineOdo.text.toString().trim().toFloatOrNull() ?: getEffectiveCarOdometerKm()
+                            val nowDate = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+                            val allItems = loadPredictiveConsumables(vehicleId)
+                            allItems.find { it.key == item.key }?.let { target ->
+                                target.requiredKm = reqKm
+                                target.baselineOdoKm = baseOdo.coerceAtLeast(0f)
+                                target.isConfigured = true
+                                target.lastUpdatedDate = nowDate
+                                target.storedAlertText = ""
+                                target.storedAlertTimestamp = ""
+                            }
+                            savePredictiveConsumables(vehicleId, allItems)
+                            evaluateAndStoreConsumableAlerts(vehicleId, triggerSystemAlert = true)
+                            android.widget.Toast.makeText(this@MainActivity, "✅ تم حفظ (${item.title}) وتفعيل التنبيه الخاص عند ${reqKm.toInt()} كم", android.widget.Toast.LENGTH_SHORT).show()
+                            renderCurrentScreen()
+                        }
+                    })
+
+                    if (item.isConfigured) {
+                        actionsRow.addView(Button(this@MainActivity).apply {
+                            text = "🔄 تم التغيير الآن (تصفير)"
+                            textSize = 11f
+                            setBackgroundColor(Color.rgb(36, 77, 111))
+                            setTextColor(Color.WHITE)
+                            val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                            layoutParams = blp
+                            setOnClickListener {
+                                val nowDate = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+                                val allItems = loadPredictiveConsumables(vehicleId)
+                                allItems.find { it.key == item.key }?.let { target ->
+                                    target.baselineOdoKm = getEffectiveCarOdometerKm()
+                                    target.lastUpdatedDate = nowDate
+                                    target.storedAlertText = ""
+                                    target.storedAlertTimestamp = ""
+                                }
+                                savePredictiveConsumables(vehicleId, allItems)
+                                android.widget.Toast.makeText(this@MainActivity, "✅ تم تسجيل تغيير (${item.title}) وبدء دورة كيلومترات جديدة", android.widget.Toast.LENGTH_SHORT).show()
+                                renderCurrentScreen()
+                            }
+                        })
+                    }
+                    addView(actionsRow)
+                }
+
+                addView(collapsibleSection("${item.title} ($statusSuffix)", item.icon, initiallyExpanded = false) { sec ->
+                    sec.addView(itemBody)
+                })
+            }
+        }
+
+        val mainConsumablesHeaderTitle = if (activeConsumableAlerts.isNotEmpty()) {
+            "صيانة وتنبيهات الكاوتش وزيت الدركسيون والفلاتر (${activeConsumableAlerts.size} تنبيه نشط)"
+        } else {
+            "صيانة وتنبيهات الكاوتش وزيت الدركسيون والفلاتر (إدخال الكيلومترات)"
+        }
+        val mainConsumablesIcon = if (activeConsumableAlerts.isNotEmpty()) "🚨" else "🔧"
+        container.addView(
+            collapsibleSection(mainConsumablesHeaderTitle, mainConsumablesIcon, initiallyExpanded = false) { sec ->
+                sec.addView(consumablesSection)
+            }
+        )
+
+        // ----------------------------------------------------
+        // SECTION 2: VEHICLE BASELINE & PERIOD FILTER (COLLAPSIBLE, CLOSED BY DEFAULT)
+        // ----------------------------------------------------
+        val headerCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+
+            val vehLabel = if (activeVeh.name.isNotBlank()) "🚗 ${activeVeh.name} • لوحة: ${activeVeh.plateNumber.ifBlank { "غير مسجل" }}" else "🚗 لم يتم تسجيل بيانات السيارة بعد"
+            addView(text(vehLabel, 15, Color.WHITE, true))
+            val rateLabel = if (activeVeh.baseRate > 0f) {
+                "• معدل الفابريكا المرجعي القياسي: ${activeVeh.baseRate} لتر لكل 100 كم (محرك ${activeVeh.displacement} لتر)"
+            } else {
+                "• معدل الفابريكا المرجعي القياسي: غير مسجل بعد"
+            }
+            addView(text(rateLabel, 12, Color.rgb(0, 229, 255), false))
 
             // Time Filter Buttons
             val filterRow = LinearLayout(this@MainActivity).apply {
@@ -6469,11 +6750,11 @@ class MainActivity : Activity() {
                 pulseRow.addView(pBox)
             }
 
-            val fuelColor = if (todaySnapshot.avgFuelRateL100km > activeVeh.baseRate * 1.10f) Color.rgb(255, 152, 0) else Color.rgb(76, 217, 100)
+            val fuelColor = if (activeVeh.baseRate > 0f && todaySnapshot.avgFuelRateL100km > activeVeh.baseRate * 1.10f) Color.rgb(255, 152, 0) else Color.rgb(76, 217, 100)
             val deltaSign = if (todaySnapshot.fuelRateDeltaPercent > 0) "+${todaySnapshot.fuelRateDeltaPercent}%" else "${todaySnapshot.fuelRateDeltaPercent}%"
             addPulseItem("⛽ استهلاك اليوم", "${todaySnapshot.avgFuelRateL100km} L", deltaSign, fuelColor)
 
-            val crankColor = if (todaySnapshot.minCrankVoltage >= 9.6f) Color.rgb(76, 217, 100) else Color.rgb(255, 82, 82)
+            val crankColor = if (todaySnapshot.minCrankVoltage == 0f || todaySnapshot.minCrankVoltage >= 9.6f) Color.rgb(76, 217, 100) else Color.rgb(255, 82, 82)
             addPulseItem("⚡ سحب المرش", "${todaySnapshot.minCrankVoltage} V", "${todaySnapshot.estCrankAmps} A", crankColor)
 
             val anomColor = if (totalAnomalies > 0) Color.rgb(255, 171, 0) else Color.rgb(76, 217, 100)
@@ -6518,9 +6799,13 @@ class MainActivity : Activity() {
             })
             addView(btnRow)
         }
-        container.addView(headerCard)
+        container.addView(collapsibleSection("بيانات السيارة الفورية ولقطات الفحص اليومي", "🚘", initiallyExpanded = false) { sec ->
+            sec.addView(headerCard)
+        })
 
-        // Period Consumption & Depreciation % Summary Card in Reports/Predictive Health
+        // ----------------------------------------------------
+        // SECTION 3: PERIOD CONSUMPTION & DEPRECIATION SUMMARY (COLLAPSIBLE, CLOSED BY DEFAULT)
+        // ----------------------------------------------------
         val filterDaysCount = when (selectedPredictiveFilter) {
             "7d" -> 7
             "90d" -> 90
@@ -6531,24 +6816,30 @@ class MainActivity : Activity() {
         val periodLogs = loadConsumptionTimeLogs().filter { it.timestampMs >= periodStartMs }
         val pDistKm = periodLogs.sumOf { it.distanceKm.toDouble() }.toFloat() + telemetry.tripDistanceKm
         val pFuelLiters = periodLogs.sumOf { it.fuelLiters.toDouble() }.toFloat() + telemetry.actualTripFuelLiters
-        val oilTargetKmReport = preferences.getFloat("oil_target_km", 5000.0f)
+        val oilTargetKmReport = preferences.getFloat("oil_target_km", 0.0f)
         val pOilPercent = if (oilTargetKmReport > 0f) (pDistKm / oilTargetKmReport) * 100.0f else 0f
         val curOdoReport = getEffectiveCarOdometerKm()
         val pDepPercent = computeIntervalDepreciationPercent((curOdoReport - pDistKm).coerceAtLeast(0f), pDistKm)
         val totalDepNow = computeCumulativeDepreciationPercent(curOdoReport)
         val marketRemNow = (100f - totalDepNow).coerceIn(0f, 100f)
+        val zeroPriceInPred = preferences.getFloat("zero_km_car_price_$vehicleId", 0.0f)
+        val currentCarValueEgpInPred = if (zeroPriceInPred > 0f) zeroPriceInPred * (marketRemNow / 100.0f) else 0.0f
 
-        val periodSummaryCard = card().apply {
-            setBackgroundColor(Color.rgb(14, 34, 52))
-            addView(text("📊 ملخص استهلاك الفترة (بنزين • زيت • نسبة هالك السيارة %)", 14, Color.rgb(0, 229, 255), true))
+        val periodSummaryCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             addView(text("• 🛣️ المسافة المقطوعة خلال آخر $filterDaysCount يوم: ${String.format("%.1f", pDistKm)} كم", 12, Color.WHITE, false).apply { setPadding(0, dp(4), 0, 0) })
             addView(text("• ⛽ استهلاك البنزين/الوقود: ${String.format("%.2f", pFuelLiters)} ${telemetry.fuelUnitName}", 12, Color.rgb(110, 231, 255), false))
             addView(text("• 🛢️ استهلاك الزيت: ${String.format("%.1f", pDistKm)} كم (${String.format("%.2f%%", pOilPercent)} من عمر الغيار)", 12, Color.rgb(248, 199, 74), false))
             addView(text("• 📉 نسبة هالك السيارة خلال الفترة: +${String.format("%.4f%%", pDepPercent)} من قيمة السيارة", 12, Color.rgb(255, 180, 100), true))
             addView(text("• 🏦 إجمالي الهالك التراكمي للسيارة: ${String.format("%.2f%%", totalDepNow)} | القيمة السوقية المتبقية: ${String.format("%.2f%%", marketRemNow)}", 12, Color.rgb(126, 242, 154), true))
+            if (zeroPriceInPred > 0f) {
+                addView(text("• 💰 القيمة التقريبية للسيارة حالياً: ${String.format("%,.0f", currentCarValueEgpInPred)} ج.م (من سعر الزيرو: ${String.format("%,.0f", zeroPriceInPred)} ج.م)", 12, Color.rgb(0, 229, 255), true))
+            } else {
+                addView(text("• 💰 القيمة التقريبية للسيارة حالياً بالجنيه: أدخل سعر السيارة الزيرو في قسم التقارير لحسابها تلقائياً", 11, Color.rgb(180, 205, 230), false))
+            }
 
             addView(Button(this@MainActivity).apply {
-                text = "📅 استخراج تقرير مخصص بالتاريخ والوقت (من ... إلى ...)"
+                text = "📅 فتح تقارير الاستهلاك وحساب قيمة السيارة الحالية بالجنيه"
                 textSize = 11f
                 setBackgroundColor(Color.rgb(36, 77, 111))
                 setTextColor(Color.WHITE)
@@ -6560,64 +6851,70 @@ class MainActivity : Activity() {
                 }
             })
         }
-        container.addView(periodSummaryCard)
+        container.addView(collapsibleSection("ملخص استهلاك الفترة وإجمالي الهالك وقيمة السيارة", "📊", initiallyExpanded = false) { sec ->
+            sec.addView(periodSummaryCard)
+        })
 
         // ----------------------------------------------------
-        // HORIZONTAL NAVIGATION BAR (5 SUB-TABS)
+        // SECTION 4: DETAILED DIAGNOSTIC SUB-TABS (COLLAPSIBLE, CLOSED BY DEFAULT)
         // ----------------------------------------------------
-        val navScroll = HorizontalScrollView(this).apply {
-            isFillViewport = true
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.topMargin = dp(8)
-            lp.bottomMargin = dp(8)
-            layoutParams = lp
-        }
+        val detailedSubTabsWrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
 
-        val navRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-        }
+            val navScroll = HorizontalScrollView(this@MainActivity).apply {
+                isFillViewport = true
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(4)
+                lp.bottomMargin = dp(8)
+                layoutParams = lp
+            }
 
-        val subTabs = listOf(
-            Pair("fuel", "⛽ استهلاك الوقود"),
-            Pair("chart", "📊 الرسم البياني"),
-            Pair("starter", "⚡ سحب المرش"),
-            Pair("anomalies", "🚨 الأيام الشاذة (${totalAnomalies})"),
-            Pair("proposals", "💡 تقارير مقترحة")
-        )
+            val navRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutDirection = View.LAYOUT_DIRECTION_RTL
+            }
 
-        subTabs.forEach { tab ->
-            val isSelected = activePredictiveSubTab == tab.first
-            navRow.addView(Button(this).apply {
-                text = tab.second
-                textSize = 11f
-                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                setTextColor(if (isSelected) Color.rgb(5, 18, 28) else Color.rgb(180, 215, 240))
-                setBackgroundColor(if (isSelected) Color.rgb(0, 229, 255) else Color.rgb(20, 48, 70))
-                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
-                blp.setMargins(dp(3), 0, dp(3), 0)
-                layoutParams = blp
-                setOnClickListener {
-                    activePredictiveSubTab = tab.first
-                    renderCurrentScreen()
-                }
-            })
-        }
-        navScroll.addView(navRow)
-        container.addView(navScroll)
+            val subTabs = listOf(
+                Pair("fuel", "⛽ استهلاك الوقود"),
+                Pair("chart", "📊 الرسم البياني"),
+                Pair("starter", "⚡ سحب المرش"),
+                Pair("anomalies", "🚨 الأيام الشاذة (${totalAnomalies})"),
+                Pair("proposals", "💡 تقارير مقترحة")
+            )
 
-        // ----------------------------------------------------
-        // RENDER ONLY THE ACTIVE SUB-TAB (CLEAN & COMPACT)
-        // ----------------------------------------------------
-        val subView: View = when (activePredictiveSubTab) {
-            "fuel" -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
-            "chart" -> buildPredictiveChartSubTab(activeVeh, filteredSnapshots)
-            "starter" -> buildPredictiveStarterSubTab(todaySnapshot, filteredSnapshots)
-            "anomalies" -> buildPredictiveAnomaliesSubTab(filteredSnapshots, heatAnomalyCount, crankAnomalyCount, fuelAnomalyCount)
-            "proposals" -> buildPredictiveProposalsSubTab()
-            else -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
+            subTabs.forEach { tab ->
+                val isSelected = activePredictiveSubTab == tab.first
+                navRow.addView(Button(this@MainActivity).apply {
+                    text = tab.second
+                    textSize = 11f
+                    typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    setTextColor(if (isSelected) Color.rgb(5, 18, 28) else Color.rgb(180, 215, 240))
+                    setBackgroundColor(if (isSelected) Color.rgb(0, 229, 255) else Color.rgb(20, 48, 70))
+                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38))
+                    blp.setMargins(dp(3), 0, dp(3), 0)
+                    layoutParams = blp
+                    setOnClickListener {
+                        activePredictiveSubTab = tab.first
+                        renderCurrentScreen()
+                    }
+                })
+            }
+            navScroll.addView(navRow)
+            addView(navScroll)
+
+            val subView: View = when (activePredictiveSubTab) {
+                "fuel" -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
+                "chart" -> buildPredictiveChartSubTab(activeVeh, filteredSnapshots)
+                "starter" -> buildPredictiveStarterSubTab(todaySnapshot, filteredSnapshots)
+                "anomalies" -> buildPredictiveAnomaliesSubTab(filteredSnapshots, heatAnomalyCount, crankAnomalyCount, fuelAnomalyCount)
+                "proposals" -> buildPredictiveProposalsSubTab()
+                else -> buildPredictiveFuelSubTab(activeVeh, todaySnapshot, periodAvgFuel, filteredSnapshots)
+            }
+            addView(subView)
         }
-        container.addView(subView)
+        container.addView(collapsibleSection("التحليل الهندسي المتقدم (الوقود • الرسم البياني • المرش • الشذوذ)", "📈", initiallyExpanded = false) { sec ->
+            sec.addView(detailedSubTabsWrapper)
+        })
 
         return container
     }
@@ -7469,36 +7766,7 @@ class MainActivity : Activity() {
                 }
             }
         }
-        if (ownerSecurityNotifications.isEmpty()) {
-            val now = System.currentTimeMillis()
-            val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(now))
-            val curVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
-            val owner = preferences.getString("vehicle_primary_owner", "مالك تجريبي") ?: "مالك تجريبي"
-            ownerSecurityNotifications.add(
-                SecurityNotificationItem(
-                    id = "init-1",
-                    title = "🛡️ الشاسيه محمي ومقفل بنجاح",
-                    message = "تم تفعيل حماية الشاسيه ($curVin) للمالك ($owner). لا يمكن لأي شخص آخر تسجيله.",
-                    eventType = "vin_locked",
-                    severity = "info",
-                    timeString = timeStr,
-                    timestamp = now,
-                    isRead = true
-                )
-            )
-            ownerSecurityNotifications.add(
-                SecurityNotificationItem(
-                    id = "init-2",
-                    title = "ℹ️ جاهزية مراقبة السائق والورش",
-                    message = "نظام المراقبة عن بعد نشط: ستصلك تنبيهات فورية عند دخول أي ورشة على السيارة.",
-                    eventType = "system_ready",
-                    severity = "info",
-                    timeString = timeStr,
-                    timestamp = now,
-                    isRead = true
-                )
-            )
-        }
+        // لا توجد إشعارات افتراضية — تُسجل فقط الأحداث الأمنية الحقيقية للحساب والسيارة
     }
 
     private fun saveTelemetryDeltaLog() {
@@ -8503,7 +8771,7 @@ class MainActivity : Activity() {
     private fun collapsibleSection(
         title: String,
         icon: String,
-        initiallyExpanded: Boolean = true,
+        initiallyExpanded: Boolean = false,
         contentBuilder: (LinearLayout) -> Unit
     ): View {
         val cardView = card()
@@ -8554,7 +8822,7 @@ class MainActivity : Activity() {
     private fun getEffectiveCarOdometerKm(): Float {
         val liveOdo = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
         val subKm = if (activeOdometerProbe?.isAbsoluteOdometer == true) 0f else subKmEcuRollDistance.toFloat()
-        return if (liveOdo > 0f) (liveOdo + subKm) else (62400f + telemetry.tripDistanceKm + subKm)
+        return if (liveOdo > 0f) (liveOdo + subKm) else (telemetry.tripDistanceKm + subKm)
     }
 
     /**
@@ -8564,7 +8832,7 @@ class MainActivity : Activity() {
     private fun getVehicleStressModifier(): Float {
         val vehicleEmptyWeight = preferences.getFloat("vehicle_empty_weight", 1200.0f).coerceAtLeast(500f)
         val loadRatio = (plannedCargoWeightKg / vehicleEmptyWeight).coerceIn(0f, 1.5f)
-        val activeVehId = ownerFleetVehicles.firstOrNull { it.isCurrentActive }?.id ?: "veh-001"
+        val activeVehId = getActiveVehicleScopeId()
         val snapshots = try { loadDailySnapshots(activeVehId).take(30) } catch (_: Exception) { emptyList() }
         val heatDays = snapshots.count { it.hasHeatAnomaly }
         val crankDays = snapshots.count { it.hasCrankAnomaly }
@@ -8604,7 +8872,8 @@ class MainActivity : Activity() {
     }
 
     private fun loadConsumptionTimeLogs(): MutableList<ConsumptionLogEntry> {
-        val raw = preferences.getString("consumption_time_logs_json", null)
+        val key = "consumption_time_logs_${getActiveVehicleScopeId()}"
+        val raw = preferences.getString(key, null)
         val list = mutableListOf<ConsumptionLogEntry>()
         if (!raw.isNullOrBlank()) {
             try {
@@ -8624,39 +8893,13 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) {}
         }
-        if (list.isEmpty()) {
-            // Seed realistic historical logs linked to the vehicle's odometer for immediate Date/Time report extraction
-            val now = System.currentTimeMillis()
-            val dayMs = 24L * 3600L * 1000L
-            val currentOdo = getEffectiveCarOdometerKm()
-            val baseRate = preferences.getFloat("fuel_rate_baseline", 7.5f)
-            var runningOdo = (currentOdo - 1420f).coerceAtLeast(1000f)
-            val sampleDaysAgo = listOf(28, 24, 20, 16, 12, 9, 6, 3, 1)
-            val sampleDistances = listOf(165f, 140f, 190f, 155f, 175f, 130f, 180f, 160f, 125f)
-            for (idx in sampleDaysAgo.indices) {
-                val dist = sampleDistances[idx]
-                val ts = now - (sampleDaysAgo[idx] * dayMs) - (3L * 3600L * 1000L)
-                val fuel = dist * (baseRate / 100.0f) * (1.0f + (idx % 3) * 0.04f)
-                val depPct = computeIntervalDepreciationPercent(runningOdo, dist)
-                runningOdo += dist
-                list.add(
-                    ConsumptionLogEntry(
-                        timestampMs = ts,
-                        distanceKm = dist,
-                        fuelLiters = fuel,
-                        oilKm = dist,
-                        depPercent = depPct,
-                        carOdometerKm = runningOdo
-                    )
-                )
-            }
-            saveConsumptionTimeLogs(list)
-        }
+        // لا توجد بيانات رحلات افتراضية — تُسجل فقط القراءات والرحلات الفعلية لحساب السيارة
         return list
     }
 
     private fun saveConsumptionTimeLogs(logs: List<ConsumptionLogEntry>) {
         try {
+            val key = "consumption_time_logs_${getActiveVehicleScopeId()}"
             val arr = org.json.JSONArray()
             for (item in logs.takeLast(500)) {
                 val o = org.json.JSONObject()
@@ -8668,7 +8911,7 @@ class MainActivity : Activity() {
                 o.put("odo", item.carOdometerKm.toDouble())
                 arr.put(o)
             }
-            preferences.edit().putString("consumption_time_logs_json", arr.toString()).apply()
+            preferences.edit().putString(key, arr.toString()).apply()
         } catch (_: Exception) {}
     }
 
@@ -8807,15 +9050,15 @@ class MainActivity : Activity() {
         val deducedMarketValuePercent = (100.0f - totalCumulativeDepPercent).coerceIn(0f, 100f)
 
         // Tracking "From Date" (من تاريخ) baseline & added depreciation from car odometer directly onto old
-        val defaultStartTs = System.currentTimeMillis() - (30L * 24L * 3600L * 1000L)
+        val defaultStartTs = System.currentTimeMillis()
         if (!preferences.contains("dep_tracking_start_timestamp")) {
             preferences.edit()
                 .putLong("dep_tracking_start_timestamp", defaultStartTs)
-                .putFloat("dep_tracking_baseline_odo_km", (currentCarOdo - 1420f).coerceAtLeast(0f))
+                .putFloat("dep_tracking_baseline_odo_km", currentCarOdo)
                 .apply()
         }
         val depTrackingStartTs = preferences.getLong("dep_tracking_start_timestamp", defaultStartTs)
-        val depBaselineOdoKm = preferences.getFloat("dep_tracking_baseline_odo_km", (currentCarOdo - 1420f).coerceAtLeast(0f))
+        val depBaselineOdoKm = preferences.getFloat("dep_tracking_baseline_odo_km", currentCarOdo)
         val oldDepAtStartDatePercent = computeCumulativeDepreciationPercent(depBaselineOdoKm)
         val drivenSinceStartDateKm = (currentCarOdo - depBaselineOdoKm).coerceAtLeast(0f)
         val addedDepSinceStartDatePercent = computeIntervalDepreciationPercent(depBaselineOdoKm, drivenSinceStartDateKm)
@@ -8887,7 +9130,7 @@ class MainActivity : Activity() {
                 }
             }
             btnRow.addView(quickActionBtn("🔍 فحص الكمبيوتر", Color.rgb(16, 185, 129)) { scanAllFuelComputers() })
-            btnRow.addView(quickActionBtn("⛽ معايرة التانك", Color.rgb(36, 77, 111)) { showFuelCalibrationDialog() })
+            btnRow.addView(quickActionBtn("🚗 ضبط عداد التابلوه", Color.rgb(36, 77, 111)) { showOdometerCalibrationDialog() })
             btnRow.addView(quickActionBtn("⚙️ نوع الوقود", Color.rgb(24, 52, 78)) { showFuelTypeDialog() })
             sec.addView(btnRow)
         }
@@ -9049,20 +9292,22 @@ class MainActivity : Activity() {
         container.addView(sectionTripFuture)
 
         // =========================================================================
-        // PILLAR 1: ⛽ استهلاك الوقود والرحلة اللحظية (OBD Live - بدون شروحات معايرة مطولة)
+        // PILLAR 1 (Closed by Default): ⛽ الاستهلاك اللحظي وتكلفة الرحلة الحالية (بدون مستوى الوقود)
+        // يعرض: الكيلومترات • كمية الوقود • تكلفة الوقود للرحلة • تكلفة الزيت للرحلة • هالك السيارة للرحلة
         // =========================================================================
-        val sectionFuelLive = collapsibleSection("1. استهلاك الوقود والرحلة اللحظية (OBD Live)", "⛽", initiallyExpanded = true) { sec ->
+        val currentTripOilCost = liveTripKm * oilCostPerKm
+        val sectionFuelLive = collapsibleSection("1. الاستهلاك اللحظي وتكلفة الرحلة الحالية", "⛽", initiallyExpanded = false) { sec ->
             val tRow1 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val mbDist = metricBox("كيلوهات الرحلة الحالية", String.format("%.2f كم", telemetry.tripDistanceKm), Color.WHITE)
+            val mbDist = metricBox("الكيلومترات (مسافة الرحلة)", String.format("%.2f كم", telemetry.tripDistanceKm), Color.WHITE)
             tvFuelTabTripDistance = mbDist
             tRow1.addView(mbDist.parent as View)
 
-            val mbLiters = metricBox("الوقود المستهلك بالرحلة", String.format("%.3f %s", telemetry.actualTripFuelLiters, telemetry.fuelUnitName), Color.rgb(248, 199, 74))
+            val mbLiters = metricBox("كمية الوقود للرحلة", String.format("%.3f %s", telemetry.actualTripFuelLiters, telemetry.fuelUnitName), Color.rgb(248, 199, 74))
             tvFuelTabActualConsumed = mbLiters
             tRow1.addView(mbLiters.parent as View)
             sec.addView(tRow1)
@@ -9073,14 +9318,13 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val instantStr = if (telemetry.speed > 3) String.format("%.1f L/100 (%.1f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour) else String.format("%.2f L/h", telemetry.instantFuelLitersPerHour)
-            val mbInstant = metricBox("معدل الاستهلاك اللحظي", instantStr, Color.rgb(110, 231, 255))
-            tvFuelTabInstantRate = mbInstant
-            tRow2.addView(mbInstant.parent as View)
+            val mbCost = metricBox("تكلفة الوقود للرحلة", String.format("%.2f ج.م", currentTripFuelCost), Color.rgb(126, 242, 154))
+            tvFuelTabCurrentCost = mbCost
+            tRow2.addView(mbCost.parent as View)
 
-            val mbLiveDep = metricBox("هالك الرحلة حتى الآن", String.format("%.4f%%", liveTripDepPercent), Color.rgb(255, 180, 100))
-            tvFuelTabLiveTripDepPercent = mbLiveDep
-            tRow2.addView(mbLiveDep.parent as View)
+            val mbOilCost = metricBox("تكلفة الزيت للرحلة", String.format("%.2f ج.م", currentTripOilCost), Color.rgb(248, 199, 74))
+            tvFuelTabCurrentOilCost = mbOilCost
+            tRow2.addView(mbOilCost.parent as View)
             sec.addView(tRow2)
 
             val tRow3 = LinearLayout(this@MainActivity).apply {
@@ -9089,18 +9333,17 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val tankCap = preferences.getFloat("tank_capacity_liters", 45.0f)
-            val litersInTank = (telemetry.fuelLevel * tankCap / 100.0f)
-            val effectiveRate = if (hasDrivenFirstKm) realMeasuredTripRate else if (plannedCargoWeightKg > 0) loadedFuelRate else baselineFuelRate
-            val mbTank = metricBox("مستوى التانك", "${telemetry.fuelLevel}% (${String.format("%.1f", litersInTank)}L)", Color.rgb(126, 242, 154))
-            tvFuelTabTankPercent = mbTank
-            tRow3.addView(mbTank.parent as View)
+            val mbLiveDep = metricBox("هالك السيارة للرحلة", String.format("%.4f%%", liveTripDepPercent), Color.rgb(255, 180, 100))
+            tvFuelTabLiveTripDepPercent = mbLiveDep
+            tRow3.addView(mbLiveDep.parent as View)
 
-            val mbCost = metricBox("تكلفة وقود الرحلة", String.format("%.2f ج.م", currentTripFuelCost), Color.rgb(126, 242, 154))
-            tvFuelTabCurrentCost = mbCost
-            tRow3.addView(mbCost.parent as View)
+            val instantStr = if (telemetry.speed > 3) String.format("%.1f L/100 (%.1f L/h)", telemetry.instantFuelLPer100Km, telemetry.instantFuelLitersPerHour) else String.format("%.2f L/h", telemetry.instantFuelLitersPerHour)
+            val mbInstant = metricBox("معدل الاستهلاك اللحظي", instantStr, Color.rgb(110, 231, 255))
+            tvFuelTabInstantRate = mbInstant
+            tRow3.addView(mbInstant.parent as View)
             sec.addView(tRow3)
 
+            val effectiveRate = if (hasDrivenFirstKm) realMeasuredTripRate else if (plannedCargoWeightKg > 0) loadedFuelRate else baselineFuelRate
             val mbRate = metricBox("متوسط استهلاك الرحلة (L/100km)", String.format("%.1f L/100", effectiveRate), Color.rgb(110, 231, 255))
             tvFuelTabEffectiveRate = mbRate
             val r4 = LinearLayout(this@MainActivity).apply {
@@ -9126,9 +9369,9 @@ class MainActivity : Activity() {
         container.addView(sectionFuelLive)
 
         // =========================================================================
-        // PILLAR 2: 🛢️ استهلاك الزيت وعداد غيار الزيت (مستقل تماماً)
+        // PILLAR 2 (Closed by Default): 🛢️ استهلاك الزيت وعداد غيار الزيت (مستقل تماماً)
         // =========================================================================
-        val sectionOilIndependent = collapsibleSection("2. استهلاك الزيت وعداد غيار الزيت", "🛢️", initiallyExpanded = true) { sec ->
+        val sectionOilIndependent = collapsibleSection("2. استهلاك الزيت وعداد غيار الزيت", "🛢️", initiallyExpanded = false) { sec ->
             val oilRow1 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -9210,9 +9453,9 @@ class MainActivity : Activity() {
         container.addView(sectionOilIndependent)
 
         // =========================================================================
-        // PILLAR 3: 📉 إهلاك السيارة والقيمة السوقية النسبية (% فقط بدون أي مبالغ مالية)
+        // PILLAR 3 (Closed by Default): 📉 إهلاك السيارة والقيمة السوقية النسبية (% فقط بدون أي مبالغ مالية)
         // =========================================================================
-        val sectionDepreciationPercent = collapsibleSection("3. إهلاك السيارة والقيمة السوقية (% فقط)", "📉", initiallyExpanded = true) { sec ->
+        val sectionDepreciationPercent = collapsibleSection("3. إهلاك السيارة والقيمة السوقية (% فقط)", "📉", initiallyExpanded = false) { sec ->
             sec.addView(text(
                 "يتم حساب الإهلاك والقيمة السوقية كنسبة مئوية (%) فقط من قيمة السيارة (بدون مبالغ نقدية لتفادي تغير قيمة العملة سنوياً)، بالاعتماد المباشر على عداد كيلومترات السيارة الفعلي ومعاملات الإجهاد.",
                 12, Color.rgb(167, 203, 226), false
@@ -9328,13 +9571,94 @@ class MainActivity : Activity() {
         container.addView(sectionDepreciationPercent)
 
         // =========================================================================
-        // PILLAR 4: 📊 استخراج تقارير الاستهلاك والهالك حسب التاريخ والوقت (من ... إلى ...)
+        // PILLAR 4 (Closed by Default): 📊 تقارير الاستهلاك والهالك وحساب قيمة السيارة الحالية بالجنيه
         // =========================================================================
-        val sectionDateRangeReports = collapsibleSection("4. تقارير الاستهلاك والهالك بالوقت والتاريخ", "📊", initiallyExpanded = true) { sec ->
+        val sectionDateRangeReports = collapsibleSection("4. تقارير الاستهلاك والهالك وقيمة السيارة الحالية", "📊", initiallyExpanded = false) { sec ->
             sec.addView(text(
-                "اختر بداية ونهاية الفترة (تاريخ ووقت) لاستخراج تقرير شامل يوضح: استهلاك البنزين، استهلاك الزيت، ونسبة الهالك المضافة للسيارة خلال المدة المحددة.",
+                "اختر بداية ونهاية الفترة لاستخراج تقرير شامل (بنزين • زيت • هالك)، وأدخل قيمة السيارة في حالة الزيرو لحساب قيمتها التقريبية الحالية بالجنيه من عداد طبلون السيارة ومعادلة الهالك.",
                 12, Color.rgb(167, 203, 226), false
             ).apply { setPadding(0, 0, 0, dp(6)) })
+
+            // =================================================================
+            // قسم حساب قيمة السيارة الحالية بالجنيه من سعر الزيرو وإجمالي الهالك
+            // =================================================================
+            val zeroKmPriceKey = "zero_km_car_price_${getActiveVehicleScopeId()}"
+            val savedZeroKmPrice = preferences.getFloat(zeroKmPriceKey, 0f)
+
+            val carValueBox = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(Color.rgb(16, 38, 56))
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(10)
+                layoutParams = lp
+            }
+            carValueBox.addView(text("💰 حساب القيمة التقريبية الحالية للسيارة بالجنيه (من سعر الزيرو):", 14, Color.rgb(248, 199, 74), true))
+            carValueBox.addView(text("يُطلب من صاحب السيارة إدخال سعر السيارة في حالة الزيرو بالجنيه، ليحسب البرنامج إجمالي الهالك من عداد طبلون السيارة ومعادلة الهالك غير الخطية ويستخرج القيمة الحالية:", 12, Color.rgb(180, 215, 240), false).apply {
+                setPadding(0, dp(2), 0, dp(6))
+            })
+
+            val priceInputRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.bottomMargin = dp(6)
+                layoutParams = lp
+            }
+            val etZeroPrice = edit("قيمة السيارة زيرو بالجنيه (مثال: 850000)").apply {
+                if (savedZeroKmPrice > 0f) {
+                    setText(String.format("%.0f", savedZeroKmPrice))
+                }
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f)
+                lp.setMargins(0, 0, dp(4), 0)
+                layoutParams = lp
+            }
+            val btnSaveZeroPrice = button("💾 حفظ وحساب القيمة") {
+                val enteredPrice = etZeroPrice.text.toString().trim().toFloatOrNull()
+                if (enteredPrice != null && enteredPrice > 0f) {
+                    preferences.edit().putFloat(zeroKmPriceKey, enteredPrice).apply()
+                    Toast.makeText(this@MainActivity, "✅ تم حفظ سعر الزيرو وحساب القيمة الحالية للسيارة بالجنيه!", Toast.LENGTH_SHORT).show()
+                    switchTab("fuel")
+                } else {
+                    Toast.makeText(this@MainActivity, "يرجى إدخال قيمة صحيحة للسيارة في حالة الزيرو بالجنيه", Toast.LENGTH_SHORT).show()
+                }
+            }.apply {
+                val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = lp
+                setBackgroundColor(Color.rgb(248, 199, 74))
+                setTextColor(Color.rgb(8, 23, 32))
+            }
+            priceInputRow.addView(etZeroPrice)
+            priceInputRow.addView(btnSaveZeroPrice)
+            carValueBox.addView(priceInputRow)
+
+            if (savedZeroKmPrice > 0f) {
+                val totalDepAmountEgp = savedZeroKmPrice * (totalCumulativeDepPercent / 100.0f)
+                val currentApproxValueEgp = savedZeroKmPrice * (deducedMarketValuePercent / 100.0f)
+                val valRow1 = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(4)
+                    layoutParams = lp
+                }
+                valRow1.addView(metricBox("سعر السيارة زيرو", String.format("%,.0f ج.م", savedZeroKmPrice), Color.WHITE).parent as View)
+                valRow1.addView(metricBox("عداد طبلون السيارة", "${currentCarOdo.toInt()} كم", Color.rgb(110, 231, 255)).parent as View)
+                carValueBox.addView(valRow1)
+
+                val valRow2 = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(4)
+                    layoutParams = lp
+                }
+                valRow2.addView(metricBox("إجمالي الهالك (${String.format("%.2f%%", totalCumulativeDepPercent)})", String.format("%,.0f ج.م", totalDepAmountEgp), Color.rgb(255, 180, 100)).parent as View)
+                valRow2.addView(metricBox("القيمة التقريبية للسيارة حالياً", String.format("%,.0f ج.م", currentApproxValueEgp), Color.rgb(126, 242, 154)).parent as View)
+                carValueBox.addView(valRow2)
+            } else {
+                carValueBox.addView(text("ℹ️ لم يتم إدخال قيمة السيارة في حالة الزيرو بعد. أدخل قيمة الزيرو أعلاه ليظهر حساب إجمالي الهالك وقيمة السيارة الحالية بالجنيه.", 12, Color.rgb(255, 200, 120), false))
+            }
+            sec.addView(carValueBox)
 
             // Quick Preset Filter Row
             val presetRow = LinearLayout(this@MainActivity).apply {
@@ -9443,8 +9767,14 @@ class MainActivity : Activity() {
             reportCard.addView(text("🛣️ إجمالي المسافة المقطوعة بالفترة: ${String.format("%.2f", periodDistKm)} كم (عدد الرحلات المسجلة: ${matchingLogs.size + if (includeLiveTrip && telemetry.tripDistanceKm > 0f) 1 else 0})", 13, Color.WHITE, true))
             reportCard.addView(text("⛽ 1. استهلاك البنزين/الوقود بالفترة: ${String.format("%.2f", periodFuelLiters)} ${telemetry.fuelUnitName} | متوسط: ${String.format("%.1f", periodAvgFuelRate)} لتر/100كم (${String.format("%.2f", periodFuelCostMoney)} ج.م)", 13, Color.rgb(110, 231, 255), false).apply { setPadding(0, dp(4), 0, 0) })
             reportCard.addView(text("🛢️ 2. استهلاك الزيت بالفترة: ${String.format("%.1f", periodOilKm)} كم | استهلك ${String.format("%.2f%%", periodOilPercentOfLife)} من عمر غيار الزيت (${String.format("%.2f", periodOilCostMoney)} ج.م)", 13, Color.rgb(248, 199, 74), false).apply { setPadding(0, dp(4), 0, 0) })
-            reportCard.addView(text("📉 3. استهلاك الهالك للسيارة بالفترة: +${String.format("%.4f%%", periodDepPercent)} من قيمة السيارة", 13, Color.rgb(255, 180, 100), true).apply { setPadding(0, dp(4), 0, 0) })
-            reportCard.addView(text("🏦 إجمالي الهالك التراكمي للسيارة الآن: ${String.format("%.2f%%", totalCumulativeDepPercent)} | القيمة السوقية المتبقية: ${String.format("%.2f%%", deducedMarketValuePercent)}", 13, Color.rgb(126, 242, 154), true).apply { setPadding(0, dp(4), 0, 0) })
+            val periodDepMoneyStr = if (savedZeroKmPrice > 0f) {
+                " (${String.format("%,.0f", savedZeroKmPrice * (periodDepPercent / 100.0f))} ج.م)"
+            } else ""
+            val currentValMoneyStr = if (savedZeroKmPrice > 0f) {
+                "\n💰 القيمة التقريبية للسيارة في الوقت الحالي: ${String.format("%,.0f", savedZeroKmPrice * (deducedMarketValuePercent / 100.0f))} ج.م (إجمالي الهالك: ${String.format("%,.0f", savedZeroKmPrice * (totalCumulativeDepPercent / 100.0f))} ج.م)"
+            } else ""
+            reportCard.addView(text("📉 3. استهلاك الهالك للسيارة بالفترة: +${String.format("%.4f%%", periodDepPercent)} من قيمة السيارة$periodDepMoneyStr", 13, Color.rgb(255, 180, 100), true).apply { setPadding(0, dp(4), 0, 0) })
+            reportCard.addView(text("🏦 إجمالي الهالك التراكمي للسيارة الآن: ${String.format("%.2f%%", totalCumulativeDepPercent)} | النسبة المتبقية: ${String.format("%.2f%%", deducedMarketValuePercent)}$currentValMoneyStr", 13, Color.rgb(126, 242, 154), true).apply { setPadding(0, dp(4), 0, 0) })
 
             sec.addView(reportCard)
         }
@@ -10815,6 +11145,7 @@ class MainActivity : Activity() {
 
         val actualDrivenKm = telemetry.tripDistanceKm
         val currentTripFuelCost = telemetry.actualTripFuelLiters * fuelPrice
+        val currentTripOilCost = actualDrivenKm * oilCostPerKm
         val effectiveRate = if (hasDrivenFirstKm) realMeasuredTripRate else if (plannedCargoWeightKg > 0) loadedFuelRate else baselineFuelRate
 
         val currentCarOdo = getEffectiveCarOdometerKm()
@@ -10823,15 +11154,11 @@ class MainActivity : Activity() {
         val totalCumulativeDepPercent = computeCumulativeDepreciationPercent(currentCarOdo)
         val deducedMarketValuePercent = (100.0f - totalCumulativeDepPercent).coerceIn(0f, 100f)
 
-        val depBaselineOdoKm = preferences.getFloat("dep_tracking_baseline_odo_km", (currentCarOdo - 1420f).coerceAtLeast(0f))
+        val depBaselineOdoKm = preferences.getFloat("dep_tracking_baseline_odo_km", currentCarOdo)
         val drivenSinceStartDateKm = (currentCarOdo - depBaselineOdoKm).coerceAtLeast(0f)
         val addedDepSinceStartDatePercent = computeIntervalDepreciationPercent(depBaselineOdoKm, drivenSinceStartDateKm)
 
-        val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f)
-        val litersRemaining = (telemetry.fuelLevel * tankCap / 100.0f)
-
         tvFuelTabActiveCostPerKm?.text = String.format("%.2f ج.م", activeOperatingCostPerKm)
-        tvFuelTabTankPercent?.text = "${telemetry.fuelLevel}% (${String.format("%.1f", litersRemaining)}L)"
         tvFuelTabEffectiveRate?.text = String.format("%.1f L/100", effectiveRate)
 
         tvFuelTabTripDistance?.text = String.format("%.2f كم", actualDrivenKm)
@@ -10843,6 +11170,7 @@ class MainActivity : Activity() {
         }
         tvFuelTabInstantRate?.text = instantStr
         tvFuelTabCurrentCost?.text = String.format("%.2f ج.م", currentTripFuelCost)
+        tvFuelTabCurrentOilCost?.text = String.format("%.2f ج.م", currentTripOilCost)
         tvFuelTabLiveTripDepPercent?.text = String.format("%.4f%%", liveTripDepPercent)
 
         // Oil Live UI Updates
@@ -10972,6 +11300,9 @@ class MainActivity : Activity() {
                 }
             }
         }
+
+        // Evaluate predictive consumables (tires, steering oil, filters) and store dedicated alerts
+        evaluateAndStoreConsumableAlerts(getActiveVehicleScopeId(), triggerSystemAlert = true)
 
         // Automatic Delta Telemetry Tracking (تسجيل التغيرات فقط)
         checkAndLogTelemetryDelta()

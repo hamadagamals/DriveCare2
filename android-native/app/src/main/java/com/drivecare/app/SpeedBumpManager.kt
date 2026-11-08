@@ -128,11 +128,14 @@ class SpeedBumpManager(
                 val loaded = mutableListOf<CachedHazard>()
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
+                    val bumpId = obj.optString("id", "bump-$i")
+                    // Ignore any old demo/seeded speed bumps so only real detected/reported bumps are kept
+                    if (bumpId.startsWith("bump-seed-") || bumpId.startsWith("local-seed-")) continue
                     loaded.add(
                         CachedHazard(
-                            id = obj.optString("id", "bump-$i"),
-                            lat = obj.optDouble("lat", 30.0444),
-                            lng = obj.optDouble("lng", 31.2357),
+                            id = bumpId,
+                            lat = obj.optDouble("lat", 0.0),
+                            lng = obj.optDouble("lng", 0.0),
                             directionDegrees = obj.optDouble("dir", 0.0),
                             bidirectional = obj.optBoolean("bi", true),
                             roadClass = obj.optString("road", "local"),
@@ -142,21 +145,11 @@ class SpeedBumpManager(
                         )
                     )
                 }
-                if (loaded.isNotEmpty()) {
-                    cachedHazards.clear()
-                    cachedHazards.addAll(loaded)
-                }
-            }
-            if (cachedHazards.isEmpty()) {
-                // Seed initial verified reference bumps so the list is never blank when offline
-                cachedHazards.addAll(
-                    listOf(
-                        CachedHazard("bump-seed-1", 30.0452, 31.2364, 45.0, true, "طريق رئيسي", true, 0, false),
-                        CachedHazard("bump-seed-2", 30.0468, 31.2381, 90.0, true, "مدخل حيوي", true, 0, false),
-                        CachedHazard("bump-seed-3", 30.0131, 31.2089, 180.0, true, "شارع داخلي", true, 0, false)
-                    )
-                )
+                cachedHazards.clear()
+                cachedHazards.addAll(loaded)
                 savePersistedLocalHazards()
+            } else {
+                cachedHazards.clear()
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to load persisted hazards: ${e.message}")
