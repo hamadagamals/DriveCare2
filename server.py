@@ -209,6 +209,22 @@ def init_db():
           UNIQUE(vehicle_id, date),
           FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
         );
+        CREATE TABLE IF NOT EXISTS vehicle_fault_log (
+          id TEXT PRIMARY KEY,
+          vehicle_id TEXT NOT NULL,
+          code TEXT NOT NULL,
+          title_ar TEXT,
+          system_name TEXT,
+          causes_ar TEXT,
+          solution_ar TEXT,
+          severity TEXT DEFAULT 'warning',
+          status TEXT DEFAULT 'active',
+          detected_at_ms INTEGER DEFAULT 0,
+          detected_at_str TEXT,
+          resolved_at_ms INTEGER DEFAULT 0,
+          resolved_at_str TEXT,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
 
     ''')
     existing_workshops = conn.execute('SELECT COUNT(*) AS count FROM workshops').fetchone()['count']
@@ -1083,7 +1099,31 @@ def record_telemetry_delta(vehicle_id, data):
                    odometer_km = odometer_km + ?,
                    trip_distance_km = CASE WHEN ? > 0 THEN ? ELSE trip_distance_km END
                    WHERE id = ?''',
-                (status_calc, dist_delta, trip_distance, vehicle_id)
+                (status_calc, dist_delta, trip_distance, trip_distance, vehicle_id)
+            )
+        fault_id = str(data.get('fault_id', '')).strip()
+        fault_code = str(data.get('code', '')).strip()
+        if fault_id and fault_code:
+            conn.execute(
+                '''INSERT OR REPLACE INTO vehicle_fault_log
+                   (id, vehicle_id, code, title_ar, system_name, causes_ar, solution_ar, severity, status, detected_at_ms, detected_at_str, resolved_at_ms, resolved_at_str, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (
+                    fault_id,
+                    vehicle_id,
+                    fault_code,
+                    str(data.get('title_ar', '')),
+                    str(data.get('system', '')),
+                    str(data.get('causes_ar', '')),
+                    str(data.get('solution_ar', '')),
+                    str(data.get('severity', 'warning')),
+                    str(data.get('status', 'active')),
+                    int(data.get('detected_at_ms', 0) or 0),
+                    str(data.get('detected_at_str', '')),
+                    int(data.get('resolved_at_ms', 0) or 0),
+                    str(data.get('resolved_at_str', '')),
+                    now_iso
+                )
             )
         conn.commit()
     return {
@@ -1117,6 +1157,17 @@ def fetch_live_telemetry(vehicle_id, timeframe='1h'):
             (vehicle_id, limit)
         ).fetchall()
 
+        fault_rows = conn.execute(
+            '''SELECT id, vehicle_id AS vehicleId, code, title_ar AS titleAr, system_name AS system,
+                      causes_ar AS causesAr, solution_ar AS solutionAr, severity, status,
+                      detected_at_ms AS detectedAtMs, detected_at_str AS detectedAtStr,
+                      resolved_at_ms AS resolvedAtMs, resolved_at_str AS resolvedAtStr,
+                      updated_at AS updatedAt
+               FROM vehicle_fault_log WHERE vehicle_id = ?
+               ORDER BY detected_at_ms DESC LIMIT 100''',
+            (vehicle_id,)
+        ).fetchall()
+
     history = []
     for r in rows:
         item = dict(r)
@@ -1135,6 +1186,7 @@ def fetch_live_telemetry(vehicle_id, timeframe='1h'):
             'capturedAt': utc_now().isoformat()
         },
         'history': history,
+        'faultHistory': [dict(fr) for fr in fault_rows],
         'timeframe': timeframe
     }
 

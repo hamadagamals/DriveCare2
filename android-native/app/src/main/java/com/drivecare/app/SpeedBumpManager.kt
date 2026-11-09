@@ -43,12 +43,12 @@ class SpeedBumpManager(
         private const val SPEED_GATE_MAX_KMH = 21.0              // Hard limit: > 21 km/h never records a bump
         private const val SPEED_GATE_MIN_KMH = 3.5               // Car must be moving
         private const val EARLY_WARNING_METERS = 100.0
-        private const val FINAL_WARNING_METERS = 25.0
+        private const val FINAL_WARNING_METERS = 20.0
         private const val PASS_CHECK_WINDOW_MS = 6000L
     }
 
     data class CachedHazard(
-        val id: String,
+        var id: String,
         val lat: Double,
         val lng: Double,
         var directionDegrees: Double,
@@ -62,6 +62,8 @@ class SpeedBumpManager(
     // Public state
     var isWarningEnabled: Boolean = true
     var isAudioMuted: Boolean = false
+    var isMuted100m: Boolean = false
+    var isMuted20m: Boolean = false
     var isMuted: Boolean
         get() = isAudioMuted
         set(value) { isAudioMuted = value }
@@ -204,6 +206,11 @@ class SpeedBumpManager(
 
     fun start() {
         try {
+            if (toneGenerator == null) {
+                try {
+                    toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 95)
+                } catch (_: Exception) {}
+            }
             sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
             sensorManager?.let { sm ->
                 val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
@@ -355,9 +362,13 @@ class SpeedBumpManager(
         if (!isWarningEnabled || isAudioMuted) return
         try {
             if (stage == "FINAL") {
-                alertSoundPlayer.playBump25m()
+                if (!isMuted20m) {
+                    alertSoundPlayer.playBump25m()
+                }
             } else {
-                alertSoundPlayer.playBump100m()
+                if (!isMuted100m) {
+                    alertSoundPlayer.playBump100m()
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Natural voice alert failed: ${e.message}")
@@ -428,6 +439,7 @@ class SpeedBumpManager(
                             Log.i(TAG, "Hazard ${hazard.id} deactivated locally after 3 passes without bump pattern")
                         }
                     }
+                    savePersistedLocalHazards()
                     sendPassCheckAsync(hId, feltBump, speedKmh)
                     iterator.remove()
                 }
@@ -605,26 +617,27 @@ class SpeedBumpManager(
                 (h.bidirectional || angularDifference(bearing, h.directionDegrees) <= 55.0)
         }
         var wasReactivated = false
+        val targetHazard: CachedHazard
         if (existingLocal != null) {
             wasReactivated = !existingLocal.active
             existingLocal.active = true
             existingLocal.consecutiveNegativePasses = 0
+            targetHazard = existingLocal
             savePersistedLocalHazards()
         } else {
-            cachedHazards.add(
-                0,
-                CachedHazard(
-                    id = "local-${System.currentTimeMillis()}",
-                    lat = lat,
-                    lng = lng,
-                    directionDegrees = bearing,
-                    bidirectional = !hasValidBearing,
-                    roadClass = "مطب مرصود",
-                    active = true,
-                    consecutiveNegativePasses = 0,
-                    needsMapMatch = true
-                )
+            val created = CachedHazard(
+                id = "local-${System.currentTimeMillis()}",
+                lat = lat,
+                lng = lng,
+                directionDegrees = bearing,
+                bidirectional = !hasValidBearing,
+                roadClass = "مطب مرصود",
+                active = true,
+                consecutiveNegativePasses = 0,
+                needsMapMatch = true
             )
+            cachedHazards.add(0, created)
+            targetHazard = created
             savePersistedLocalHazards()
         }
 
@@ -665,8 +678,12 @@ class SpeedBumpManager(
 
                 if (conn.responseCode in 200..201) {
                     val resp = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-                    val newId = resp.optString("id", "temp-${System.currentTimeMillis()}")
+                    val newId = resp.optString("id", "")
                     val serverStatus = resp.optString("status", "created")
+                    if (newId.isNotBlank()) {
+                        targetHazard.id = newId
+                        savePersistedLocalHazards()
+                    }
                     Log.i(TAG, "Successfully reported/reactivated bump at ($lat, $lng): $newId ($serverStatus)")
                 }
             } catch (e: Exception) {
@@ -708,12 +725,14 @@ class SpeedBumpManager(
                         cachedHazards.firstOrNull { it.id == hazardId }?.let {
                             it.active = false
                         }
+                        savePersistedLocalHazards()
                         Log.i(TAG, "Hazard $hazardId deactivated after 3 negative passes (awaiting future pattern to re-activate)")
                     } else if (status == "ACTIVE") {
                         cachedHazards.firstOrNull { it.id == hazardId }?.let {
                             it.active = true
                             it.consecutiveNegativePasses = 0
                         }
+                        savePersistedLocalHazards()
                     }
                 }
             } catch (e: Exception) {

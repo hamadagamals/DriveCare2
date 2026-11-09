@@ -461,6 +461,8 @@ class MainActivity : Activity() {
     private var isAudioMuted: Boolean = false
     private var isBumpWarningEnabled: Boolean = true
     private var isBumpAudioMuted: Boolean = false
+    private var isBump100mMuted: Boolean = false
+    private var isBump20mMuted: Boolean = false
     val alertSoundPlayer by lazy { AlertSoundPlayer(this) }
 
     private fun playAlertSound(critical: Boolean) {
@@ -643,10 +645,38 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun snoozeCurrentSafetyAlert(minutes: Int = 15) {
+        val key = currentActiveAlertKey ?: "general"
+        snoozedAlertsMap[key] = System.currentTimeMillis() + (minutes * 60 * 1000L)
+        telemetry.activeAlertTitle = null
+        telemetry.activeAlertDesc = null
+        isSimulatingAlert = false
+        cancelSystemSafetyNotification()
+        try { toneGenerator?.stopTone() } catch (_: Exception) {}
+        alertSoundPlayer.stopCurrent()
+        alertBanner?.visibility = View.GONE
+        updateAlertBannerUI()
+        Toast.makeText(this, "⏱️ تم إغلاق التحذير مؤقتاً لمدة $minutes دقيقة (العطل محفوظ بالتاريخ والوقت في تشخيص وتفسير الأعطال).", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun dismissCurrentSafetyAlertPermanently() {
+        val key = currentActiveAlertKey ?: "general"
+        permanentlyDismissedAlerts.add(key)
+        telemetry.activeAlertTitle = null
+        telemetry.activeAlertDesc = null
+        isSimulatingAlert = false
+        cancelSystemSafetyNotification()
+        try { toneGenerator?.stopTone() } catch (_: Exception) {}
+        alertSoundPlayer.stopCurrent()
+        alertBanner?.visibility = View.GONE
+        updateAlertBannerUI()
+        Toast.makeText(this, "✖ تم إغلاق التحذير دائماً (العطل مسجل بالتاريخ والوقت في تشخيص وتفسير الأعطال والسيرفر).", Toast.LENGTH_SHORT).show()
+    }
+
     private fun buildAlertBanner(): LinearLayout {
         val banner = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             lp.bottomMargin = dp(10)
             layoutParams = lp
@@ -654,11 +684,11 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
 
-        tvAlertTitle = text("", 15, Color.WHITE, true).apply {
+        tvAlertTitle = text("", 14, Color.WHITE, true).apply {
             banner.addView(this)
         }
-        tvAlertDesc = text("", 13, Color.rgb(255, 235, 235), false).apply {
-            setPadding(0, dp(4), 0, dp(6))
+        tvAlertDesc = text("", 12, Color.rgb(255, 235, 235), false).apply {
+            setPadding(0, dp(3), 0, dp(6))
             banner.addView(this)
         }
 
@@ -667,15 +697,30 @@ class MainActivity : Activity() {
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             layoutParams = lp
 
-            // 1. Snooze for 15 minutes
+            // 1. Open Diagnostics & Explanation Screen
             addView(Button(this@MainActivity).apply {
-                text = "🔕 تأجيل 15 دقيقة"
-                textSize = 11f
+                text = "📋 تشخيص وتفسير"
+                textSize = 10.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(Color.rgb(248, 199, 74))
+                val blp = LinearLayout.LayoutParams(0, dp(36), 1.1f)
+                blp.setMargins(0, 0, dp(3), 0)
+                layoutParams = blp
+                setOnClickListener {
+                    openSubScreen("dtc_diagnostics")
+                }
+            })
+
+            // 2. Snooze temporarily (15 minutes)
+            addView(Button(this@MainActivity).apply {
+                text = "⏱️ إلغاء مؤقت"
+                textSize = 10.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.rgb(40, 55, 75))
-                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
-                blp.setMargins(0, 0, dp(4), 0)
+                val blp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                blp.setMargins(0, 0, dp(3), 0)
                 layoutParams = blp
                 setOnClickListener {
                     val key = currentActiveAlertKey ?: "general"
@@ -685,21 +730,22 @@ class MainActivity : Activity() {
                     isSimulatingAlert = false
                     cancelSystemSafetyNotification()
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
+                    alertSoundPlayer.stopCurrent()
                     banner.visibility = View.GONE
                     updateAlertBannerUI()
-                    Toast.makeText(this@MainActivity, "🔕 تم إخفاء وتأجيل التنبيه لمدة 15 دقيقة بنجاح.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "⏱️ تم إغلاق التحذير مؤقتاً (العطل محفوظ بالتاريخ والوقت في تشخيص وتفسير الأعطال).", Toast.LENGTH_SHORT).show()
                 }
             })
 
-            // 2. Permanent Dismiss for current trip
+            // 3. Permanent Dismiss
             addView(Button(this@MainActivity).apply {
-                text = "✖ إخفاء نهائي للرحلة"
-                textSize = 11f
+                text = "✖ إلغاء دائم"
+                textSize = 10.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(160, 30, 40))
-                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
-                blp.setMargins(0, 0, dp(4), 0)
+                setBackgroundColor(Color.rgb(140, 25, 35))
+                val blp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                blp.setMargins(0, 0, dp(3), 0)
                 layoutParams = blp
                 setOnClickListener {
                     val key = currentActiveAlertKey ?: "general"
@@ -709,27 +755,29 @@ class MainActivity : Activity() {
                     isSimulatingAlert = false
                     cancelSystemSafetyNotification()
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
+                    alertSoundPlayer.stopCurrent()
                     banner.visibility = View.GONE
                     updateAlertBannerUI()
-                    Toast.makeText(this@MainActivity, "✖ تم إخفاء التنبيه نهائياً للرحلة الحالية بنجاح.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "✖ تم إغلاق التحذير دائماً (العطل مسجل بالتاريخ والوقت في تشخيص وتفسير الأعطال والسيرفر).", Toast.LENGTH_SHORT).show()
                 }
             })
 
-            // 3. Audio Mute / Unmute
+            // 4. Audio Mute / Unmute
             val btnSilence = Button(this@MainActivity).apply {
-                text = if (isAudioMuted) "🔊 إعادة الصوت" else "🔇 كتم الصوت"
-                textSize = 11f
+                text = if (isAudioMuted) "🔊 صوت" else "🔇 كتم"
+                textSize = 10.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
                 setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(80, 25, 35))
-                val blp = LinearLayout.LayoutParams(0, dp(38), 1f)
+                val blp = LinearLayout.LayoutParams(0, dp(36), 0.75f)
                 layoutParams = blp
                 setOnClickListener {
                     isAudioMuted = !isAudioMuted
                     preferences.edit().putBoolean("is_audio_alert_muted", isAudioMuted).apply()
-                    text = if (isAudioMuted) "🔊 إعادة الصوت" else "🔇 كتم الصوت"
+                    text = if (isAudioMuted) "🔊 صوت" else "🔇 كتم"
                     setBackgroundColor(if (isAudioMuted) Color.rgb(20, 70, 40) else Color.rgb(80, 25, 35))
                     try { toneGenerator?.stopTone() } catch (_: Exception) {}
+                    alertSoundPlayer.stopCurrent()
                 }
             }
             addView(btnSilence)
@@ -739,17 +787,9 @@ class MainActivity : Activity() {
     }
 
     private fun buildSpeedBumpBanner(): TextView {
+        // Speed bumps strictly use audio warnings only (no written banner per bump)
         return TextView(this).apply {
             visibility = View.GONE
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            setBackgroundColor(Color.rgb(215, 38, 56))
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.bottomMargin = dp(8)
-            layoutParams = lp
             speedBumpBanner = this
         }
     }
@@ -785,57 +825,176 @@ class MainActivity : Activity() {
             layoutParams = lp
         }
 
-        // Hero Card: Master Audio Warning Toggle, Bluetooth Speaker Bypass & Sound Settings Link
+        isBumpWarningEnabled = preferences.getBoolean("is_bump_warning_enabled", true)
+        isBump100mMuted = preferences.getBoolean("is_bump_100m_muted", false)
+        isBump20mMuted = preferences.getBoolean("is_bump_20m_muted", false)
+        speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
+        speedBumpManager?.isMuted100m = isBump100mMuted
+        speedBumpManager?.isMuted20m = isBump20mMuted
+
+        // Hero Card: Audio-Only Warning Controls (100m & 20m independent mute/enable)
         val hero = card().apply {
             addView(text("🛑 المطبات الصناعية", 16, Color.rgb(255, 180, 70), true))
-            addView(text("اكتشاف وتحذير مطبات صناعية تلقائياً مع تنبيه صوتي مسموع قبل المطب بـ 100م و 25م", 12, Color.rgb(180, 210, 230), false).apply {
+            addView(text("اكتشاف وتحذير مطبات صناعية (يكتفي بالتحذير الصوتي حسب الترتيب المتفق عليه لمسافة 100 متر و 20 متر بدون إزعاج رسائل مكتوبة عند كل مطب)", 12, Color.rgb(180, 210, 230), false).apply {
                 setPadding(0, dp(4), 0, dp(10))
             })
 
             // Master Warning Audio Toggle Button
             val btnMasterToggle = Button(this@MainActivity).apply {
                 val isEn = isBumpWarningEnabled
-                text = if (isEn) "🟢 تحذير المطبات الصوتي: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات الصوتي: معطل وملغي (اضغط للتفعيل)"
-                textSize = 13f
+                text = if (isEn) "🟢 تحذير المطبات الصوتي العام: مفعل (اضغط لوضع السكوت الكامل)" else "🔇 تحذير المطبات الصوتي العام: وضع سكوت (اضغط للتفعيل)"
+                textSize = 12.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(if (isEn) Color.rgb(8, 23, 32) else Color.rgb(220, 230, 240))
                 setBackgroundColor(if (isEn) Color.rgb(80, 227, 194) else Color.rgb(55, 68, 85))
-                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46))
-                blp.bottomMargin = dp(6)
+                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44))
+                blp.bottomMargin = dp(8)
                 layoutParams = blp
             }
             addView(btnMasterToggle)
 
+            // Independent 100m and 20m Mute / Enable Row
+            addView(text("🎛️ التحكم المستقل في تفعيل أو وضع سكوت لكل مسافة:", 12, Color.rgb(110, 231, 255), true).apply {
+                setPadding(0, dp(2), 0, dp(4))
+            })
+
+            val distToggleRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                rlp.bottomMargin = dp(8)
+                layoutParams = rlp
+            }
+
+            val btnToggle100m = Button(this@MainActivity).apply {
+                val active100 = isBumpWarningEnabled && !isBump100mMuted
+                text = if (active100) "🔊 مسافة 100 متر:\nمفعل (اضغط للسكوت)" else "🔇 مسافة 100 متر:\nوضع سكوت (اضغط للتفعيل)"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (active100) Color.WHITE else Color.rgb(210, 210, 210))
+                setBackgroundColor(if (active100) Color.rgb(22, 95, 130) else Color.rgb(55, 40, 45))
+                val lp = LinearLayout.LayoutParams(0, dp(52), 1f)
+                lp.setMargins(0, 0, dp(4), 0)
+                layoutParams = lp
+            }
+
+            val btnToggle20m = Button(this@MainActivity).apply {
+                val active20 = isBumpWarningEnabled && !isBump20mMuted
+                text = if (active20) "🔊 مسافة 20 متر:\nمفعل (اضغط للسكوت)" else "🔇 مسافة 20 متر:\nوضع سكوت (اضغط للتفعيل)"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (active20) Color.WHITE else Color.rgb(210, 210, 210))
+                setBackgroundColor(if (active20) Color.rgb(175, 45, 55) else Color.rgb(55, 40, 45))
+                val lp = LinearLayout.LayoutParams(0, dp(52), 1f)
+                lp.setMargins(dp(4), 0, 0, 0)
+                layoutParams = lp
+            }
+
+            distToggleRow.addView(btnToggle100m)
+            distToggleRow.addView(btnToggle20m)
+            addView(distToggleRow)
+
             val tvMasterNote = text(
-                if (isBumpWarningEnabled) "التحذير الصوتي مسموع عند اقتراب 100م و 25م حسب النغمة أو الصوت المختار."
-                else "✅ اكتشاف وعرض المطبات مستمر بالخلفية بدون إصدار أي صوت.",
+                when {
+                    !isBumpWarningEnabled || (isBump100mMuted && isBump20mMuted) ->
+                        "✅ وضع السكوت مفعل: اكتشاف المطبات مستمر بالخلفية بدون إصدار أي صوت."
+                    isBump100mMuted ->
+                        "🔊 التحذير الصوتي يعمل عند مسافة 20 متر فقط (مسافة 100 متر في وضع سكوت)."
+                    isBump20mMuted ->
+                        "🔊 التحذير الصوتي يعمل عند مسافة 100 متر فقط (مسافة 20 متر في وضع سكوت)."
+                    else ->
+                        "🔊 التحذير الصوتي مفعل بالترتيب المتفق عليه: تنبيه مبكر عند 100 متر ثم تنبيه فوري عند 20 متر."
+                },
                 11,
-                if (isBumpWarningEnabled) Color.rgb(160, 210, 230) else Color.rgb(140, 230, 180),
+                Color.rgb(160, 215, 235),
                 false
             ).apply {
                 setPadding(dp(4), 0, dp(4), dp(8))
             }
             addView(tvMasterNote)
 
-            btnMasterToggle.setOnClickListener {
-                isBumpWarningEnabled = !isBumpWarningEnabled
-                preferences.edit().putBoolean("is_bump_warning_enabled", isBumpWarningEnabled).apply()
-                speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
-
+            fun refreshBumpToggleUI() {
                 val isEn = isBumpWarningEnabled
-                btnMasterToggle.text = if (isEn) "🟢 تحذير المطبات الصوتي: مفعل (اضغط للإلغاء)" else "⚪ تحذير المطبات الصوتي: معطل وملغي (اضغط للتفعيل)"
+                btnMasterToggle.text = if (isEn) "🟢 تحذير المطبات الصوتي العام: مفعل (اضغط لوضع السكوت الكامل)" else "🔇 تحذير المطبات الصوتي العام: وضع سكوت (اضغط للتفعيل)"
                 btnMasterToggle.setTextColor(if (isEn) Color.rgb(8, 23, 32) else Color.rgb(220, 230, 240))
                 btnMasterToggle.setBackgroundColor(if (isEn) Color.rgb(80, 227, 194) else Color.rgb(55, 68, 85))
 
-                tvMasterNote.text = if (isEn) "التحذير الصوتي مسموع عند اقتراب 100م و 25م حسب النغمة أو الصوت المختار."
-                    else "✅ اكتشاف وعرض المطبات مستمر بالخلفية بدون إصدار أي صوت."
-                tvMasterNote.setTextColor(if (isEn) Color.rgb(160, 210, 230) else Color.rgb(140, 230, 180))
+                val active100 = isEn && !isBump100mMuted
+                btnToggle100m.text = if (active100) "🔊 مسافة 100 متر:\nمفعل (اضغط للسكوت)" else "🔇 مسافة 100 متر:\nوضع سكوت (اضغط للتفعيل)"
+                btnToggle100m.setBackgroundColor(if (active100) Color.rgb(22, 95, 130) else Color.rgb(55, 40, 45))
 
-                if (!isEn) {
-                    Toast.makeText(this@MainActivity, "تم كتم التحذير الصوتي (الاكتشاف مستمر بالخلفية)", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this@MainActivity, "تم تفعيل التحذير الصوتي للمطبات", Toast.LENGTH_SHORT).show()
+                val active20 = isEn && !isBump20mMuted
+                btnToggle20m.text = if (active20) "🔊 مسافة 20 متر:\nمفعل (اضغط للسكوت)" else "🔇 مسافة 20 متر:\nوضع سكوت (اضغط للتفعيل)"
+                btnToggle20m.setBackgroundColor(if (active20) Color.rgb(175, 45, 55) else Color.rgb(55, 40, 45))
+
+                tvMasterNote.text = when {
+                    !isEn || (isBump100mMuted && isBump20mMuted) ->
+                        "✅ وضع السكوت مفعل: اكتشاف المطبات مستمر بالخلفية بدون إصدار أي صوت."
+                    isBump100mMuted ->
+                        "🔊 التحذير الصوتي يعمل عند مسافة 20 متر فقط (مسافة 100 متر في وضع سكوت)."
+                    isBump20mMuted ->
+                        "🔊 التحذير الصوتي يعمل عند مسافة 100 متر فقط (مسافة 20 متر في وضع سكوت)."
+                    else ->
+                        "🔊 التحذير الصوتي مفعل بالترتيب المتفق عليه: تنبيه مبكر عند 100 متر ثم تنبيه فوري عند 20 متر."
                 }
+            }
+
+            btnMasterToggle.setOnClickListener {
+                isBumpWarningEnabled = !isBumpWarningEnabled
+                if (isBumpWarningEnabled && isBump100mMuted && isBump20mMuted) {
+                    isBump100mMuted = false
+                    isBump20mMuted = false
+                }
+                preferences.edit()
+                    .putBoolean("is_bump_warning_enabled", isBumpWarningEnabled)
+                    .putBoolean("is_bump_100m_muted", isBump100mMuted)
+                    .putBoolean("is_bump_20m_muted", isBump20mMuted)
+                    .apply()
+                speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
+                speedBumpManager?.isMuted100m = isBump100mMuted
+                speedBumpManager?.isMuted20m = isBump20mMuted
+                refreshBumpToggleUI()
+            }
+
+            btnToggle100m.setOnClickListener {
+                if (!isBumpWarningEnabled) {
+                    isBumpWarningEnabled = true
+                    isBump100mMuted = false
+                } else {
+                    isBump100mMuted = !isBump100mMuted
+                }
+                preferences.edit()
+                    .putBoolean("is_bump_warning_enabled", isBumpWarningEnabled)
+                    .putBoolean("is_bump_100m_muted", isBump100mMuted)
+                    .apply()
+                speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
+                speedBumpManager?.isMuted100m = isBump100mMuted
+                refreshBumpToggleUI()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (isBump100mMuted) "🔇 تم وضع تحذير مسافة 100 متر في وضع سكوت" else "🔊 تم تفعيل التحذير الصوتي لمسافة 100 متر",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+
+            btnToggle20m.setOnClickListener {
+                if (!isBumpWarningEnabled) {
+                    isBumpWarningEnabled = true
+                    isBump20mMuted = false
+                } else {
+                    isBump20mMuted = !isBump20mMuted
+                }
+                preferences.edit()
+                    .putBoolean("is_bump_warning_enabled", isBumpWarningEnabled)
+                    .putBoolean("is_bump_20m_muted", isBump20mMuted)
+                    .apply()
+                speedBumpManager?.isWarningEnabled = isBumpWarningEnabled
+                speedBumpManager?.isMuted20m = isBump20mMuted
+                refreshBumpToggleUI()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (isBump20mMuted) "🔇 تم وضع تحذير مسافة 20 متر في وضع سكوت" else "🔊 تم تفعيل التحذير الصوتي لمسافة 20 متر",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
 
             // Bluetooth Audio Bypass Toggle (Solves Bluetooth swallowing audio alerts)
@@ -864,23 +1023,6 @@ class MainActivity : Activity() {
                 }
             }
             addView(btnBtBypass)
-
-            // Quick button to customize Voices, Tones & Volume
-            val btnOpenAudioStudio = Button(this@MainActivity).apply {
-                text = "🎵 تخصيص نغمات وأصوات المطبات وشدة الصوت ➡️"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(32, 68, 98))
-                val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
-                blp.topMargin = dp(2)
-                blp.bottomMargin = dp(8)
-                layoutParams = blp
-                setOnClickListener {
-                    openSubScreen("audio_settings")
-                }
-            }
-            addView(btnOpenAudioStudio)
 
             // Dynamic Sector Info
             val sectorRow = LinearLayout(this@MainActivity).apply {
@@ -921,7 +1063,7 @@ class MainActivity : Activity() {
 
         // Operational Control Card (Direct Functions & Live Audio Test)
         val controlCard = card().apply {
-            addView(text("🎮 التحكم المباشر وتجربة صوت التحذير", 14, Color.rgb(110, 231, 255), true))
+            addView(text("🎮 تجربة الصوت وتسجيل مطب جديد", 14, Color.rgb(110, 231, 255), true))
 
             val testRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -932,7 +1074,7 @@ class MainActivity : Activity() {
             }
 
             val btnTest100 = Button(this@MainActivity).apply {
-                text = "🔔 تجربة تحذير 100م"
+                text = "🔔 سماع تحذير 100م"
                 textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
@@ -942,17 +1084,12 @@ class MainActivity : Activity() {
                 layoutParams = lp
                 setOnClickListener {
                     alertSoundPlayer.playBump100m()
-                    speedBumpBanner?.apply {
-                        text = "⚠️ مطب بعد 100م (تجربة عرض وتحذير)"
-                        setBackgroundColor(Color.rgb(230, 138, 0))
-                        visibility = View.VISIBLE
-                    }
-                    Toast.makeText(this@MainActivity, "🔊 تم تشغيل تحذير 100م وعرض التنبيه", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "🔊 تجربة الصوت: مطب بعد 100 متر", Toast.LENGTH_SHORT).show()
                 }
             }
 
             val btnTest25 = Button(this@MainActivity).apply {
-                text = "🛑 تجربة تحذير 25م (الآن)"
+                text = "🛑 سماع تحذير 20م"
                 textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
@@ -962,12 +1099,7 @@ class MainActivity : Activity() {
                 layoutParams = lp
                 setOnClickListener {
                     alertSoundPlayer.playBump25m()
-                    speedBumpBanner?.apply {
-                        text = "🛑 مطب الآن (20م) - تهدئة السرعة!"
-                        setBackgroundColor(Color.rgb(215, 38, 56))
-                        visibility = View.VISIBLE
-                    }
-                    Toast.makeText(this@MainActivity, "🔊 تم تشغيل تحذير المطب الفوري وعرضه", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "🔊 تجربة الصوت: مطب الآن (20 متر)", Toast.LENGTH_SHORT).show()
                 }
             }
 
@@ -1639,7 +1771,7 @@ class MainActivity : Activity() {
         thread {
             try {
                 val backendBaseUrl = getApiBaseUrl()
-                val targetVehId = preferences.getString("selected_vehicle_id", "veh-001") ?: "veh-001"
+                val targetVehId = preferences.getString("selected_vehicle_id", null)?.takeIf { it.isNotBlank() } ?: getActiveVehicleScopeId()
                 val url = java.net.URL("$backendBaseUrl/api/vehicle?vehicleId=$targetVehId")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "GET"
@@ -1693,30 +1825,22 @@ class MainActivity : Activity() {
         if (speedBumpManager != null) return
         isBumpWarningEnabled = preferences.getBoolean("is_bump_warning_enabled", true)
         isBumpAudioMuted = preferences.getBoolean("is_bump_audio_muted", false)
+        isBump100mMuted = preferences.getBoolean("is_bump_100m_muted", false)
+        isBump20mMuted = preferences.getBoolean("is_bump_20m_muted", false)
         speedBumpManager = SpeedBumpManager(this) { getApiBaseUrl() }.apply {
             isWarningEnabled = isBumpWarningEnabled
             isAudioMuted = isBumpAudioMuted
+            isMuted100m = isBump100mMuted
+            isMuted20m = isBump20mMuted
             start()
-            onWarningStateChanged = { warningText, stage ->
+            onWarningStateChanged = { _, _ ->
                 runOnUiThread {
-                    val banner = speedBumpBanner ?: return@runOnUiThread
-                    if (isBumpWarningEnabled && warningText != null) {
-                        banner.text = warningText
-                        banner.visibility = View.VISIBLE
-                        if (stage == "FINAL") {
-                            banner.setBackgroundColor(Color.rgb(215, 38, 56))
-                        } else {
-                            banner.setBackgroundColor(Color.rgb(230, 138, 0))
-                        }
-                    } else {
-                        banner.visibility = View.GONE
-                    }
+                    // بناءً على طلب المستخدم: المطبات الصناعية يكتفي فيها بالتحذير الصوتي فقط (100 متر و 20 متر) بدون ظهور رسالة تحذير مكتوبة على الشاشة
+                    speedBumpBanner?.visibility = View.GONE
                 }
             }
-            onBumpDetectedNotice = { msg ->
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                }
+            onBumpDetectedNotice = { _ ->
+                // يكتفى بالحفظ التلقائي للمطب المكتشف بدون إزعاج السائق برسائل نصية متكررة
             }
         }
     }
@@ -1950,6 +2074,7 @@ class MainActivity : Activity() {
                 "audio_settings" -> buildAudioSettingsSubScreen()
                 "gauges" -> buildGaugesTabContent()
                 "scanner" -> buildScannerTabContent()
+                "dtc_diagnostics", "dtc_lookup" -> buildDtcDiagnosticsSubScreen()
                 "fuel" -> buildFuelTabContent()
                 "maint" -> buildMaintenanceTabContent()
                 "more" -> buildMoreSettingsTabContent()
@@ -2684,47 +2809,43 @@ class MainActivity : Activity() {
 
         val cards: List<ServiceCard> = when(currentRole) {
             "owner" -> listOf(
-                // 1. مسح وإدراج قارئ كمبيوتر السيارة
-                ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران قارئ OBD-II وفحص الكمبيوتر", "🔍", "scanner"),
-                // 2. إضافة سيارة وتفويض سائق عند المالك فقط
-                ServiceCard("إضافة وإدارة السيارات والسائقين", "تسجيل سيارة جديدة وتفويض السائقين", "➕", "owner_fleet"),
-                // 3. قراءة الحساسات للكمبيوتر ومعدل الوقود عند المالك والسائق
+                // 1. مسح وإدراج قارئ كمبيوتر السيارة (مكان موحد للبحث والاقتران بلوتوث OBD-II)
+                ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران بلوتوث OBD-II بالسيارة", "🔍", "scanner"),
+                // 2. إضافة سيارة وتفويض سائق وملكية الشاسيه (شاشة موحدة لإدارة الأسطول والشاسيه)
+                ServiceCard("إضافة وإدارة السيارات والسائقين", "إضافة سيارة وتفويض سائق وملكية الشاسيه", "➕", "owner_fleet"),
+                // 3. قراءة الحساسات الحية للكمبيوتر ومعدل الوقود
                 ServiceCard("قراءة الحساسات ومعدل الوقود", "السرعة والحرارة والشحن ومعدل الوقود اللحظي", "📊", "gauges"),
-                // 4. قراءة الأكواد أو تفسير الأكواد الظاهرة عند المالك والسائق
-                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
-                // باقي الخدمات المشتركة بالكامل
-                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية", "🛑", "speed_bumps"),
+                // 4. تشخيص وتفسير الأعطال التلقائي وسجل الأعطال المحفوظ بالبرنامج والسيرفر
+                ServiceCard("تشخيص وتفسير الأعطال", "الفحص التلقائي للأعطال وتفسيرها وسجل التاريخ", "📋", "dtc_diagnostics"),
+                // باقي الخدمات في مكانها المخصص بدون أي تكرار بين الصفحات
+                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية (100م و 20م)", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
                 ServiceCard("حساب ومعدل استهلاك الوقود", "الوقود والزيت ونسبة الهالك والتقارير", "⛽", "fuel"),
-                ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("التحليل التنبؤي والصيانة الدورية", "الوقود والمرش وزيت المحرك والمستهلكات", "📈", "predictive_health"),
                 ServiceCard("المراقبة والتتبع الحي", "متابعة قراءات السيارة عن بعد عبر السيرفر", "📡", "remote_fleet"),
-                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص وتأمين الشاسيه والطرد الفوري", "🚨", "owner_security"),
-                ServiceCard("ملكية الشاسيه وبيانات الكمبيوتر", "بيانات الشاسيه والقيد القانوني للمالك", "👑", "vehicles"),
-                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر ومسح الأعطال", "🔧", "maint")
+                ServiceCard("أمان وتصاريح الورش", "طلبات الفحص وتأمين الشاسيه والطرد الفوري", "🚨", "owner_security")
             )
             "driver" -> listOf(
-                // السائق يرى كافة شاشات المالك تماماً (ما عدا إضافة سائق أو إضافة مالك آخر) لبث كل بيانات السيارة للمالك عبر السيرفر
+                // السائق يرى كافة شاشات المالك تماماً بدون أي تكرار (ما عدا إضافة سائق أو إضافة مالك آخر)
                 ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران بلوتوث OBD-II بتفويض المالك", "🔍", "scanner"),
-                ServiceCard("سياراتي المفوض بقيادتها", "قبول التفويض وربط قارئ السيارة بالمالك", "🚗", "driver_cars"),
+                ServiceCard("سياراتي المفوض بقيادتها", "قبول التفويض وربط القارئ وبيانات الشاسيه", "🚗", "driver_cars"),
                 ServiceCard("قراءة الحساسات ومعدل الوقود", "السرعة والحرارة والشحن ومعدل الوقود اللحظي", "📊", "gauges"),
-                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وتفسير كود العطل", "📋", "dtc_lookup"),
-                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية", "🛑", "speed_bumps"),
+                ServiceCard("تشخيص وتفسير الأعطال", "الفحص التلقائي للأعطال وتفسيرها وسجل التاريخ", "📋", "dtc_diagnostics"),
+                ServiceCard("المطبات الصناعية", "اكتشاف وتحذير مطبات صناعية (100م و 20م)", "🛑", "speed_bumps"),
                 ServiceCard("أصوات ونغمات التنبيه", "تخصيص الأصوات البشرية والنغمات", "🔊", "audio_settings"),
                 ServiceCard("حساب ومعدل استهلاك الوقود", "الوقود والزيت ونسبة الهالك والتقارير", "⛽", "fuel"),
-                ServiceCard("التحليل التنبؤي ومعدل البنزين", "معدل البنزين اليومي وأيام الحرارة وسحب المرش", "📈", "predictive_health"),
+                ServiceCard("التحليل التنبؤي والصيانة الدورية", "الوقود والمرش وزيت المحرك والمستهلكات", "📈", "predictive_health"),
                 ServiceCard("المراقبة والبث الحي للمالك", "حالة اتصال السيرفر وبث قراءات السيارة للمالك", "📡", "remote_fleet"),
                 ServiceCard("أمان وتصاريح الورش", "طلبات الفحص وتأمين كمبيوتر السيارة", "🚨", "owner_security"),
-                ServiceCard("ملكية الشاسيه وبيانات الكمبيوتر", "بيانات كمبيوتر السيارة والمالك المسجل", "👑", "vehicles"),
-                ServiceCard("جدول الصيانة الدورية", "مواعيد الزيوت والفلاتر ومسح الأعطال", "🔧", "maint"),
                 ServiceCard("دليل وأرقام الورش", "أرقام الورش وأوناش الإنقاذ", "🗺️", "workshops_dir"),
                 ServiceCard("اتصال بمالك السيارة", "مكالمة هاتفية أو واتساب مباشر", "📞", "call_owner")
             )
             else -> listOf(
                 ServiceCard("طلب إذن الفحص", "إرسال طلب للمالك بدون أرقام سرية", "🔑", "workshop_console"),
-                ServiceCard("فحص ومسح الأعطال", "قراءة ومسح أعطال الكمبيوتر ECU", "🔍", "scanner"),
+                ServiceCard("مسح وإدراج قارئ كمبيوتر السيارة", "بحث واقتران قارئ OBD-II للورشة", "🔍", "scanner"),
+                ServiceCard("تشخيص وتفسير ومسح الأعطال", "الفحص التلقائي للأعطال وتفسيرها ومسحها", "📋", "dtc_diagnostics"),
                 ServiceCard("الحساسات الحية", "قراءة الحساسات و Freeze Frame", "📊", "gauges"),
-                ServiceCard("تشخيص وتفسير الأعطال", "قاموس الأعطال الشامل وشرح كود العطل", "📋", "dtc_lookup"),
-                ServiceCard("التحليل التنبؤي وتاريخ السيارة", "تغير معدل البنزين وسحب المرش والحرارة", "📈", "predictive_health"),
+                ServiceCard("التحليل التنبؤي والصيانة الدورية", "تغير معدل البنزين وسحب المرش والمستهلكات", "📈", "predictive_health"),
                 ServiceCard("تسجيل صيانة وفاتورة", "توثيق القطع وتكلفة الصيانة", "📝", "log_service"),
                 ServiceCard("ملف الورشة وبياناتي", "اسم الورشة والهاتف للعملاء", "🏪", "workshop_profile")
             )
@@ -2746,7 +2867,6 @@ class MainActivity : Activity() {
                     val tile = buildServiceTile(cardItem.title, cardItem.subtitle, cardItem.icon) {
                         when (cardItem.key) {
                             "call_owner" -> showCallOwnerDialog()
-                            "dtc_lookup" -> showDtcLookupDialog()
                             else -> openSubScreen(cardItem.key)
                         }
                     }
@@ -2868,17 +2988,18 @@ class MainActivity : Activity() {
 
     private fun getSubScreenTitle(key: String): String {
         return when(key) {
-            "scanner" -> "🔍 فحص ومسح أعطال الكمبيوتر (DTC)"
+            "scanner" -> "🔍 مسح وإدراج قارئ كمبيوتر السيارة (OBD-II)"
+            "dtc_diagnostics", "dtc_lookup" -> "📋 تشخيص وتفسير الأعطال التلقائي وسجل التاريخ"
             "gauges" -> "📊 عدادات وحساسات السيارة الحية (PIDs)"
-            "owner_fleet" -> "🚗 أسطول سيارات المالك وتفويض السائقين"
+            "owner_fleet" -> "🚗 إدارة السيارات وتفويض السائقين وملكية الشاسيه"
             "remote_fleet" -> "📡 التتبع الحي والمراقبة عن بعد (GPS)"
             "owner_security" -> "🚨 أمان السيارة وأذونات الورشة (Kill-Switch)"
             "vehicles" -> "👑 ملكية الشاسيه والقيد القانوني (VIN)"
             "workshops_dir" -> "🗺️ دليل وخريطة مراكز الصيانة والورش"
             "workshop_console" -> "🔧 لوحة فحص الورشة وإذن الدخول"
             "workshop_profile" -> "🏪 ملف الورشة وبيانات الاتصال"
-            "driver_cars" -> "🚗 سياراتي المفوض بقيادتها"
-            "predictive_health" -> "📈 التحليل التنبؤي وصحة السيارة (المعدلات والأعطال)"
+            "driver_cars" -> "🚗 سياراتي المفوض بقيادتها وملكية الشاسيه"
+            "predictive_health" -> "📈 التحليل التنبؤي والصيانة الدورية"
             "log_service" -> "📝 تسجيل صيانة وفاتورة جديدة"
             "speed_bumps" -> "🛑 المطبات الصناعية (اكتشاف وتحذير مطبات صناعية)"
             "audio_settings" -> "🔊 استوديو الأصوات البشرية والنغمات التنبيهية"
@@ -2945,7 +3066,7 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // TAB: MORE SETTINGS & PROFILE (شاشة الحساب والإعدادات)
+    // TAB: MORE SETTINGS & PROFILE (شاشة الحساب والإعدادات فقط بدون تكرار إدارة السيارات أو فحص الكمبيوتر)
     // ========================================================
     private fun buildMoreSettingsTabContent(): View {
         val container = LinearLayout(this).apply {
@@ -2972,32 +3093,30 @@ class MainActivity : Activity() {
         }
         container.addView(cardProfile)
 
-        if (currentRole == "owner") {
-            val cardVeh = card().apply {
-                addView(text("🚗 إدارة سيارات الأسطول", 16, Color.rgb(248, 199, 74), true))
-                addView(button("🚗 تبديل السيارة النشطة للأسطول ▼") {
-                    showSwitchOwnerVehicleDialog()
-                })
-                addView(button("➕ إضافة سيارة جديدة للأسطول") {
-                    showAddOwnerVehicleDialog()
-                }.apply {
-                    setBackgroundColor(Color.rgb(22, 68, 48))
-                    setTextColor(Color.rgb(126, 242, 154))
-                })
+        // إعدادات عنوان السيرفر السحابي (مخصصة لإعدادات التطبيق فقط دون تكرار شاشات الرئيسية)
+        val cardServer = card().apply {
+            addView(text("🌐 إعدادات الاتصال بالخادم (Server URL)", 15, Color.rgb(110, 231, 255), true))
+            val currentUrl = getApiBaseUrl()
+            addView(text("• الخادم الحالي: $currentUrl", 12, Color.rgb(180, 210, 235), false))
+            val etServer = edit("عنوان السيرفر (مثال: http://10.0.2.2:5055)").apply {
+                setText(currentUrl)
             }
-            container.addView(cardVeh)
-        }
-
-        val cardConn = card().apply {
-            addView(text("🔌 قارئ فحص السيارة (OBD-II Adapter)", 16, Color.rgb(110, 231, 255), true))
-            val connStatus = if (telemetry.isConnected) "متصل بنجاح 🟢" else if (isSimulating) "وضع المحاكاة نشط 🟡" else "غير متصل ⚪"
-            addView(text("• حالة الاتصال: $connStatus", 13, Color.WHITE, false))
-
-            addView(button("🔍 فتح شاشة فحص وتوصيل الكمبيوتر") {
-                openSubScreen("scanner")
+            addView(etServer)
+            addView(button("💾 حفظ عنوان السيرفر") {
+                val url = etServer.text.toString().trim().removeSuffix("/")
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    preferences.edit().putString("custom_api_base_url", url).apply()
+                    Toast.makeText(this@MainActivity, "✅ تم حفظ عنوان السيرفر: $url", Toast.LENGTH_SHORT).show()
+                    renderCurrentScreen()
+                } else {
+                    Toast.makeText(this@MainActivity, "⚠️ يرجى إدخال رابط صحيح يبدأ بـ http:// أو https://", Toast.LENGTH_SHORT).show()
+                }
+            }.apply {
+                setBackgroundColor(Color.rgb(22, 68, 48))
+                setTextColor(Color.rgb(126, 242, 154))
             })
         }
-        container.addView(cardConn)
+        container.addView(cardServer)
 
         val cardLogout = card().apply {
             addView(text("🚪 إدارة الجلسة", 16, Color.rgb(255, 122, 122), true))
@@ -3343,6 +3462,13 @@ class MainActivity : Activity() {
             }
             container.addView(cardCar)
         }
+
+        // دمج وثيقة ملكية الشاسيه وبيانات كمبيوتر السيارة (VIN) كقائمة منسدلة مغلقة افتراضياً داخل شاشة إدارة السيارات لمنع تكرار الشاشات
+        container.addView(
+            collapsibleSection("وثيقة ملكية الشاسيه وبيانات كمبيوتر السيارة (VIN)", "👑", initiallyExpanded = false) { vinBody ->
+                vinBody.addView(buildVehiclesTabContent())
+            }
+        )
 
         return container
     }
@@ -4061,10 +4187,10 @@ class MainActivity : Activity() {
 
     private fun submitWorkshopAccessRequest(targetOwnerPhone: String, reason: String) {
         val reqId = "wsreq-${System.currentTimeMillis()}"
-        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو"
+        val activeVehName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "مركبة غير مسجلة") ?: "مركبة غير مسجلة" }
         val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
         val wsName = if (myWorkshopName.isNotBlank()) myWorkshopName else userName.ifEmpty { "مركز صيانة معتمد" }
-        val wsPhone = if (myWorkshopPhone.isNotBlank()) myWorkshopPhone else userPhone.ifEmpty { "01099887755" }
+        val wsPhone = if (myWorkshopPhone.isNotBlank()) myWorkshopPhone else userPhone.ifEmpty { "--" }
 
         val wsReq = WorkshopAccessRequest(
             id = reqId,
@@ -4264,8 +4390,8 @@ class MainActivity : Activity() {
     private fun buildRemoteFleetTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo 1.5L)") ?: "شيفروليه أفيو"
-        val activeVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
+        val activeVehName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "مركبتي") ?: "مركبتي" }
+        val activeVin = getActiveVehicleProfile().vin.ifBlank { preferences.getString("vehicle_vin", "بانتظار قراءة الشاسيه") ?: "بانتظار قراءة الشاسيه" }
 
         val cardRemoteLive = card().apply {
             addView(text("📡 مراقبة السيارة اللحظية عن بُعد (Live Fleet Telemetry)", 17, Color.rgb(110, 231, 255), true))
@@ -4451,7 +4577,7 @@ class MainActivity : Activity() {
     private fun buildOwnerSecurityTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val activeVehName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
+        val activeVehName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "مركبتي") ?: "مركبتي" }
 
         val cardStatus = card().apply {
             addView(text("🚨 سجل أمان المالك وإشعارات دخول الورش", 17, Color.rgb(255, 122, 122), true))
@@ -5522,6 +5648,13 @@ class MainActivity : Activity() {
             container.addView(cardCar)
         }
 
+        // دمج وثيقة ملكية الشاسيه وبيانات كمبيوتر السيارة (VIN) كقائمة منسدلة مغلقة افتراضياً داخل شاشة إدارة السيارات لمنع تكرار الشاشات
+        container.addView(
+            collapsibleSection("وثيقة ملكية الشاسيه وبيانات كمبيوتر السيارة (VIN)", "👑", initiallyExpanded = false) { vinBody ->
+                vinBody.addView(buildVehiclesTabContent())
+            }
+        )
+
         return container
     }
 
@@ -6304,7 +6437,326 @@ class MainActivity : Activity() {
     }
 
     // ========================================================
-    // PREDICTIVE CONSUMABLES & DEDICATED PER-ITEM ALERTS (تحليل تنبؤي للكاوتش والزيوت والفلاتر)
+    // UNIFIED ENGINE OIL SUBSYSTEM (الدالة الموحدة لزيت المحرك لمنع أي تعارض)
+    // ========================================================
+    data class UnifiedEngineOilState(
+        val vehicleId: String,
+        val targetKm: Float,
+        val totalPriceEgp: Float,
+        val baselineOdoKm: Float,
+        val currentElapsedKm: Float,
+        val remainingKm: Float,
+        val consumedPercent: Float,
+        val costPerKm: Float,
+        val isConfigured: Boolean,
+        val lastUpdatedDate: String,
+        val storedAlertText: String,
+        val storedAlertTimestamp: String
+    ) {
+        val isDue: Boolean get() = isConfigured && targetKm > 0f && currentElapsedKm >= targetKm
+        val isAlertDue: Boolean get() = isConfigured && targetKm > 0f && (remainingKm <= 500f || currentElapsedKm >= targetKm)
+        val currentDrivenKm: Float get() = currentElapsedKm
+        val drivenKm: Float get() = currentElapsedKm
+        val targetIntervalKm: Float get() = targetKm
+        val wearPercent: Float get() = consumedPercent
+        val baselineOdometerKm: Float get() = baselineOdoKm
+        val oilViscosityGrade: String get() = "زيت المحرك الموحد"
+        val totalCostEgp: Float get() = totalPriceEgp
+        val costPerKmEgp: Float get() = costPerKm
+    }
+
+    private fun getUnifiedEngineOilState(vehicleId: String = getActiveVehicleScopeId()): UnifiedEngineOilState {
+        val currentCarOdo = getEffectiveCarOdometerKm()
+        var isConfig = preferences.getBoolean("oil_configured_$vehicleId", false)
+        var targetKm = preferences.getFloat("oil_target_km_$vehicleId", 0f)
+        var totalPrice = preferences.getFloat("oil_total_price_$vehicleId", 0f)
+        var baselineOdo = preferences.getFloat("oil_baseline_odo_$vehicleId", 0f)
+        var savedElapsed = preferences.getFloat("oil_current_km_$vehicleId", 0f)
+
+        // Migrate once if legacy unscoped keys were manually set by the user earlier
+        if (!isConfig && !preferences.getBoolean("oil_migrated_$vehicleId", false)) {
+            val legTarget = preferences.getFloat("oil_target_km", 0f)
+            val legPrice = preferences.getFloat("oil_total_price", 0f)
+            val legBase = preferences.getFloat("oil_baseline_car_odometer", 0f)
+            val legCur = preferences.getFloat("oil_current_km", 0f)
+            if (legTarget > 0f && legTarget != 5000.0f) {
+                isConfig = true
+                targetKm = legTarget
+                totalPrice = if (legPrice != 1200.0f) legPrice else 0f
+                baselineOdo = legBase
+                savedElapsed = if (legCur != 1250.0f) legCur else 0f
+                preferences.edit()
+                    .putBoolean("oil_configured_$vehicleId", true)
+                    .putFloat("oil_target_km_$vehicleId", targetKm)
+                    .putFloat("oil_total_price_$vehicleId", totalPrice)
+                    .putFloat("oil_baseline_odo_$vehicleId", baselineOdo)
+                    .putFloat("oil_current_km_$vehicleId", savedElapsed)
+                    .putBoolean("oil_migrated_$vehicleId", true)
+                    .apply()
+            } else {
+                preferences.edit().putBoolean("oil_migrated_$vehicleId", true).apply()
+            }
+        }
+
+        val effectiveTargetKm = if (isConfig && targetKm > 0f) targetKm else 0f
+        val effectivePrice = if (isConfig && totalPrice > 0f) totalPrice else 0f
+        val elapsedKm = if (!isConfig || effectiveTargetKm <= 0f) {
+            0f
+        } else if (currentCarOdo > 0f && baselineOdo > 0f && currentCarOdo >= baselineOdo) {
+            (currentCarOdo - baselineOdo).coerceAtLeast(savedElapsed)
+        } else {
+            savedElapsed.coerceAtLeast(0f)
+        }
+
+        val remainingKm = if (effectiveTargetKm > 0f) (effectiveTargetKm - elapsedKm).coerceAtLeast(0f) else 0f
+        val consumedPct = if (effectiveTargetKm > 0f) ((elapsedKm / effectiveTargetKm) * 100.0f).coerceIn(0f, 100f) else 0f
+        val costPerKm = if (effectiveTargetKm > 0f && effectivePrice > 0f) effectivePrice / effectiveTargetKm else 0f
+
+        return UnifiedEngineOilState(
+            vehicleId = vehicleId,
+            targetKm = effectiveTargetKm,
+            totalPriceEgp = effectivePrice,
+            baselineOdoKm = baselineOdo,
+            currentElapsedKm = elapsedKm,
+            remainingKm = remainingKm,
+            consumedPercent = consumedPct,
+            costPerKm = costPerKm,
+            isConfigured = isConfig && effectiveTargetKm > 0f,
+            lastUpdatedDate = preferences.getString("oil_updated_date_$vehicleId", "") ?: "",
+            storedAlertText = preferences.getString("oil_stored_alert_text_$vehicleId", "") ?: "",
+            storedAlertTimestamp = preferences.getString("oil_stored_alert_ts_$vehicleId", "") ?: ""
+        )
+    }
+
+    private fun saveUnifiedEngineOilConfig(
+        targetKm: Float,
+        totalPriceEgp: Float,
+        baselineOdoKm: Float = getEffectiveCarOdometerKm(),
+        resetElapsed: Boolean = false,
+        vehicleId: String = getActiveVehicleScopeId()
+    ) {
+        val currentCarOdo = getEffectiveCarOdometerKm()
+        val safeTarget = targetKm.coerceAtLeast(0f)
+        val safePrice = totalPriceEgp.coerceAtLeast(0f)
+        val safeBase = baselineOdoKm.coerceAtLeast(0f)
+        val newElapsed = if (resetElapsed) {
+            0f
+        } else if (currentCarOdo > 0f && safeBase > 0f && currentCarOdo >= safeBase) {
+            (currentCarOdo - safeBase).coerceAtLeast(0f)
+        } else {
+            preferences.getFloat("oil_current_km_$vehicleId", 0f)
+        }
+        val nowStr = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+
+        preferences.edit()
+            .putBoolean("oil_configured_$vehicleId", safeTarget > 0f)
+            .putFloat("oil_target_km_$vehicleId", safeTarget)
+            .putFloat("oil_total_price_$vehicleId", safePrice)
+            .putFloat("oil_baseline_odo_$vehicleId", safeBase)
+            .putFloat("oil_current_km_$vehicleId", newElapsed)
+            .putString("oil_updated_date_$vehicleId", nowStr)
+            .putString("oil_stored_alert_text_$vehicleId", "")
+            .putString("oil_stored_alert_ts_$vehicleId", "")
+            // Mirror to legacy keys so all screens & helpers stay 100% synchronized
+            .putFloat("oil_target_km", safeTarget)
+            .putFloat("oil_total_price", safePrice)
+            .putFloat("oil_baseline_car_odometer", safeBase)
+            .putFloat("oil_current_km", newElapsed)
+            .apply()
+
+        evaluateUnifiedEngineOilAlert(vehicleId, triggerSystemAlert = true)
+    }
+
+    private fun resetUnifiedEngineOilCycle(
+        newBaselineOdoKm: Float = getEffectiveCarOdometerKm(),
+        newTargetKm: Float? = null,
+        newPriceEgp: Float? = null,
+        vehicleId: String = getActiveVehicleScopeId()
+    ) {
+        val cur = getUnifiedEngineOilState(vehicleId)
+        val target = newTargetKm ?: cur.targetKm
+        val price = newPriceEgp ?: cur.totalPriceEgp
+        val nowStr = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+
+        preferences.edit()
+            .putBoolean("oil_configured_$vehicleId", target > 0f)
+            .putFloat("oil_target_km_$vehicleId", target)
+            .putFloat("oil_total_price_$vehicleId", price)
+            .putFloat("oil_baseline_odo_$vehicleId", newBaselineOdoKm.coerceAtLeast(0f))
+            .putFloat("oil_current_km_$vehicleId", 0f)
+            .putString("oil_updated_date_$vehicleId", nowStr)
+            .putString("oil_stored_alert_text_$vehicleId", "")
+            .putString("oil_stored_alert_ts_$vehicleId", "")
+            .putFloat("oil_target_km", target)
+            .putFloat("oil_total_price", price)
+            .putFloat("oil_baseline_car_odometer", newBaselineOdoKm.coerceAtLeast(0f))
+            .putFloat("oil_current_km", 0f)
+            .apply()
+    }
+
+    private fun addUnifiedEngineOilDistanceDelta(
+        deltaKm: Float,
+        currentCarOdo: Float = getEffectiveCarOdometerKm(),
+        vehicleId: String = getActiveVehicleScopeId()
+    ) {
+        val state = getUnifiedEngineOilState(vehicleId)
+        if (!state.isConfigured) return
+
+        var baseOdo = state.baselineOdoKm
+        if (baseOdo <= 0f && currentCarOdo > 0f) {
+            baseOdo = (currentCarOdo - state.currentElapsedKm).coerceAtLeast(0f)
+            preferences.edit()
+                .putFloat("oil_baseline_odo_$vehicleId", baseOdo)
+                .putFloat("oil_baseline_car_odometer", baseOdo)
+                .apply()
+        }
+
+        val updatedElapsed = if (baseOdo > 0f && currentCarOdo >= baseOdo) {
+            (currentCarOdo - baseOdo).coerceAtLeast(0f)
+        } else {
+            (state.currentElapsedKm + deltaKm.coerceAtLeast(0f))
+        }
+
+        preferences.edit()
+            .putFloat("oil_current_km_$vehicleId", updatedElapsed)
+            .putFloat("oil_current_km", updatedElapsed)
+            .apply()
+
+        evaluateUnifiedEngineOilAlert(vehicleId, triggerSystemAlert = true)
+    }
+
+    private fun evaluateUnifiedEngineOilAlert(
+        vehicleId: String = getActiveVehicleScopeId(),
+        triggerSystemAlert: Boolean = false
+    ): UnifiedEngineOilState {
+        val state = getUnifiedEngineOilState(vehicleId)
+        if (!state.isConfigured || state.targetKm <= 0f) return state
+
+        val nowStr = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+        val alertOnceKey = "oil_unified_notified_${vehicleId}_${state.baselineOdoKm.toInt()}_${state.targetKm.toInt()}"
+
+        if (state.currentElapsedKm >= state.targetKm) {
+            val msg = "🚨 تنبيه خاص (زيت المحرك والفلتر): وصلت المسافة المقطوعة بالزيت إلى القيمة المحددة (${String.format("%.0f", state.currentElapsedKm)} / ${String.format("%.0f", state.targetKm)} كم). يرجى تغيير زيت المحرك والفلتر فوراً."
+            if (state.storedAlertText != msg) {
+                preferences.edit()
+                    .putString("oil_stored_alert_text_$vehicleId", msg)
+                    .putString("oil_stored_alert_ts_$vehicleId", nowStr)
+                    .apply()
+            }
+            if (triggerSystemAlert && !preferences.getBoolean(alertOnceKey, false)) {
+                preferences.edit().putBoolean(alertOnceKey, true).apply()
+                setSafetyAlert(
+                    "oil_service_due",
+                    "🚨 حان موعد تغيير زيت المحرك والفلتر!",
+                    msg,
+                    critical = true
+                )
+            }
+        } else if (state.remainingKm <= 500f && state.targetKm > 500f) {
+            val msg = "⚠️ تنبيه مبكر خاص (زيت المحرك والفلتر): متبقي ${String.format("%.0f", state.remainingKm)} كم فقط على موعد غيار الزيت المحدد (${String.format("%.0f", state.targetKm)} كم)."
+            if (state.storedAlertText != msg) {
+                preferences.edit()
+                    .putString("oil_stored_alert_text_$vehicleId", msg)
+                    .putString("oil_stored_alert_ts_$vehicleId", nowStr)
+                    .apply()
+            }
+        } else if (state.storedAlertText.isNotEmpty()) {
+            preferences.edit()
+                .putString("oil_stored_alert_text_$vehicleId", "")
+                .putString("oil_stored_alert_ts_$vehicleId", "")
+                .apply()
+        }
+
+        return getUnifiedEngineOilState(vehicleId)
+    }
+
+    private fun showUnifiedEngineOilConfigDialog(onSaved: (() -> Unit)? = null) {
+        val vehicleId = getActiveVehicleScopeId()
+        val oilState = getUnifiedEngineOilState(vehicleId)
+        val currentCarOdo = getEffectiveCarOdometerKm()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_RTL
+            setBackgroundColor(Color.rgb(12, 28, 42))
+            setPadding(dp(18), dp(14), dp(18), dp(10))
+        }
+
+        root.addView(text("🛢️ الإدخال الموحد لبيانات زيت المحرك والفلتر", 15, Color.rgb(248, 199, 74), true))
+        root.addView(text("يتم إدخال بيانات زيت المحرك من هنا مرة واحدة وتُعتمد تلقائياً في شاشة الوقود والزيت، التحليل التنبؤي، والصيانة دون أي تعارض:", 11, Color.rgb(180, 215, 240), false).apply {
+            setPadding(0, dp(4), 0, dp(8))
+        })
+
+        root.addView(text("1. الكيلومترات المطلوبة لغيار زيت المحرك (مثال: 5000 أو 10000 كم):", 12, Color.rgb(110, 231, 255), true))
+        val etTargetKm = edit("عدد الكيلومترات المطلوبة للغيار (كم)").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            if (oilState.isConfigured && oilState.targetKm > 0f) {
+                setText(String.format(java.util.Locale.US, "%.0f", oilState.targetKm))
+            }
+        }
+        root.addView(etTargetKm)
+
+        root.addView(text("2. تكلفة غيار الزيت والفلتر بالجنيه (اختياري لحساب تكلفة الزيت/كم):", 12, Color.rgb(110, 231, 255), true).apply {
+            setPadding(0, dp(6), 0, 0)
+        })
+        val etOilPrice = edit("تكلفة غيار الزيت والفلتر (ج.م)").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            if (oilState.isConfigured && oilState.totalPriceEgp > 0f) {
+                setText(String.format(java.util.Locale.US, "%.0f", oilState.totalPriceEgp))
+            }
+        }
+        root.addView(etOilPrice)
+
+        root.addView(text("3. قراءة عداد طبلون السيارة عند بداية الغيار (كم):", 12, Color.rgb(110, 231, 255), true).apply {
+            setPadding(0, dp(6), 0, 0)
+        })
+        val etBaselineOdo = edit("قراءة عداد السيارة عند وضع الزيت (كم)").apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            val baseToShow = if (oilState.isConfigured && oilState.baselineOdoKm > 0f) oilState.baselineOdoKm else currentCarOdo
+            if (baseToShow > 0f) {
+                setText(String.format(java.util.Locale.US, "%.1f", baseToShow))
+            }
+        }
+        root.addView(etBaselineOdo)
+
+        AlertDialog.Builder(this)
+            .setView(root)
+            .setPositiveButton("💾 حفظ وتوحيد بيانات زيت المحرك") { _, _ ->
+                val targetVal = etTargetKm.text.toString().trim().toFloatOrNull()
+                if (targetVal == null || targetVal <= 0f) {
+                    Toast.makeText(this, "يرجى إدخال الكيلومترات المطلوبة لغيار الزيت بشكل صحيح", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val priceVal = etOilPrice.text.toString().trim().toFloatOrNull() ?: oilState.totalPriceEgp
+                val baseVal = etBaselineOdo.text.toString().trim().toFloatOrNull() ?: currentCarOdo
+                saveUnifiedEngineOilConfig(
+                    targetKm = targetVal,
+                    totalPriceEgp = priceVal,
+                    baselineOdoKm = baseVal,
+                    resetElapsed = false,
+                    vehicleId = vehicleId
+                )
+                Toast.makeText(this, "✅ تم حفظ بيانات زيت المحرك وتوحيدها في جميع الشاشات وتفعيل التنبيه عند ${targetVal.toInt()} كم", Toast.LENGTH_SHORT).show()
+                onSaved?.invoke() ?: renderCurrentScreen()
+            }
+            .setNeutralButton("🔄 غيار زيت جديد الآن (تصفير)") { _, _ ->
+                val targetVal = etTargetKm.text.toString().trim().toFloatOrNull() ?: oilState.targetKm
+                val priceVal = etOilPrice.text.toString().trim().toFloatOrNull() ?: oilState.totalPriceEgp
+                resetUnifiedEngineOilCycle(
+                    newBaselineOdoKm = currentCarOdo,
+                    newTargetKm = if (targetVal > 0f) targetVal else null,
+                    newPriceEgp = if (priceVal > 0f) priceVal else null,
+                    vehicleId = vehicleId
+                )
+                Toast.makeText(this, "✅ تم تصفير عداد زيت المحرك وبدء دورة جديدة عند عداد (${currentCarOdo.toInt()} كم)", Toast.LENGTH_SHORT).show()
+                onSaved?.invoke() ?: renderCurrentScreen()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    // ========================================================
+    // PREDICTIVE CONSUMABLES & DEDICATED PER-ITEM ALERTS (تحليل تنبؤي للكاوتش وزيت الدركسيون والفلاتر)
     // ========================================================
     data class PredictiveConsumableItem(
         val key: String,
@@ -6325,8 +6777,7 @@ class MainActivity : Activity() {
         PredictiveConsumableItem("tire_rear_right", "كاوتش العربية - يمين خلف", "🛞"),
         PredictiveConsumableItem("tire_rear_left", "كاوتش العربية - شمال يسرا (خلف)", "🛞"),
         PredictiveConsumableItem("air_filter", "فلتر الهواء", "🌬️"),
-        PredictiveConsumableItem("fuel_filter", "فلتر البنزين / السولار", "⛽"),
-        PredictiveConsumableItem("engine_oil", "زيت المحرك والفلتر", "🛢️")
+        PredictiveConsumableItem("fuel_filter", "فلتر البنزين / السولار", "⛽")
     )
 
     private fun loadPredictiveConsumables(vehicleId: String = getActiveVehicleScopeId()): MutableList<PredictiveConsumableItem> {
@@ -6387,6 +6838,9 @@ class MainActivity : Activity() {
     }
 
     private fun evaluateAndStoreConsumableAlerts(vehicleId: String = getActiveVehicleScopeId(), triggerSystemAlert: Boolean = false): List<PredictiveConsumableItem> {
+        // Always evaluate unified Engine Oil alert alongside the other consumables
+        evaluateUnifiedEngineOilAlert(vehicleId, triggerSystemAlert = triggerSystemAlert)
+
         val items = loadPredictiveConsumables(vehicleId)
         val currentOdo = getEffectiveCarOdometerKm()
         val nowStr = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
@@ -6478,19 +6932,21 @@ class MainActivity : Activity() {
         val fuelAnomalyCount = filteredSnapshots.count { it.hasFuelAnomaly }
         val totalAnomalies = heatAnomalyCount + crankAnomalyCount + fuelAnomalyCount
 
-        // Evaluate and load predictive consumables & stored per-item alerts
+        // Evaluate and load unified Engine Oil state + predictive consumables & stored per-item alerts
+        val unifiedOilState = evaluateUnifiedEngineOilAlert(vehicleId, triggerSystemAlert = false)
         val consumableItems = evaluateAndStoreConsumableAlerts(vehicleId, triggerSystemAlert = false)
         val activeConsumableAlerts = consumableItems.filter { it.isConfigured && it.storedAlertText.isNotBlank() }
+        val totalStoredAlertsCount = activeConsumableAlerts.size + (if (unifiedOilState.isConfigured && unifiedOilState.storedAlertText.isNotBlank()) 1 else 0)
         val currentOdoForPred = getEffectiveCarOdometerKm()
 
         // ----------------------------------------------------
-        // SECTION 1: DEDICATED PER-ITEM CONSUMABLES & ALERTS (تنبيه خاص عند كل نوع فلتر أو كاوتش أو زيت دركسيون)
+        // SECTION 1: DEDICATED PER-ITEM CONSUMABLES & ALERTS (تنبيه خاص عند كل نوع فلتر أو كاوتش أو زيت دركسيون + الربط الموحد لزيت المحرك)
         // ----------------------------------------------------
         val consumablesSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(text("أدخل مقدار الكيلومترات المطلوبة لكل بند (زيت الدركسيون، كل فردة كاوتش، فلتر الهواء، فلتر البنزين/السولار، زيت المحرك). يصدر البرنامج تنبيهاً عند وصول الوقت ويتم تخزينه هنا كتنبيه خاص عند كل نوع:", 12, Color.rgb(185, 220, 245), false))
+            addView(text("أدخل مقدار الكيلومترات المطلوبة لكل بند (زيت الدركسيون، كل فردة كاوتش، فلتر الهواء، فلتر البنزين/السولار)، مع الربط المباشر بالدالة الموحدة لزيت المحرك لمنع أي تعارض:", 12, Color.rgb(185, 220, 245), false))
 
-            if (activeConsumableAlerts.isNotEmpty()) {
+            if (totalStoredAlertsCount > 0) {
                 val alertsSummaryBox = LinearLayout(this@MainActivity).apply {
                     orientation = LinearLayout.VERTICAL
                     setBackgroundColor(Color.rgb(52, 18, 24))
@@ -6500,7 +6956,12 @@ class MainActivity : Activity() {
                     lp.bottomMargin = dp(6)
                     layoutParams = lp
                 }
-                alertsSummaryBox.addView(text("🔔 التنبيهات الخاصة المخزنة حالياً (${activeConsumableAlerts.size}):", 13, Color.rgb(255, 130, 130), true))
+                alertsSummaryBox.addView(text("🔔 التنبيهات الخاصة المخزنة حالياً ($totalStoredAlertsCount):", 13, Color.rgb(255, 130, 130), true))
+                if (unifiedOilState.isConfigured && unifiedOilState.storedAlertText.isNotBlank()) {
+                    alertsSummaryBox.addView(text("• 🛢️ زيت المحرك والفلتر (دالة موحدة): ${unifiedOilState.storedAlertText}", 11, Color.rgb(255, 215, 215), false).apply {
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                }
                 activeConsumableAlerts.forEach { alertedItem ->
                     alertsSummaryBox.addView(text("• ${alertedItem.icon} ${alertedItem.title}: ${alertedItem.storedAlertText}", 11, Color.rgb(255, 215, 215), false).apply {
                         setPadding(0, dp(4), 0, 0)
@@ -6509,6 +6970,87 @@ class MainActivity : Activity() {
                 addView(alertsSummaryBox)
             }
 
+            // 1-A. UNIFIED ENGINE OIL CARD (مرتبط بالدالة الموحدة لزيت المحرك بدون أي تكرار أو تعارض)
+            val oilIsDue = unifiedOilState.isConfigured && unifiedOilState.currentElapsedKm >= unifiedOilState.targetKm
+            val oilIsWarning = unifiedOilState.isConfigured && !oilIsDue && unifiedOilState.remainingKm <= 500f
+            val oilStatusSuffix = when {
+                !unifiedOilState.isConfigured -> "غير مسجل بعد - دالة موحدة"
+                oilIsDue -> "🚨 حان موعد غيار الزيت!"
+                oilIsWarning -> "⚠️ اقترب الغيار (متبقي ${String.format("%.0f", unifiedOilState.remainingKm)} كم)"
+                else -> "✅ متبقي ${String.format("%.0f", unifiedOilState.remainingKm)} كم"
+            }
+
+            val unifiedOilBody = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                if (unifiedOilState.isConfigured && unifiedOilState.storedAlertText.isNotBlank()) {
+                    val oilAlertBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(if (oilIsDue) Color.rgb(68, 18, 22) else Color.rgb(60, 42, 14))
+                        setPadding(dp(10), dp(8), dp(10), dp(8))
+                        val alp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        alp.bottomMargin = dp(8)
+                        layoutParams = alp
+                    }
+                    oilAlertBox.addView(text("🔔 تنبيه خاص محفوظ لـ زيت المحرك والفلتر:", 12, Color.rgb(255, 190, 120), true))
+                    oilAlertBox.addView(text(unifiedOilState.storedAlertText, 12, Color.WHITE, true).apply { setPadding(0, dp(3), 0, 0) })
+                    if (unifiedOilState.storedAlertTimestamp.isNotBlank()) {
+                        oilAlertBox.addView(text("وقت تسجيل التنبيه: ${unifiedOilState.storedAlertTimestamp}", 10, Color.rgb(210, 210, 210), false))
+                    }
+                    addView(oilAlertBox)
+                } else {
+                    addView(text("🔕 التنبيه الخاص لزيت المحرك: لا يوجد تنبيه مستحق حالياً.", 11, Color.rgb(140, 200, 170), false).apply {
+                        setPadding(0, 0, 0, dp(6))
+                    })
+                }
+
+                if (unifiedOilState.isConfigured) {
+                    addView(text("• الكيلومترات المحددة لغيار الزيت: ${String.format("%.0f", unifiedOilState.targetKm)} كم | التكلفة: ${String.format("%.0f", unifiedOilState.totalPriceEgp)} ج.م", 12, Color.rgb(0, 229, 255), true))
+                    addView(text("• العداد عند الغيار: ${String.format("%.1f", unifiedOilState.baselineOdoKm)} كم | المقطوع بالزيت: ${String.format("%.1f", unifiedOilState.currentElapsedKm)} كم (${String.format("%.1f%%", unifiedOilState.consumedPercent)})", 11, Color.WHITE, false))
+                    addView(text("• المتبقي حتى التنبيه: ${String.format("%.1f", unifiedOilState.remainingKm)} كم (تاريخ التحديث: ${unifiedOilState.lastUpdatedDate.ifBlank { "--" }})", 11, if (oilIsDue) Color.rgb(255, 100, 100) else Color.rgb(126, 242, 154), true))
+                } else {
+                    addView(text("• لم يتم إدخال بيانات زيت المحرك بعد. اضغط الزر أدناه لإدخالها عبر الدالة الموحدة لزيت المحرك.", 11, Color.rgb(180, 195, 210), false))
+                }
+
+                val oilBtnRow = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    rlp.topMargin = dp(8)
+                    layoutParams = rlp
+                }
+                oilBtnRow.addView(Button(this@MainActivity).apply {
+                    text = "🛢️ فتح الدالة الموحدة لإدخال/تعديل زيت المحرك"
+                    textSize = 11f
+                    setBackgroundColor(Color.rgb(18, 128, 92))
+                    setTextColor(Color.WHITE)
+                    val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.3f)
+                    blp.leftMargin = dp(4)
+                    layoutParams = blp
+                    setOnClickListener {
+                        showUnifiedEngineOilConfigDialog { renderCurrentScreen() }
+                    }
+                })
+                if (unifiedOilState.isConfigured) {
+                    oilBtnRow.addView(Button(this@MainActivity).apply {
+                        text = "🔄 تصفير لدورة جديدة"
+                        textSize = 11f
+                        setBackgroundColor(Color.rgb(36, 77, 111))
+                        setTextColor(Color.WHITE)
+                        val blp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                        layoutParams = blp
+                        setOnClickListener {
+                            resetUnifiedEngineOilCycle(newBaselineOdoKm = getEffectiveCarOdometerKm(), vehicleId = vehicleId)
+                            Toast.makeText(this@MainActivity, "✅ تم تصفير عداد زيت المحرك الموحد وبدء دورة جديدة", Toast.LENGTH_SHORT).show()
+                            renderCurrentScreen()
+                        }
+                    })
+                }
+                addView(oilBtnRow)
+            }
+            addView(collapsibleSection("زيت المحرك والفلتر ($oilStatusSuffix)", "🛢️", initiallyExpanded = false) { sec ->
+                sec.addView(unifiedOilBody)
+            })
+
+            // 1-B. OTHER 7 CONSUMABLES (زيت الدركسيون + 4 فرد كاوتش + فلتر الهواء + فلتر البنزين/السولار)
             consumableItems.forEach { item ->
                 val elapsedKm = getConsumableElapsedKm(item, currentOdoForPred)
                 val remainingKm = if (item.isConfigured && item.requiredKm > 0f) (item.requiredKm - elapsedKm).coerceAtLeast(0f) else 0f
@@ -6663,12 +7205,12 @@ class MainActivity : Activity() {
             }
         }
 
-        val mainConsumablesHeaderTitle = if (activeConsumableAlerts.isNotEmpty()) {
-            "صيانة وتنبيهات الكاوتش وزيت الدركسيون والفلاتر (${activeConsumableAlerts.size} تنبيه نشط)"
+        val mainConsumablesHeaderTitle = if (totalStoredAlertsCount > 0) {
+            "صيانة وتنبيهات الكاوتش وزيت الدركسيون والفلاتر ($totalStoredAlertsCount تنبيه نشط)"
         } else {
             "صيانة وتنبيهات الكاوتش وزيت الدركسيون والفلاتر (إدخال الكيلومترات)"
         }
-        val mainConsumablesIcon = if (activeConsumableAlerts.isNotEmpty()) "🚨" else "🔧"
+        val mainConsumablesIcon = if (totalStoredAlertsCount > 0) "🚨" else "🔧"
         container.addView(
             collapsibleSection(mainConsumablesHeaderTitle, mainConsumablesIcon, initiallyExpanded = false) { sec ->
                 sec.addView(consumablesSection)
@@ -6816,7 +7358,7 @@ class MainActivity : Activity() {
         val periodLogs = loadConsumptionTimeLogs().filter { it.timestampMs >= periodStartMs }
         val pDistKm = periodLogs.sumOf { it.distanceKm.toDouble() }.toFloat() + telemetry.tripDistanceKm
         val pFuelLiters = periodLogs.sumOf { it.fuelLiters.toDouble() }.toFloat() + telemetry.actualTripFuelLiters
-        val oilTargetKmReport = preferences.getFloat("oil_target_km", 0.0f)
+        val oilTargetKmReport = unifiedOilState.targetKm
         val pOilPercent = if (oilTargetKmReport > 0f) (pDistKm / oilTargetKmReport) * 100.0f else 0f
         val curOdoReport = getEffectiveCarOdometerKm()
         val pDepPercent = computeIntervalDepreciationPercent((curOdoReport - pDistKm).coerceAtLeast(0f), pDistKm)
@@ -7334,14 +7876,14 @@ class MainActivity : Activity() {
     }
 
     private fun showGenerateWorkshopPinDialog(targetWorkshopName: String) {
-        val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
-        val ownerPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
+        val carName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "السيارة") ?: "السيارة" }
+        val ownerPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "--" }) ?: "--"
         val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
 
         val directReq = WorkshopAccessRequest(
             id = "ws-direct-${System.currentTimeMillis()}",
             workshopName = targetWorkshopName,
-            workshopPhone = myWorkshopPhone.ifBlank { "01099887755" },
+            workshopPhone = myWorkshopPhone.ifBlank { "--" },
             ownerPhone = ownerPhone,
             targetVehicleName = carName,
             serviceReason = "تصريح فحص مباشر لمرة واحدة (بدون رقم سري)",
@@ -7367,7 +7909,10 @@ class MainActivity : Activity() {
             .setView(layout)
             .setPositiveButton("فتح شاشة فحص الورشة الآن 🔧") { _, _ ->
                 currentRole = "garage"
-                preferences.edit().putString("user_role", "garage").apply()
+                preferences.edit()
+                    .putString("active_role", "garage")
+                    .putString("user_role", "garage")
+                    .apply()
                 switchTab("workshop_console")
                 renderCurrentScreen()
             }
@@ -7388,7 +7933,7 @@ class MainActivity : Activity() {
         if (enteredPin == activeWorkshopPin) {
             isWorkshopSessionUnlocked = true
             workshopSessionGrantedBy = if (currentRole == "driver") "السائق المفوض" else "المالك الأساسي"
-            val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
+            val carName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "السيارة") ?: "السيارة" }
 
             addSecurityNotification(
                 "🔍 بدء فحص كمبيوتر السيارة",
@@ -7409,17 +7954,27 @@ class MainActivity : Activity() {
     }
 
     private fun submitWorkshopMaintenanceLog(serviceType: String, details: String, cost: String, odo: String) {
-        val carName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "السيارة"
+        val carName = getActiveVehicleProfile().name.ifBlank { preferences.getString("vehicle_name", "السيارة") ?: "السيارة" }
         val driverName = authorizedDriverName
         val wsName = activeWorkshopTargetName
 
-        if (serviceType.contains("زيت", ignoreCase = true)) {
-            val odoFloat = odo.toFloatOrNull() ?: (if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f))
-            preferences.edit()
-                .putFloat("oil_current_km", 0.0f)
-                .putFloat("oil_baseline_car_odometer", odoFloat)
-                .putFloat("car_cumulative_odometer_km", odoFloat)
-                .apply()
+        if (serviceType.contains("زيت", ignoreCase = true) && !serviceType.contains("دركسيون", ignoreCase = true)) {
+            val odoFloat = odo.toFloatOrNull() ?: getEffectiveCarOdometerKm()
+            val costFloat = cost.toFloatOrNull() ?: 0f
+            if (odoFloat > 0f) {
+                preferences.edit().putFloat("car_cumulative_odometer_km", odoFloat).apply()
+            }
+            val curOil = getUnifiedEngineOilState()
+            if (costFloat > 0f && curOil.targetKm > 0f) {
+                saveUnifiedEngineOilConfig(
+                    targetKm = curOil.targetKm,
+                    totalPriceEgp = costFloat,
+                    baselineOdoKm = odoFloat,
+                    resetElapsed = true
+                )
+            } else {
+                resetUnifiedEngineOilCycle(newBaselineOdoKm = odoFloat)
+            }
         }
 
         val today = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
@@ -7539,13 +8094,14 @@ class MainActivity : Activity() {
             val snapInstantRate = telemetry.instantFuelLPer100Km
             val snapTripRate = telemetry.tripAverageFuelRate
             val snapDtcs = telemetry.dtcCodes.toList()
-            val snapVin = telemetry.vin.ifBlank { preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456" }
+            val snapVehId = getActiveVehicleScopeId()
+            val snapVin = telemetry.vin.ifBlank { getActiveVehicleProfile().vin.ifBlank { preferences.getString("vehicle_vin", "") ?: "" } }
             Thread {
                 try {
                     val dtcArray = org.json.JSONArray()
                     snapDtcs.forEach { dtcArray.put(it) }
                     val jsonPayload = org.json.JSONObject().apply {
-                        put("vehicleId", "veh-001")
+                        put("vehicleId", snapVehId)
                         put("vin", snapVin)
                         put("speed", snapSpeed)
                         put("rpm", snapRpm)
@@ -7808,10 +8364,10 @@ class MainActivity : Activity() {
     private fun initSecurityNotificationsAndDelta() {
         loadSecurityNotifications()
         loadTelemetryDeltaLog()
-        val curVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
-        val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "مالك تجريبي" }) ?: "مالك تجريبي"
-        val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
-        if (!preferences.getBoolean("vin_is_locked_$curVin", false)) {
+        val curVin = preferences.getString("vehicle_vin", "")?.trim() ?: ""
+        val primaryOwner = preferences.getString("vehicle_primary_owner", userName) ?: userName
+        val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone) ?: userPhone
+        if (curVin.isNotBlank() && curVin != "بانتظار قراءة الشاسيه" && !preferences.getBoolean("vin_is_locked_$curVin", false)) {
             registerAndLockVin(curVin, primaryOwner, primaryPhone)
         }
     }
@@ -7948,9 +8504,10 @@ class MainActivity : Activity() {
             row6.addView(tvTripDistance.parent as View)
             addView(row6)
 
-            tvDtc = text(if (isLive) (if (telemetry.dtcCodes.isEmpty()) "لمبة الأعطال: سليمة (OFF)" else "أعطال نشطة: ${telemetry.dtcCodes.size}") else "لمبة الأعطال: بانتظار الاتصال بالسيارة", 13, if (isLive && telemetry.dtcCodes.isNotEmpty()) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154), true).apply {
+            tvDtc = text(if (isLive) (if (telemetry.dtcCodes.isEmpty()) "لمبة الأعطال: سليمة (OFF) — اضغط لفتح التشخيص" else "⚠️ أعطال نشطة: ${telemetry.dtcCodes.size} (${telemetry.dtcCodes.joinToString(", ")}) — اضغط للتفسير") else "لمبة الأعطال: بانتظار الاتصال بالسيارة", 13, if (isLive && telemetry.dtcCodes.isNotEmpty()) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154), true).apply {
                 setPadding(dp(8), dp(8), dp(8), dp(8))
                 setBackgroundColor(Color.rgb(10, 28, 42))
+                setOnClickListener { openSubScreen("dtc_diagnostics") }
             }
             addView(tvDtc)
 
@@ -7963,27 +8520,6 @@ class MainActivity : Activity() {
             }
             addView(tvFuelSourceBadge)
 
-            addView(button("🔍 فحص كمبيوتر السيارة (Scan ECU)") {
-                scanAllFuelComputers()
-            }.apply {
-                setBackgroundColor(Color.rgb(16, 185, 129))
-                setTextColor(Color.WHITE)
-            })
-
-            addView(button("⛽ ضبط ومعايرة الوقود") {
-                showFuelCalibrationDialog()
-            }.apply {
-                setBackgroundColor(Color.rgb(248, 199, 74))
-                setTextColor(Color.rgb(8, 23, 32))
-            })
-
-            addView(button("🚗 ضبط عداد السيارة (Odometer)") {
-                showOdometerCalibrationDialog()
-            }.apply {
-                setBackgroundColor(Color.rgb(14, 165, 233))
-                setTextColor(Color.WHITE)
-            })
-
             addView(button(if (isSimulating) "⏹️ إيقاف محاكي كمبيوتر السيارة" else "⚡ تشغيل محاكي كمبيوتر السيارة") {
                 toggleSimulation()
             }.apply {
@@ -7993,9 +8529,9 @@ class MainActivity : Activity() {
         }
         container.addView(cardGauges)
 
-        // SAFETY & DRIVING STYLE EXTENSION (تظهر للمالك والسائق بالتساوي لمتابعة أمان القيادة)
+        // SAFETY & DRIVING STYLE EXTENSION (بدون أزرار مكررة مع الشاشة الرئيسية)
         val cardDriverSafety = card().apply {
-            addView(text("💡 أسلوب القيادة وتقييم الأمان", 15, Color.rgb(110, 231, 255), true))
+            addView(text("💡 أسلوب القيادة وتقييم الأمان اللحظي", 15, Color.rgb(110, 231, 255), true))
 
             val statsRow = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -8008,57 +8544,6 @@ class MainActivity : Activity() {
             statsRow.addView(tvScore.parent as View)
             statsRow.addView(tvSpeedSrc.parent as View)
             addView(statsRow)
-
-            addView(text("🚨 طوارئ ومساعدة الطريق:", 13, Color.rgb(255, 140, 90), true).apply {
-                setPadding(0, dp(8), 0, dp(4))
-            })
-
-            val actionRow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                layoutParams = lp
-            }
-
-            val isDriver = (currentRole == "driver")
-            val activeCar = driverAssignedCars.find { it.isActive } ?: driverAssignedCars.firstOrNull()
-            val ownerContact = activeCar?.ownerPhone ?: preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
-            val contactPhone = if (isDriver) ownerContact else (preferences.getString("assigned_driver_phone", "01000000000") ?: "01000000000")
-            val btnContactLabel = if (isDriver) "📞 اتصال طوارئ بالمالك" else "📞 اتصال بالسائق المفوض"
-
-            actionRow.addView(Button(this@MainActivity).apply {
-                text = btnContactLabel
-                textSize = 11f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.WHITE)
-                setBackgroundColor(if (isDriver) Color.rgb(160, 40, 40) else Color.rgb(20, 80, 110))
-                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                lp.setMargins(0, 0, dp(3), 0)
-                layoutParams = lp
-                setOnClickListener {
-                    try {
-                        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$contactPhone"))
-                        startActivity(intent)
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MainActivity, "رقم الهاتف: $contactPhone", Toast.LENGTH_LONG).show()
-                    }
-                }
-            })
-
-            actionRow.addView(Button(this@MainActivity).apply {
-                text = "🗺️ أقرب ورشة صيانة"
-                textSize = 11f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(36, 77, 111))
-                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                lp.setMargins(dp(3), 0, 0, 0)
-                layoutParams = lp
-                setOnClickListener {
-                    switchTab("workshops_dir")
-                }
-            })
-
-            addView(actionRow)
         }
         container.addView(cardDriverSafety)
 
@@ -8071,18 +8556,19 @@ class MainActivity : Activity() {
     private fun buildVehiclesTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val curName = preferences.getString("vehicle_name", "شيفروليه أفيو (Chevrolet Aveo)") ?: "شيفروليه أفيو (Chevrolet Aveo)"
-        val curVin = preferences.getString("vehicle_vin", "بانتظار قراءة الشاسيه") ?: "بانتظار قراءة الشاسيه"
-        val curMake = preferences.getString("vehicle_make", "شيفروليه (Chevrolet)") ?: "شيفروليه (Chevrolet)"
-        val curYear = preferences.getString("vehicle_year", "2018") ?: "2018"
+        val activeProfile = getActiveVehicleProfile()
+        val curName = preferences.getString("vehicle_name", null)?.takeIf { it.isNotBlank() } ?: activeProfile.name
+        val curVin = preferences.getString("vehicle_vin", null)?.takeIf { it.isNotBlank() } ?: activeProfile.vin.ifBlank { "بانتظار قراءة الشاسيه" }
+        val curMake = preferences.getString("vehicle_make", null)?.takeIf { it.isNotBlank() } ?: activeProfile.make.ifBlank { "بانتظار قراءة الشاسيه" }
+        val curYear = preferences.getString("vehicle_year", null)?.takeIf { it.isNotBlank() } ?: activeProfile.year.ifBlank { "--" }
         val curSource = preferences.getString("vehicle_data_source", "كمبيوتر السيارة المباشر (ECU Mode 09)") ?: "كمبيوتر السيارة المباشر (ECU Mode 09)"
-        val primaryOwner = preferences.getString("vehicle_primary_owner", "مالك غير مسجل") ?: "مالك غير مسجل"
-        val primaryPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+        val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "مالك غير مسجل" }) ?: "مالك غير مسجل"
+        val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "--" }) ?: "--"
         val ownerSince = preferences.getString("vehicle_owner_since", "أول تسجيل للسيارة") ?: "أول تسجيل للسيارة"
         val coOwners = preferences.getString("vehicle_co_owners", "") ?: ""
 
         // Check if current user is the authorized primary owner
-        val isOwnerAuthorized = (currentRole == "owner") && (userName.equals(primaryOwner, ignoreCase = true) || primaryOwner.isEmpty() || primaryOwner == "مالك تجريبي")
+        val isOwnerAuthorized = (currentRole == "owner") && (userName.equals(primaryOwner, ignoreCase = true) || primaryOwner.isEmpty() || primaryOwner == "مالك غير مسجل")
 
         // 1. CAR ECU IDENTITY CARD (بيانات السيارة المأخوذة مباشرة من الكمبيوتر)
         val cardEcu = card().apply {
@@ -8120,7 +8606,7 @@ class MainActivity : Activity() {
                         .setTitle(if (success) "✅ نجاح قراءة كمبيوتر السيارة" else "⚠️ تنبيه القراءة")
                         .setMessage(msg)
                         .setPositiveButton("حسناً") { _, _ ->
-                            if (success) switchTab("vehicles")
+                            if (success) renderCurrentScreen()
                         }
                         .show()
                 }
@@ -8227,73 +8713,6 @@ class MainActivity : Activity() {
         }
         container.addView(cardOwnership)
 
-        // 3. NEW VEHICLE / ECU VIN SCANNER CARD
-        val cardNew = card().apply {
-            addView(text("فحص أو تسجيل مركبة أخرى من الشاسيه / الكمبيوتر ➕", 17, Color.WHITE, true))
-            addView(text("أدخل رقم الشاسيه (17 حرفاً ورقم) وسيتم فك تشفير الماركة والموديل وسنة الصنع ونوع الوقود:", 13, Color.rgb(167, 203, 226), false))
-
-            val etVehVin = edit("رقم الشاسيه VIN (مثال: KMHDH41EBNA123456)")
-            addView(etVehVin)
-
-            val (fuelSpinLayout, getSelectedFuelType) = buildFuelTypeSpinner("auto_ecu")
-            addView(fuelSpinLayout)
-
-            val tvMsg = text("", 13, Color.rgb(126, 242, 154), false)
-            addView(tvMsg)
-
-            addView(button("⚡ فك تشفير وتفعيل المركبة الجديدة") {
-                val vinIn = etVehVin.text.toString().trim().uppercase()
-                val chosenFuel = getSelectedFuelType()
-                if (vinIn.length < 10) {
-                    tvMsg.text = "يرجى إدخال رقم شاسيه صحيح (10 إلى 17 خانة)."
-                    tvMsg.setTextColor(Color.rgb(255, 122, 122))
-                    return@button
-                }
-
-                // فحص تمليك وقفل الشاسيه الصارم (Anti-Re-Registration Lock)
-                val (canRegister, lockReason) = checkVinOwnershipLock(vinIn)
-                if (!canRegister) {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setTitle("🛑 حظر تسجيل الشاسيه (ملكية محمية)")
-                        .setMessage(lockReason ?: "هذا الشاسيه مقفل ومسجل لمالك آخر.")
-                        .setPositiveButton("فهمت ذلك", null)
-                        .show()
-                    tvMsg.text = "🛑 تم رفض التسجيل: هذا الشاسيه مقيد ومملوك رسمياً لشخص آخر!"
-                    tvMsg.setTextColor(Color.rgb(255, 122, 122))
-                    return@button
-                }
-
-                val decoded = decodeVin(vinIn)
-                val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "مالك تجريبي" }) ?: "مالك تجريبي"
-                val primaryPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "01000000000" }) ?: "01000000000"
-
-                registerAndLockVin(vinIn, primaryOwner, primaryPhone)
-                applyVehicleFuelType(chosenFuel)
-
-                preferences.edit()
-                    .putString("vehicle_vin", vinIn)
-                    .putString("vehicle_name", decoded.displayName)
-                    .putString("vehicle_make", decoded.make)
-                    .putString("vehicle_year", decoded.year)
-                    .putString("vehicle_data_source", "مدخل ومطابق للشاسيه")
-                    .apply()
-
-                addSecurityNotification(
-                    "🛡️ تمليك وتأمين شاسيه جديد",
-                    "تم تسجيل وتأمين الشاسيه ($vinIn) بنجاح باسم المالك ($primaryOwner) ونوع الوقود (${getFuelTypeArabicBadge(chosenFuel)}).",
-                    "vin_claimed",
-                    "info"
-                )
-
-                tvMsg.setTextColor(Color.rgb(126, 242, 154))
-                tvMsg.text = "تم فك تشفير وتأمين ملكية المركبة: ${decoded.displayName} (${getFuelTypeArabicBadge(chosenFuel)}) بنجاح!"
-                switchTab("vehicles")
-            })
-        }
-        if (currentRole == "owner") {
-            container.addView(cardNew)
-        }
-
         return container
     }
 
@@ -8345,7 +8764,7 @@ class MainActivity : Activity() {
                     AlertDialog.Builder(this)
                         .setTitle("✅ تم نقل الملكية بنجاح")
                         .setMessage("تم نقل ملكية السيارة وتحديث وثيقتها وقفل الشاسيه باسم:\n$newName\nأصبح هو المالك المعتمد في نظام DriveCare.")
-                        .setPositiveButton("حسناً") { _, _ -> switchTab("vehicles") }
+                        .setPositiveButton("حسناً") { _, _ -> renderCurrentScreen() }
                         .show()
                 }
             }
@@ -8381,7 +8800,7 @@ class MainActivity : Activity() {
                         "info"
                     )
 
-                    switchTab("vehicles")
+                    renderCurrentScreen()
                 }
             }
             .setNegativeButton("إلغاء", null)
@@ -8570,7 +8989,7 @@ class MainActivity : Activity() {
                     }
                     telemetry.fuelUnitName = if (preset.fuelType == "cng") "م³" else "لتر"
                     Toast.makeText(this, "تم اعتماد سيارة: ${preset.name} (تانك ${preset.tank.toInt()} لتر)", Toast.LENGTH_SHORT).show()
-                    switchTab("vehicles")
+                    renderCurrentScreen()
                 }
             }
             .setPositiveButton("🔍 شاشة فحص OBD") { _, _ -> switchTab("scanner") }
@@ -8620,7 +9039,7 @@ class MainActivity : Activity() {
                     telemetry.vin = vin
                     applyVehicleFuelType(chosenFuel)
                     Toast.makeText(this, "تم حفظ بيانات: $name (${getFuelTypeArabicBadge(chosenFuel)})", Toast.LENGTH_SHORT).show()
-                    switchTab("vehicles")
+                    renderCurrentScreen()
                 }
             }
             .setNegativeButton("إلغاء", null)
@@ -8633,10 +9052,11 @@ class MainActivity : Activity() {
     private fun buildScannerTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val activeCarName = preferences.getString("vehicle_name", "شيفروليه أفيو") ?: "شيفروليه أفيو"
-        val activeVin = preferences.getString("vehicle_vin", "KMHDH41EBNA123456") ?: "KMHDH41EBNA123456"
-        val primaryOwner = preferences.getString("vehicle_primary_owner", "المالك المسجل") ?: "المالك المسجل"
-        val primaryOwnerPhone = preferences.getString("vehicle_primary_owner_phone", "01000000000") ?: "01000000000"
+        val activeProfile = getActiveVehicleProfile()
+        val activeCarName = preferences.getString("vehicle_name", null)?.takeIf { it.isNotBlank() } ?: activeProfile.name
+        val activeVin = preferences.getString("vehicle_vin", null)?.takeIf { it.isNotBlank() } ?: activeProfile.vin.ifBlank { "بانتظار قراءة الشاسيه من OBD" }
+        val primaryOwner = preferences.getString("vehicle_primary_owner", userName.ifEmpty { "المالك المسجل" }) ?: "المالك المسجل"
+        val primaryOwnerPhone = preferences.getString("vehicle_primary_owner_phone", userPhone.ifEmpty { "--" }) ?: "--"
 
         // Server Authorization & VIN Pairing Banner (يوضح آلية ربط السائق أو المالك بقارئ الكمبيوتر عبر السيرفر)
         val cardAuthBanner = card().apply {
@@ -8951,9 +9371,9 @@ class MainActivity : Activity() {
 
     private fun finalizeAndResetTrip() {
         val fuelPrice = preferences.getFloat("fuel_liter_price", 15.0f)
-        val oilPrice = preferences.getFloat("oil_total_price", 1200.0f)
-        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
-        val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
+        val unifiedOil = getUnifiedEngineOilState()
+        val oilTargetKm = unifiedOil.targetIntervalKm
+        val oilCostPerKm = unifiedOil.costPerKm
 
         val tripDist = telemetry.tripDistanceKm
         val tripFuel = telemetry.actualTripFuelLiters
@@ -9024,14 +9444,14 @@ class MainActivity : Activity() {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         val fuelPrice = preferences.getFloat("fuel_liter_price", 15.0f)
-        val oilPrice = preferences.getFloat("oil_total_price", 1200.0f)
-        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
-        val oilCurrentKm = preferences.getFloat("oil_current_km", 0.0f)
+        val unifiedOil = getUnifiedEngineOilState()
+        val oilTargetKm = unifiedOil.targetIntervalKm
+        val oilCurrentKm = unifiedOil.drivenKm
         val baselineFuelRate = preferences.getFloat("fuel_rate_baseline", 7.2f)
 
-        val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
-        val remainingOilKm = (oilTargetKm - oilCurrentKm).coerceAtLeast(0f)
-        val oilConsumedPercent = if (oilTargetKm > 0f) ((oilCurrentKm / oilTargetKm) * 100.0f).coerceIn(0f, 100f) else 0f
+        val oilCostPerKm = unifiedOil.costPerKm
+        val remainingOilKm = unifiedOil.remainingKm
+        val oilConsumedPercent = unifiedOil.wearPercent
 
         val vehicleEmptyWeight = preferences.getFloat("vehicle_empty_weight", 1200.0f)
         val weightPenaltyPercent = if (vehicleEmptyWeight > 0f) {
@@ -9369,7 +9789,7 @@ class MainActivity : Activity() {
         container.addView(sectionFuelLive)
 
         // =========================================================================
-        // PILLAR 2 (Closed by Default): 🛢️ استهلاك الزيت وعداد غيار الزيت (مستقل تماماً)
+        // PILLAR 2 (Closed by Default): 🛢️ استهلاك الزيت وعداد غيار الزيت (مرتبط بالدالة الموحدة لزيت المحرك)
         // =========================================================================
         val sectionOilIndependent = collapsibleSection("2. استهلاك الزيت وعداد غيار الزيت", "🛢️", initiallyExpanded = false) { sec ->
             val oilRow1 = LinearLayout(this@MainActivity).apply {
@@ -9378,11 +9798,11 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val mbOilCur = metricBox("المقطوع بالزيت الحالي", "${oilCurrentKm.toInt()} كم", Color.WHITE)
+            val mbOilCur = metricBox("المقطوع بالزيت الحالي", if (unifiedOil.isConfigured) "${oilCurrentKm.toInt()} كم" else "غير مدخل", Color.WHITE)
             tvFuelTabOilCurrentKm = mbOilCur
             oilRow1.addView(mbOilCur.parent as View)
 
-            val mbOilRem = metricBox("المتبقي حتى الغيار", "${remainingOilKm.toInt()} كم", if (remainingOilKm < 500f) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154))
+            val mbOilRem = metricBox("المتبقي حتى الغيار", if (unifiedOil.isConfigured) "${remainingOilKm.toInt()} كم" else "أدخل البيانات", if (unifiedOil.isAlertDue) Color.rgb(255, 122, 122) else Color.rgb(126, 242, 154))
             tvFuelTabOilRemainingKm = mbOilRem
             oilRow1.addView(mbOilRem.parent as View)
             sec.addView(oilRow1)
@@ -9393,7 +9813,7 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(4)
                 layoutParams = lp
             }
-            val mbOilPct = metricBox("نسبة استهلاك عمر الزيت", String.format("%.1f%%", oilConsumedPercent), Color.rgb(248, 199, 74))
+            val mbOilPct = metricBox("نسبة استهلاك عمر الزيت", if (unifiedOil.isConfigured) String.format("%.1f%%", oilConsumedPercent) else "--", Color.rgb(248, 199, 74))
             tvFuelTabOilWearPercent = mbOilPct
             oilRow2.addView(mbOilPct.parent as View)
 
@@ -9403,7 +9823,7 @@ class MainActivity : Activity() {
             oilRow2.addView(mbTripOil.parent as View)
             sec.addView(oilRow2)
 
-            val oilBaselineOdo = preferences.getFloat("oil_baseline_car_odometer", 0f)
+            val oilBaselineOdo = unifiedOil.baselineOdometerKm
             val odoInfoRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -9411,11 +9831,8 @@ class MainActivity : Activity() {
                 layoutParams = lp
             }
             odoInfoRow.addView(metricBox("عداد السيارة الحالي", "${currentCarOdo.toInt()} كم", Color.rgb(110, 231, 255)).parent as View)
-            odoInfoRow.addView(metricBox("العداد عند آخر غيار زيت", if (oilBaselineOdo > 0f) "${oilBaselineOdo.toInt()} كم" else "غير محدد", Color.rgb(248, 199, 74)).parent as View)
+            odoInfoRow.addView(metricBox("العداد عند آخر غيار زيت", if (unifiedOil.isConfigured && oilBaselineOdo > 0f) "${oilBaselineOdo.toInt()} كم" else "غير محدد", Color.rgb(248, 199, 74)).parent as View)
             sec.addView(odoInfoRow)
-
-            val tvResetMsg = text("", 12, Color.rgb(126, 242, 154), false)
-            sec.addView(tvResetMsg)
 
             val actionRow = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -9423,14 +9840,8 @@ class MainActivity : Activity() {
                 lp.topMargin = dp(6)
                 layoutParams = lp
             }
-            actionRow.addView(button("🔄 تصفير عداد الزيت (غيار جديد)") {
-                val curOdo = getEffectiveCarOdometerKm()
-                preferences.edit()
-                    .putFloat("oil_current_km", 0.0f)
-                    .putFloat("oil_baseline_car_odometer", curOdo)
-                    .apply()
-                tvResetMsg.text = "✅ تم تصفير عداد الزيت وتثبيت عداد السيارة عند (${curOdo.toInt()} كم)."
-                switchTab("fuel")
+            actionRow.addView(button("🛢️ إدخال / تسجيل غيار زيت المحرك الموحد") {
+                showUnifiedEngineOilConfigDialog { switchTab("fuel") }
             }.apply {
                 val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 lp.setMargins(0, 0, dp(3), 0)
@@ -9781,9 +10192,9 @@ class MainActivity : Activity() {
         container.addView(sectionDateRangeReports)
 
         // =========================================================================
-        // PILLAR 5 (Closed by Default): ⚙️ إعدادات الوقود والزيت ومعاملات الإهلاك (بدون قيمة مالية للسيارة)
+        // PILLAR 5 (Closed by Default): ⚙️ إعدادات الوقود ومعاملات الإهلاك (بدون تكرار حقول الزيت)
         // =========================================================================
-        val sectionSettings = collapsibleSection("إعدادات الوقود والزيت ومعاملات الهالك", "⚙️", initiallyExpanded = false) { sec ->
+        val sectionSettings = collapsibleSection("إعدادات الوقود ومعاملات الهالك", "⚙️", initiallyExpanded = false) { sec ->
             val curFuelType = preferences.getString("vehicle_fuel_type", "gasoline") ?: "gasoline"
             sec.addView(text("نوع وقود المركبة:", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(4), 0, 0) })
 
@@ -9839,14 +10250,6 @@ class MainActivity : Activity() {
             val etFuelRate = edit("المعدل القياسي").apply { setText(String.format("%.1f", baselineFuelRate)) }
             sec.addView(etFuelRate)
 
-            sec.addView(text("تكلفة غيار الزيت والفلتر (ج.م):", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etOilPrice = edit("تكلفة الزيت").apply { setText(String.format("%.0f", oilPrice)) }
-            sec.addView(etOilPrice)
-
-            sec.addView(text("عمر نوع الزيت بالكيلومتر:", 13, Color.rgb(110, 231, 255), true).apply { setPadding(0, dp(4), 0, 0) })
-            val etOilTarget = edit("عمر الزيت بالكم").apply { setText(String.format("%.0f", oilTargetKm)) }
-            sec.addView(etOilTarget)
-
             sec.addView(text("وزن المركبة وهي فارغة (كجم):", 13, Color.rgb(248, 199, 74), true).apply { setPadding(0, dp(6), 0, 0) })
             val etVehicleWeight = edit("الوزن كجم").apply { setText(String.format("%.0f", vehicleEmptyWeight)) }
             sec.addView(etVehicleWeight)
@@ -9882,19 +10285,15 @@ class MainActivity : Activity() {
             val tvSaveMsg = text("", 13, Color.rgb(126, 242, 154), false)
             sec.addView(tvSaveMsg)
 
-            sec.addView(button("💾 حفظ وتحديث الإعدادات") {
+            sec.addView(button("💾 حفظ وتحديث إعدادات الوقود والوزن") {
                 val fP = etFuelPrice.text.toString().toFloatOrNull() ?: fuelPrice
                 val fR = etFuelRate.text.toString().toFloatOrNull() ?: baselineFuelRate
-                val oP = etOilPrice.text.toString().toFloatOrNull() ?: oilPrice
-                val oT = etOilTarget.text.toString().toFloatOrNull() ?: oilTargetKm
                 val tC = etTankCap.text.toString().toFloatOrNull() ?: tankCap
                 val vW = etVehicleWeight.text.toString().toFloatOrNull() ?: vehicleEmptyWeight
 
                 preferences.edit()
                     .putFloat("fuel_liter_price", fP)
                     .putFloat("fuel_rate_baseline", fR)
-                    .putFloat("oil_total_price", oP)
-                    .putFloat("oil_target_km", oT)
                     .putFloat("tank_capacity_liters", tC)
                     .putFloat("vehicle_empty_weight", vW)
                     .apply()
@@ -10593,7 +10992,8 @@ class MainActivity : Activity() {
                 val dtSec = 0.5
                 val distSlice = (telemetry.speed.toDouble() * (dtSec / 3600.0)).toFloat()
                 telemetry.tripDistanceKm += distSlice
-                val curOil = preferences.getFloat("oil_current_km", 0f)
+                val vehId = getActiveVehicleScopeId()
+                val curOil = preferences.getFloat("oil_current_km_$vehId", preferences.getFloat("oil_current_km", 0f))
                 val curCarOdo = preferences.getFloat("car_cumulative_odometer_km", 125480f) + distSlice
                 telemetry.carOdometerKm = curCarOdo
                 telemetry.odometerSource = "محاكاة عداد السيارة التراكمي (ECU Odometer Mode 01A6) 🟢"
@@ -10605,6 +11005,7 @@ class MainActivity : Activity() {
                 }
 
                 preferences.edit()
+                    .putFloat("oil_current_km_$vehId", curOil + distSlice)
                     .putFloat("oil_current_km", curOil + distSlice)
                     .putFloat("car_cumulative_odometer_km", curCarOdo)
                     .putFloat("saved_trip_distance_km", telemetry.tripDistanceKm)
@@ -11117,9 +11518,9 @@ class MainActivity : Activity() {
     private fun updateFuelTabLiveUI() {
         if (activeTab != "fuel") return
         val fuelPrice = preferences.getFloat("fuel_liter_price", 15.0f)
-        val oilPrice = preferences.getFloat("oil_total_price", 1200.0f)
-        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
-        val oilCurrentKm = preferences.getFloat("oil_current_km", 0.0f)
+        val unifiedOil = getUnifiedEngineOilState()
+        val oilTargetKm = unifiedOil.targetIntervalKm
+        val oilCurrentKm = unifiedOil.drivenKm
         val baselineFuelRate = preferences.getFloat("fuel_rate_baseline", 7.2f)
 
         val vehicleEmptyWeight = preferences.getFloat("vehicle_empty_weight", 1200.0f)
@@ -11129,9 +11530,9 @@ class MainActivity : Activity() {
             (plannedCargoWeightKg / 100.0f) * 5.0f
         }
         val loadedFuelRate = baselineFuelRate * (1.0f + (weightPenaltyPercent / 100.0f))
-        val oilCostPerKm = if (oilTargetKm > 0f) oilPrice / oilTargetKm else 0f
-        val remainingOilKm = (oilTargetKm - oilCurrentKm).coerceAtLeast(0f)
-        val oilConsumedPercent = if (oilTargetKm > 0f) ((oilCurrentKm / oilTargetKm) * 100.0f).coerceIn(0f, 100f) else 0f
+        val oilCostPerKm = unifiedOil.costPerKm
+        val remainingOilKm = unifiedOil.remainingKm
+        val oilConsumedPercent = unifiedOil.wearPercent
 
         val hasDrivenFirstKm = telemetry.tripDistanceKm >= 1.0f && telemetry.actualTripFuelLiters > 0.02f
         val realMeasuredTripRate = if (hasDrivenFirstKm) {
@@ -11189,12 +11590,14 @@ class MainActivity : Activity() {
 
     private fun updateMaintenanceTabLiveUI() {
         if (activeTab != "maint") return
-        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
-        val oilCurrentKm = preferences.getFloat("oil_current_km", 0.0f)
-        val remainingOilKm = (oilTargetKm - oilCurrentKm).coerceAtLeast(0f)
-        val carOdoKm = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
+        val unifiedOil = getUnifiedEngineOilState()
+        val carOdoKm = getEffectiveCarOdometerKm()
         val odoLabel = if (carOdoKm > 0f) " | عداد السيارة: ${carOdoKm.toInt()} كم" else ""
-        tvMaintOilText?.text = "• زيت المحرك والفلتر: مقطوع ${oilCurrentKm.toInt()} كم | متبقي ${remainingOilKm.toInt()} كم حتى موعد الغيار$odoLabel"
+        tvMaintOilText?.text = if (unifiedOil.isConfigured) {
+            "• زيت المحرك والفلتر: مقطوع ${unifiedOil.drivenKm.toInt()} كم | متبقي ${unifiedOil.remainingKm.toInt()} كم حتى موعد الغيار$odoLabel"
+        } else {
+            "• زيت المحرك والفلتر: غير مدخل بعد (اضغط لإدخال البيانات من دالة زيت المحرك الموحدة)$odoLabel"
+        }
     }
 
     private fun updateLiveUI() {
@@ -11236,59 +11639,73 @@ class MainActivity : Activity() {
             }
         }
 
-        // Automatic Safety Alerts & Warning Banner Check
+        // Sync active DTCs and sensor faults to persistent fault log (local + server) with timestamps
+        val currentActiveFaultCodes = mutableListOf<String>()
+        currentActiveFaultCodes.addAll(telemetry.dtcCodes)
+        if (telemetry.coolantTemp >= 100) {
+            currentActiveFaultCodes.add("HEAT-100C")
+        }
+        if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs >= 8000L) && telemetry.batteryVoltage in 6.0f..11.8f) {
+            if (lowBatterySustainedCount >= 3) {
+                currentActiveFaultCodes.add("BATT-LOW")
+            }
+        }
+        processAndSyncDetectedVehicleFaults(currentActiveFaultCodes, isLiveEcuScan = (telemetry.isConnected || isSimulating))
+
+        // Automatic Safety Alerts & Warning Banner Check (الأولوية القصوى لأعطال الكمبيوتر وحرارة المحرك لتظهر فوراً بصوت ورسالة تحذير خفيفة)
         if (!isSimulatingAlert) {
-            val oilTarget = preferences.getFloat("oil_target_km", 5000.0f)
-            val oilCurrent = preferences.getFloat("oil_current_km", 0.0f)
-            val remainingOil = (oilTarget - oilCurrent).coerceAtLeast(0f)
+            val unifiedOil = getUnifiedEngineOilState()
 
             if (telemetry.coolantTemp >= 100) {
                 setSafetyAlert(
                     "coolant_overheat",
-                    "🚨 تحذير طارئ: حرارة المحرك مرتفعة (${telemetry.coolantTemp} °C)!",
-                    "حرارة سائل التبريد تجاوزت 100°C! يرجى التوقف فوراً وفحص سائل التبريد ومروحة الرادياتير.",
+                    "🚨 تحذير عطل حرارة المحرك [HEAT-100C] (${telemetry.coolantTemp} °C)",
+                    "حرارة سائل التبريد تجاوزت 100°C! تم حفظ العطل بالسجل والسيرفر. يرجى التوقف وفحص التبريد.",
                     critical = true
-                )
-            } else if (telemetry.fuelLevel in 1..15) {
-                setSafetyAlert(
-                    "fuel_low",
-                    "⛽ انتباه: مستوى الوقود منخفض (${telemetry.fuelLevel}%)",
-                    "متبقي أقل من 15% في الخزان. توجه لأقرب محطة وقود لتجنب توقف المحرك وتلف طلمبة البنزين.",
-                    critical = false
-                )
-            } else if (remainingOil <= 500f && oilTarget > 0f) {
-                setSafetyAlert(
-                    "oil_service",
-                    "🛢️ تذكير صيانة: اقترب موعد غيار الزيت (${remainingOil.toInt()} كم متبقي)",
-                    "وصل استهلاك زيت المحرك للحد الموصى به. يرجى تغيير الزيت والفلتر للمحافظة على أداء المحرك.",
-                    critical = false
                 )
             } else if (telemetry.dtcCodes.isNotEmpty()) {
                 val firstCode = telemetry.dtcCodes.first()
                 val diag = diagnoseDtc(firstCode)
                 val desc = if (telemetry.dtcCodes.size > 1) {
-                    "${diag.titleAr} (+ ${telemetry.dtcCodes.size - 1} أعطال أخرى)"
+                    "${diag.titleAr} (+ ${telemetry.dtcCodes.size - 1} أعطال أخرى محفوظة في تشخيص وتفسير)"
                 } else {
-                    "${diag.titleAr} - ${diag.system}"
+                    "${diag.titleAr} (${diag.system}) — محفوظ في تشخيص وتفسير"
                 }
                 setSafetyAlert(
                     "dtc_$firstCode",
-                    "⚠️ تنبيه عطل محرك: كود $firstCode",
+                    "⚠️ عطل بالسيارة [$firstCode]: ${diag.titleAr}",
                     desc,
-                    critical = (diag.severity.contains("حرجة"))
+                    critical = true
                 )
             } else if (isEngineCurrentlyRunning && (nowMs - engineRunningStartTimeMs >= 8000L) && telemetry.batteryVoltage in 6.0f..11.8f) {
-                // High Precision Rule: Starter motor cranking naturally dips voltage!
-                // Only alert if engine has been running steadily for >= 8 seconds and voltage stays below 11.9V
                 lowBatterySustainedCount++
                 if (lowBatterySustainedCount >= 3) {
                     setSafetyAlert(
                         "battery_low",
-                        "🔋 تنبيه: شحن البطارية / الدينامو منخفض (${String.format("%.1f", telemetry.batteryVoltage)}V)",
-                        "جهد الشحن أقل من 12.0 فولت أثناء تشغيل المحرك. يرجى فحص الدينامو وحزام السير.",
+                        "🔋 عطل شحن الدينامو/البطارية [BATT-LOW] (${String.format("%.1f", telemetry.batteryVoltage)}V)",
+                        "جهد الشحن أقل من 12.0V أثناء دوران المحرك. تم تسجيل العطل في تشخيص وتفسير.",
                         critical = false
                     )
                 }
+            } else if (unifiedOil.isAlertDue) {
+                val oilTitle = if (unifiedOil.remainingKm <= 0f) {
+                    "🛢️ تنبيه عاجل: حان موعد تغيير زيت المحرك الآن!"
+                } else {
+                    "🛢️ تذكير صيانة: اقترب موعد غيار زيت المحرك (متبقي ${unifiedOil.remainingKm.toInt()} كم)"
+                }
+                setSafetyAlert(
+                    "oil_service",
+                    oilTitle,
+                    "وصل استهلاك زيت المحرك (${unifiedOil.oilViscosityGrade}) إلى القيمة المحددة (${unifiedOil.drivenKm.toInt()} / ${unifiedOil.targetIntervalKm.toInt()} كم).",
+                    critical = (unifiedOil.remainingKm <= 0f)
+                )
+            } else if (telemetry.fuelLevel in 1..15) {
+                setSafetyAlert(
+                    "fuel_low",
+                    "⛽ انتباه: مستوى الوقود منخفض (${telemetry.fuelLevel}%)",
+                    "متبقي أقل من 15% في الخزان. توجه لأقرب محطة وقود لتجنب تلف طلمبة البنزين.",
+                    critical = false
+                )
             } else {
                 if (telemetry.batteryVoltage >= 12.0f) {
                     lowBatterySustainedCount = 0
@@ -11394,10 +11811,11 @@ class MainActivity : Activity() {
                     sendObdCommand(socket.outputStream, socket.inputStream, "04", 2500)
                     telemetry.dtcCodes.clear()
                     telemetry.activeAlertTitle = null
+                    markAllActiveFaultsResolved("تم مسح الأعطال عبر OBD (Mode 04)")
                     runOnUiThread {
                         updateAlertBannerUI()
                         updateLiveUI()
-                        onComplete(true, "تم إرسال أمر مسح الأعطال (Mode 04) وإطفاء لمبة Check Engine بنجاح 🟢")
+                        onComplete(true, "تم إرسال أمر مسح الأعطال (Mode 04) وإطفاء لمبة Check Engine وتسجيل وقت وتاريخ الحل في السجل والسيرفر بنجاح 🟢")
                     }
                 } catch (e: Exception) {
                     runOnUiThread { onComplete(false, "حدث خطأ أثناء مسح الأعطال: ${e.localizedMessage}") }
@@ -11409,10 +11827,11 @@ class MainActivity : Activity() {
                     sendObdCommand(wifiSocket.getOutputStream(), wifiSocket.getInputStream(), "04", 2500)
                     telemetry.dtcCodes.clear()
                     telemetry.activeAlertTitle = null
+                    markAllActiveFaultsResolved("تم مسح الأعطال عبر Wi-Fi OBD (Mode 04)")
                     runOnUiThread {
                         updateAlertBannerUI()
                         updateLiveUI()
-                        onComplete(true, "تم إرسال أمر مسح الأعطال (Mode 04) وإطفاء لمبة Check Engine بنجاح عبر Wi-Fi 🟢")
+                        onComplete(true, "تم إرسال أمر مسح الأعطال (Mode 04) وإطفاء لمبة Check Engine وتسجيل وقت وتاريخ الحل في السجل والسيرفر بنجاح 🟢")
                     }
                 } catch (e: Exception) {
                     runOnUiThread { onComplete(false, "حدث خطأ أثناء مسح الأعطال: ${e.localizedMessage}") }
@@ -11421,10 +11840,11 @@ class MainActivity : Activity() {
         } else {
             telemetry.dtcCodes.clear()
             telemetry.activeAlertTitle = null
+            markAllActiveFaultsResolved("تم مسح الأعطال وحلها")
             runOnUiThread {
                 updateAlertBannerUI()
                 updateLiveUI()
-                onComplete(true, "تم مسح سجل الأعطال وإطفاء لمبة Check Engine بنجاح (وضع المحاكاة/غير متصل) ✅")
+                onComplete(true, "تم مسح الأعطال النشطة وتوثيق وقت وتاريخ الحل في سجل البرنامج والسيرفر بنجاح ✅")
             }
         }
     }
@@ -11936,6 +12356,13 @@ class MainActivity : Activity() {
         // Automated High-Precision Fuel Flow Sensor Discovery (Zero Manual Setup)
         activeFuelSensorMode = discoverBestFuelSensor(inStream, outStream)
 
+        // قراءة وفحص أعطال كمبيوتر السيارة تلقائياً فور الاتصال (Mode 03 المؤكدة + Mode 07 المعلقة + Mode 0A الدائمة)
+        try {
+            val initialDtcs = pollAllEcuDtcs(outStream, inStream)
+            telemetry.dtcCodes.clear()
+            telemetry.dtcCodes.addAll(initialDtcs)
+        } catch (_: Exception) {}
+
         runOnUiThread {
             val ownerNameStr = preferences.getString("vehicle_primary_owner", "المالك المسجل") ?: "المالك المسجل"
             if (currentRole == "driver") {
@@ -11950,6 +12377,7 @@ class MainActivity : Activity() {
             } else {
                 statusText.text = "متصل بنجاح 🟢 تم التحقق من الشاسيه وتفعيل القياس الآلي: ${telemetry.fuelCalculationSource}"
             }
+            updateLiveUI()
             checkAndLogTelemetryDelta(force = true)
         }
 
@@ -12194,10 +12622,9 @@ class MainActivity : Activity() {
                     if (volt > 0f) telemetry.batteryVoltage = volt
                 }
 
-                // 9. DTC Trouble Codes (03)
-                if (loopCount % 20 == 0) {
-                    val dtcResp = sendObdCommand(outStream, inStream, "03", 1500)
-                    val dtcs = parseDtc(dtcResp, isCurrentProtocolCan)
+                // 9. Automatic DTC Trouble Codes Scan (Mode 03 Confirmed + Mode 07 Pending + Mode 0A Permanent)
+                if (loopCount == 1 || loopCount % 8 == 0) {
+                    val dtcs = pollAllEcuDtcs(outStream, inStream)
                     telemetry.dtcCodes.clear()
                     telemetry.dtcCodes.addAll(dtcs)
                 }
@@ -12615,14 +13042,23 @@ class MainActivity : Activity() {
         }
         preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
 
-        // 2. Calculate Real Engine Oil Distance strictly from Car Computer Odometer Difference
-        val oilBaseline = preferences.getFloat("oil_baseline_car_odometer", 0f)
+        // 2. Calculate Real Engine Oil Distance strictly from Car Computer Odometer Difference (Vehicle-Scoped + Global Sync)
+        val vehId = getActiveVehicleScopeId()
+        val oilBaselineKey = "oil_baseline_car_odometer_$vehId"
+        val oilCurrentKey = "oil_current_km_$vehId"
+        val oilBaseline = preferences.getFloat(oilBaselineKey, preferences.getFloat("oil_baseline_car_odometer", 0f))
         if (oilBaseline > 0f && telemetry.carOdometerKm >= oilBaseline) {
             val realOilKm = telemetry.carOdometerKm - oilBaseline
-            preferences.edit().putFloat("oil_current_km", realOilKm).apply()
+            preferences.edit()
+                .putFloat(oilCurrentKey, realOilKm)
+                .putFloat("oil_current_km", realOilKm)
+                .apply()
         } else if (deltaKm > 0f) {
-            val curOil = preferences.getFloat("oil_current_km", 0f)
-            preferences.edit().putFloat("oil_current_km", curOil + deltaKm).apply()
+            val curOil = preferences.getFloat(oilCurrentKey, preferences.getFloat("oil_current_km", 0f))
+            preferences.edit()
+                .putFloat(oilCurrentKey, curOil + deltaKm)
+                .putFloat("oil_current_km", curOil + deltaKm)
+                .apply()
         }
 
         // Initialize baseline references on first run
@@ -12630,9 +13066,13 @@ class MainActivity : Activity() {
             val curTrip = preferences.getFloat("saved_trip_distance_km", 0f)
             preferences.edit().putFloat("trip_start_car_odometer", (telemetry.carOdometerKm - curTrip).coerceAtLeast(0f)).apply()
         }
-        if (preferences.getFloat("oil_baseline_car_odometer", 0f) == 0f && telemetry.carOdometerKm > 0f) {
-            val curOil = preferences.getFloat("oil_current_km", 0f)
-            preferences.edit().putFloat("oil_baseline_car_odometer", (telemetry.carOdometerKm - curOil).coerceAtLeast(0f)).apply()
+        if (preferences.getFloat(oilBaselineKey, 0f) == 0f && telemetry.carOdometerKm > 0f) {
+            val curOil = preferences.getFloat(oilCurrentKey, preferences.getFloat("oil_current_km", 0f))
+            val baseVal = (telemetry.carOdometerKm - curOil).coerceAtLeast(0f)
+            preferences.edit()
+                .putFloat(oilBaselineKey, baseVal)
+                .putFloat("oil_baseline_car_odometer", baseVal)
+                .apply()
         }
     }
 
@@ -13175,7 +13615,29 @@ class MainActivity : Activity() {
         return DecodedVehicle(clean, make, year, displayName)
     }
 
-    private fun parseDtc(raw: String, isCan: Boolean = isCurrentProtocolCan): List<String> {
+    private fun pollAllEcuDtcs(outStream: OutputStream, inStream: InputStream): List<String> {
+        val combined = mutableListOf<String>()
+        try {
+            // 1. Mode 03: Confirmed / Stored DTCs (Response prefix 43)
+            val resp03 = sendObdCommand(outStream, inStream, "03", 1200)
+            for (c in parseDtc(resp03, isCurrentProtocolCan, "43")) {
+                if (!combined.contains(c)) combined.add(c)
+            }
+            // 2. Mode 07: Pending / Sporadic DTCs detected in current drive cycle (Response prefix 47)
+            val resp07 = sendObdCommand(outStream, inStream, "07", 1000)
+            for (c in parseDtc(resp07, isCurrentProtocolCan, "47")) {
+                if (!combined.contains(c)) combined.add(c)
+            }
+            // 3. Mode 0A: Permanent DTCs (Response prefix 4A)
+            val resp0A = sendObdCommand(outStream, inStream, "0A", 900)
+            for (c in parseDtc(resp0A, isCurrentProtocolCan, "4A")) {
+                if (!combined.contains(c)) combined.add(c)
+            }
+        } catch (_: Exception) {}
+        return combined
+    }
+
+    private fun parseDtc(raw: String, isCan: Boolean = isCurrentProtocolCan, modePrefix: String = "43"): List<String> {
         val list = mutableListOf<String>()
         if (raw.contains("NO DATA") || raw.contains("UNABLE") || raw.contains("ERROR")) return list
 
@@ -13234,9 +13696,9 @@ class MainActivity : Activity() {
         }
 
         for (ecuBlock in ecuPayloads) {
-            val idx = ecuBlock.indexOf("43")
+            val idx = ecuBlock.indexOf(modePrefix)
             if (idx == -1) continue
-            val payload = ecuBlock.substring(idx + 2)
+            val payload = ecuBlock.substring(idx + modePrefix.length)
             if (payload.length < 4) continue
 
             // Candidate A: Direct 2-byte DTC sequence (No count byte, starting at offset 0).
@@ -13529,6 +13991,22 @@ class MainActivity : Activity() {
             "P0705" -> DtcDiagnosis(clean, "عطل حساس وضعية عصا الفتيس (عظمة الفتيس)", "الفتيس الأوتوماتيك", "• اتساخ أو تلف مفتاح المارش والأوضاع (P, R, N, D)", "تنظيف أو استبدال مفتاح وضعيات الفتيس ومراجعة الفيوزات.", "متوسطة")
             "C0035" -> DtcDiagnosis(clean, "عطل حساس سرعة العجلة الأمامية (ABS Sensor)", "نظام الفرامل ABS", "• تلف حساس الـ ABS أو قطع في سلك الحساس عند العجلة", "فحص سلك وفيشة حساس العجلة وتنظيف الترس المسنن.", "متوسطة")
             "U0100" -> DtcDiagnosis(clean, "فقدان الاتصال بكمبيوتر المحرك (Lost Comm with ECM)", "شبكة بيانات CAN-Bus", "• ضعف شحن البطارية أو ارتخاء فيشة كمبيوتر المحرك أو فيوز الـ ECU", "تأكد من كابلات البطارية وفيوزات المحرك وإحكام فيشة الـ ECU الرئيسية.", "حرجة / فورية")
+            "HEAT-100C" -> DtcDiagnosis(
+                clean,
+                "ارتفاع خطير في حرارة مياه تبريد المحرك (Engine Overheat >= 100°C)",
+                "دورة التبريد والرادياتير",
+                "• نقص مياه التبريد أو وجود تسريب في الرادياتير أو الخراطيم\n• توقف مروحة التبريد أو تلف كتاوت/فيوز المروحة\n• تلف ثرموستات الكوعة أو ضعف طلمبة المياه",
+                "أوقف السيارة في مكان آمن ولا تفتح غطاء الرادياتير وهو ساخن، وافحص دوران المروحة ومستوى المياه.",
+                "حرجة / فورية"
+            )
+            "BATT-LOW" -> DtcDiagnosis(
+                clean,
+                "ضعف شحن الدينامو والبطارية أثناء دوران المحرك (< 12.0V)",
+                "نظام الشحن والدينامو والبطارية",
+                "• ضعف كتاوت أو شربون الدينامو وعدم إخراجه لجهد الشحن القياسي (13.5V - 14.4V)\n• ارتخاء أو انقطاع سير الدينامو\n• تلف إحدى خلايا البطارية أو تآكل القواطيش",
+                "افحص جهد شحن الدينامو بالأفوميتر وتأكد من سلامة سير المجموعة وقواطيش البطارية.",
+                "متوسطة إلى خطيرة"
+            )
             else -> {
                 val categoryName = when (clean.firstOrNull()) {
                     'P' -> "نظام المحرك ومجموعة الدفع (Powertrain)"
@@ -13562,6 +14040,532 @@ class MainActivity : Activity() {
                 )
             }
         }
+    }
+
+    // =========================================================================
+    // AUTOMATIC VEHICLE FAULT DETECTION, PERSISTENT HISTORY LOG & SERVER SYNC
+    // (قراءة الأعطال تلقائياً، إظهار تحذير صوتي ورسالة خفيفة، وحفظ وقت الظهور ووقت الحل بالبرنامج والسيرفر)
+    // =========================================================================
+    data class VehicleFaultRecord(
+        val id: String,
+        val vehicleId: String,
+        val code: String,
+        val titleAr: String,
+        val system: String,
+        val causesAr: String,
+        val solutionAr: String,
+        val severity: String,
+        val isOemSpecific: Boolean,
+        val targetBrand: String,
+        var status: String, // "active" or "resolved"
+        val detectedAtMs: Long,
+        val detectedAtStr: String,
+        var resolvedAtMs: Long = 0L,
+        var resolvedAtStr: String = ""
+    )
+
+    private fun loadVehicleFaultHistory(vehicleId: String = getActiveVehicleScopeId()): MutableList<VehicleFaultRecord> {
+        val raw = preferences.getString("vehicle_fault_history_$vehicleId", null)
+        val list = mutableListOf<VehicleFaultRecord>()
+        if (!raw.isNullOrBlank()) {
+            try {
+                val arr = org.json.JSONArray(raw)
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    list.add(
+                        VehicleFaultRecord(
+                            id = o.optString("id", "flt-$i"),
+                            vehicleId = o.optString("vehicleId", vehicleId),
+                            code = o.optString("code", "P0000"),
+                            titleAr = o.optString("titleAr", ""),
+                            system = o.optString("system", ""),
+                            causesAr = o.optString("causesAr", ""),
+                            solutionAr = o.optString("solutionAr", ""),
+                            severity = o.optString("severity", "متوسطة"),
+                            isOemSpecific = o.optBoolean("isOemSpecific", false),
+                            targetBrand = o.optString("targetBrand", "عام"),
+                            status = o.optString("status", "active"),
+                            detectedAtMs = o.optLong("detectedAtMs", 0L),
+                            detectedAtStr = o.optString("detectedAtStr", ""),
+                            resolvedAtMs = o.optLong("resolvedAtMs", 0L),
+                            resolvedAtStr = o.optString("resolvedAtStr", "")
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+        return list
+    }
+
+    private fun saveVehicleFaultHistory(vehicleId: String, list: List<VehicleFaultRecord>) {
+        try {
+            val arr = org.json.JSONArray()
+            for (item in list.take(250)) {
+                val o = org.json.JSONObject().apply {
+                    put("id", item.id)
+                    put("vehicleId", item.vehicleId)
+                    put("code", item.code)
+                    put("titleAr", item.titleAr)
+                    put("system", item.system)
+                    put("causesAr", item.causesAr)
+                    put("solutionAr", item.solutionAr)
+                    put("severity", item.severity)
+                    put("isOemSpecific", item.isOemSpecific)
+                    put("targetBrand", item.targetBrand)
+                    put("status", item.status)
+                    put("detectedAtMs", item.detectedAtMs)
+                    put("detectedAtStr", item.detectedAtStr)
+                    put("resolvedAtMs", item.resolvedAtMs)
+                    put("resolvedAtStr", item.resolvedAtStr)
+                }
+                arr.put(o)
+            }
+            preferences.edit().putString("vehicle_fault_history_$vehicleId", arr.toString()).apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun syncFaultRecordToServer(record: VehicleFaultRecord) {
+        thread {
+            try {
+                val payload = org.json.JSONObject().apply {
+                    put("vin", preferences.getString("vehicle_vin", record.vehicleId) ?: record.vehicleId)
+                    put("vehicle_id", record.vehicleId)
+                    put("vehicle_name", preferences.getString("vehicle_name", "") ?: "")
+                    put("fault_id", record.id)
+                    put("code", record.code)
+                    put("title_ar", record.titleAr)
+                    put("system", record.system)
+                    put("causes_ar", record.causesAr)
+                    put("solution_ar", record.solutionAr)
+                    put("severity", record.severity)
+                    put("status", record.status)
+                    put("detected_at_ms", record.detectedAtMs)
+                    put("detected_at_str", record.detectedAtStr)
+                    put("resolved_at_ms", record.resolvedAtMs)
+                    put("resolved_at_str", record.resolvedAtStr)
+                    put("reported_by_role", currentRole)
+                    put("reported_by_user", userName)
+                }
+                val url = java.net.URL("${getApiBaseUrl()}/api/telemetry/delta")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                conn.connectTimeout = 3500
+                conn.readTimeout = 3500
+                conn.doOutput = true
+                conn.outputStream.use { os ->
+                    os.write(payload.toString().toByteArray(Charsets.UTF_8))
+                }
+                conn.responseCode
+                conn.disconnect()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun processAndSyncDetectedVehicleFaults(activeCodes: List<String>, isLiveEcuScan: Boolean) {
+        val vehId = getActiveVehicleScopeId()
+        val history = loadVehicleFaultHistory(vehId)
+        val nowMs = System.currentTimeMillis()
+        val nowStr = formatDateTimeArabic(nowMs)
+        var changed = false
+
+        val cleanActive = activeCodes.map { it.trim().uppercase() }.filter { it.isNotBlank() && it != "P0000" }.distinct()
+
+        // 1. Register any newly detected fault with exact date & time
+        for (code in cleanActive) {
+            val existingActive = history.find { it.code.equals(code, ignoreCase = true) && it.status == "active" }
+            if (existingActive == null) {
+                val diag = diagnoseDtc(code)
+                val newRecord = VehicleFaultRecord(
+                    id = "flt_${code}_$nowMs",
+                    vehicleId = vehId,
+                    code = code,
+                    titleAr = diag.titleAr,
+                    system = diag.system,
+                    causesAr = diag.causesAr,
+                    solutionAr = diag.solutionAr,
+                    severity = diag.severity,
+                    isOemSpecific = diag.isManufacturerSpecific,
+                    targetBrand = diag.targetBrand,
+                    status = "active",
+                    detectedAtMs = nowMs,
+                    detectedAtStr = nowStr,
+                    resolvedAtMs = 0L,
+                    resolvedAtStr = ""
+                )
+                history.add(0, newRecord)
+                changed = true
+                syncFaultRecordToServer(newRecord)
+            }
+        }
+
+        // 2. If a live ECU scan is running and an active fault was resolved/disappeared, record its exact resolution timestamp!
+        if (isLiveEcuScan) {
+            for (record in history) {
+                if (record.status == "active" && !cleanActive.contains(record.code.uppercase())) {
+                    record.status = "resolved"
+                    record.resolvedAtMs = nowMs
+                    record.resolvedAtStr = nowStr
+                    changed = true
+                    syncFaultRecordToServer(record)
+                }
+            }
+        }
+
+        if (changed) {
+            saveVehicleFaultHistory(vehId, history)
+        }
+    }
+
+    private fun markSingleFaultResolved(recordId: String) {
+        val vehId = getActiveVehicleScopeId()
+        val history = loadVehicleFaultHistory(vehId)
+        val nowMs = System.currentTimeMillis()
+        val nowStr = formatDateTimeArabic(nowMs)
+        var targetCode: String? = null
+        for (rec in history) {
+            if (rec.id == recordId && rec.status == "active") {
+                rec.status = "resolved"
+                rec.resolvedAtMs = nowMs
+                rec.resolvedAtStr = nowStr
+                targetCode = rec.code
+                syncFaultRecordToServer(rec)
+            }
+        }
+        saveVehicleFaultHistory(vehId, history)
+        if (targetCode != null) {
+            telemetry.dtcCodes.removeAll { it.equals(targetCode, ignoreCase = true) }
+            if (telemetry.dtcCodes.isEmpty()) {
+                telemetry.activeAlertTitle = null
+                cancelSystemSafetyNotification()
+                updateAlertBannerUI()
+            }
+        }
+    }
+
+    private fun markAllActiveFaultsResolved(reasonNote: String = "") {
+        val vehId = getActiveVehicleScopeId()
+        val history = loadVehicleFaultHistory(vehId)
+        val nowMs = System.currentTimeMillis()
+        val nowStr = if (reasonNote.isNotBlank()) "${formatDateTimeArabic(nowMs)} ($reasonNote)" else formatDateTimeArabic(nowMs)
+        var changed = false
+        for (rec in history) {
+            if (rec.status == "active") {
+                rec.status = "resolved"
+                rec.resolvedAtMs = nowMs
+                rec.resolvedAtStr = nowStr
+                changed = true
+                syncFaultRecordToServer(rec)
+            }
+        }
+        if (changed) {
+            saveVehicleFaultHistory(vehId, history)
+        }
+    }
+
+    private fun scanEcuFaultsOnDemand(onComplete: (List<String>, String) -> Unit) {
+        val out = activeObdOutStream
+        val `in` = activeObdInStream
+        if (out != null && `in` != null && telemetry.isConnected) {
+            thread {
+                try {
+                    val codes = pollAllEcuDtcs(out, `in`)
+                    telemetry.dtcCodes.clear()
+                    telemetry.dtcCodes.addAll(codes)
+                    processAndSyncDetectedVehicleFaults(codes, isLiveEcuScan = true)
+                    runOnUiThread {
+                        updateLiveUI()
+                        val msg = if (codes.isEmpty()) {
+                            "✅ تم فحص كمبيوتر السيارة تلقائياً (Mode 03 / 07 / 0A): لا توجد أي أعطال نشطة أو معلقة حالياً."
+                        } else {
+                            "⚠️ تم اكتشاف (${codes.size}) عطل في كمبيوتر السيارة تلقائياً: ${codes.joinToString(", ")} وتم تفسيرها وحفظها بالوقت والتاريخ!"
+                        }
+                        onComplete(codes, msg)
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        onComplete(telemetry.dtcCodes, "تعذر إتمام الفحص اللحظي: ${e.localizedMessage}")
+                    }
+                }
+            }
+        } else {
+            processAndSyncDetectedVehicleFaults(telemetry.dtcCodes, isLiveEcuScan = isSimulating)
+            val msg = if (telemetry.dtcCodes.isEmpty()) {
+                "ℹ️ قارئ الـ OBD غير متصل حالياً (بمجرد الاتصال يفحص البرنامج الأعطال تلقائياً بدون تدخل يدوي). يمكنك الضغط على '🧪 تجربة محاكاة ظهور عطل' لاختبار التحذير الصوتي والرسالة وسجل التاريخ."
+            } else {
+                "⚠️ الأعطال المرصودة حالياً (${telemetry.dtcCodes.size}): ${telemetry.dtcCodes.joinToString(", ")}"
+            }
+            onComplete(telemetry.dtcCodes, msg)
+        }
+    }
+
+    // =========================================================================
+    // SUB-SCREEN: AUTOMATIC DTC DIAGNOSTICS, EXPLANATION & PERSISTENT HISTORY
+    // (شاشة تشخيص وتفسير الأعطال التلقائية وسجل تاريخ ظهور وحل الأعطال بالبرنامج والسيرفر)
+    // =========================================================================
+    private fun buildDtcDiagnosticsSubScreen(): View {
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val vehId = getActiveVehicleScopeId()
+        val activeBrand = getActiveVehicleBrand()
+        val historyList = loadVehicleFaultHistory(vehId)
+        val activeRecords = historyList.filter { it.status == "active" }
+        val resolvedRecords = historyList.filter { it.status == "resolved" }
+
+        // 1. بطاقة الفحص التلقائي المباشر والتحكم في أعطال السيارة
+        val cardAutoScan = card().apply {
+            addView(text("📋 الفحص والتشخيص التلقائي لأعطال السيارة", 17, Color.rgb(0, 229, 255), true))
+            addView(text(
+                "يقرأ البرنامج أعطال كمبيوتر السيارة (المؤكدة Mode 03 والمعلقة Mode 07 والدائمة Mode 0A) وحساسات الخطر تلقائياً فور حدوثها دون الحاجة لكتابة الكود يدوياً، ويطلق تحذيراً صوتياً ورسالة خفيفة مع حفظ العطل وتفسيره الكامل بالوقت والتاريخ في البرنامج والسيرفر.",
+                12, Color.rgb(167, 203, 226), false
+            ))
+
+            val statusRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(8)
+                layoutParams = lp
+            }
+            val connStr = if (telemetry.isConnected) "متصل حياً بـ OBD 🟢" else if (isSimulating) "محاكاة نشطة 🟡" else "بانتظار اتصال OBD ⚪"
+            val activeCountColor = if (activeRecords.isEmpty()) Color.rgb(126, 242, 154) else Color.rgb(255, 100, 100)
+            statusRow.addView(metricBox("حالة الفحص التلقائي", connStr, Color.rgb(110, 231, 255)).parent as View)
+            statusRow.addView(metricBox("الأعطال النشطة حالياً", "${activeRecords.size} عطل", activeCountColor).parent as View)
+            statusRow.addView(metricBox("أعطال تم حلها", "${resolvedRecords.size} عطل ✅", Color.rgb(126, 242, 154)).parent as View)
+            addView(statusRow)
+
+            val btnScanNow = button("🔄 فحص وقراءة أعطال كمبيوتر السيارة تلقائياً الآن") {
+                scanEcuFaultsOnDemand { _, msg ->
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                    renderCurrentScreen()
+                }
+            }.apply {
+                setBackgroundColor(Color.rgb(16, 145, 110))
+                setTextColor(Color.WHITE)
+            }
+            addView(btnScanNow)
+
+            val actionRow = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(6)
+                layoutParams = lp
+            }
+
+            actionRow.addView(Button(this@MainActivity).apply {
+                text = "🧹 مسح الأعطال وإطفاء اللمبة (Mode 04)"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(180, 55, 45))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                lp.setMargins(0, 0, dp(3), 0)
+                layoutParams = lp
+                setOnClickListener {
+                    clearDiagnosticTroubleCodes { _, msg ->
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                        renderCurrentScreen()
+                    }
+                }
+            })
+
+            actionRow.addView(Button(this@MainActivity).apply {
+                text = "🧪 تجربة محاكاة ظهور عطل وحله"
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(8, 23, 32))
+                setBackgroundColor(Color.rgb(248, 199, 74))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
+                lp.setMargins(dp(3), 0, 0, 0)
+                layoutParams = lp
+                setOnClickListener {
+                    val sampleCodes = listOf("P0300", "P0171", "P0420", "P0115", "P0335")
+                    val chosen = sampleCodes.random()
+                    if (!telemetry.dtcCodes.contains(chosen)) {
+                        telemetry.dtcCodes.add(chosen)
+                    }
+                    permanentlyDismissedAlerts.remove("dtc_$chosen")
+                    snoozedAlertsMap.remove("dtc_$chosen")
+                    processAndSyncDetectedVehicleFaults(telemetry.dtcCodes, isLiveEcuScan = false)
+                    val diag = diagnoseDtc(chosen)
+                    setSafetyAlert(
+                        "dtc_$chosen",
+                        "⚠️ عطل بالسيارة [$chosen]: ${diag.titleAr}",
+                        "${diag.titleAr} (${diag.system}) — تم الحفظ في تشخيص وتفسير بالوقت والتاريخ",
+                        critical = true
+                    )
+                    Toast.makeText(this@MainActivity, "🚨 تم محاكاة ظهور العطل [$chosen] تلقائياً بالصوت ورسالة التحذير وحفظه بالسجل!", Toast.LENGTH_LONG).show()
+                    renderCurrentScreen()
+                }
+            })
+            addView(actionRow)
+        }
+        container.addView(cardAutoScan)
+
+        // 2. بطاقة الأعطال النشطة حالياً وتفسيرها التفصيلي (تظهر تلقائياً بدون إدخال الكود)
+        val cardActiveFaults = card().apply {
+            addView(text("🚨 الأعطال والمشاكل النشطة حالياً بالسيارة (${activeRecords.size})", 16, if (activeRecords.isEmpty()) Color.rgb(126, 242, 154) else Color.rgb(255, 110, 110), true))
+
+            if (activeRecords.isEmpty()) {
+                val cleanBox = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setBackgroundColor(Color.rgb(12, 42, 30))
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    lp.topMargin = dp(6)
+                    layoutParams = lp
+                }
+                cleanBox.addView(text("✅ كمبيوتر السيارة والحساسات سليمة 100% — لا توجد أعطال نشطة حالياً", 14, Color.rgb(126, 242, 154), true))
+                cleanBox.addView(text("أي عطل يظهر أثناء القيادة سيتم قراءته تلقائياً وإصدار تنبيه صوتي ورسالة تحذيرية خفيفة وتخزينه هنا فوراً مع شرحه الكامل وأسبابه.", 12, Color.rgb(200, 235, 215), false))
+                addView(cleanBox)
+            } else {
+                activeRecords.forEach { rec ->
+                    val faultBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(Color.rgb(40, 18, 24))
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.topMargin = dp(8)
+                        layoutParams = lp
+                    }
+
+                    faultBox.addView(text("🔴 كود المشكلة: [${rec.code}] — ${rec.titleAr}", 15, Color.rgb(255, 130, 130), true))
+                    val oemBadge = if (rec.isOemSpecific) "🏢 كود خاص بـ (${rec.targetBrand})" else "🌐 كود قياسي عام"
+                    faultBox.addView(text("🏷️ النظام: ${rec.system} | الخطورة: ${rec.severity} | $oemBadge", 12, Color.rgb(248, 199, 74), true))
+                    faultBox.addView(text("🕒 وقت وتاريخ ظهور العطل: ${rec.detectedAtStr}", 12, Color.rgb(110, 231, 255), true))
+
+                    faultBox.addView(text("🔍 ما هو هذا العطل وما احتمال أسبابه؟", 13, Color.rgb(110, 231, 255), true).apply {
+                        setPadding(0, dp(6), 0, dp(2))
+                    })
+                    faultBox.addView(text(rec.causesAr, 12, Color.rgb(235, 235, 235), false))
+
+                    faultBox.addView(text("🛠️ طريقة الإصلاح والحل الموصى بها:", 13, Color.rgb(126, 242, 154), true).apply {
+                        setPadding(0, dp(6), 0, dp(2))
+                    })
+                    faultBox.addView(text(rec.solutionAr, 12, Color.rgb(205, 245, 220), false))
+
+                    // أزرار التحكم بالتحذير أو تسجيل حل المشكلة
+                    val ctrlRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.topMargin = dp(8)
+                        layoutParams = lp
+                    }
+
+                    ctrlRow.addView(Button(this@MainActivity).apply {
+                        text = "⏱️ إلغاء مؤقت للتحذير"
+                        textSize = 10f
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.rgb(65, 55, 20))
+                        val lp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                        lp.setMargins(0, 0, dp(2), 0)
+                        layoutParams = lp
+                        setOnClickListener {
+                            snoozeCurrentSafetyAlert(10)
+                        }
+                    })
+
+                    ctrlRow.addView(Button(this@MainActivity).apply {
+                        text = "🔕 إلغاء دائم للتحذير"
+                        textSize = 10f
+                        setTextColor(Color.WHITE)
+                        setBackgroundColor(Color.rgb(75, 25, 30))
+                        val lp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                        lp.setMargins(dp(2), 0, dp(2), 0)
+                        layoutParams = lp
+                        setOnClickListener {
+                            dismissCurrentSafetyAlertPermanently()
+                        }
+                    })
+
+                    ctrlRow.addView(Button(this@MainActivity).apply {
+                        text = "✅ تم الإصلاح والحل"
+                        textSize = 10f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(Color.rgb(8, 23, 32))
+                        setBackgroundColor(Color.rgb(126, 242, 154))
+                        val lp = LinearLayout.LayoutParams(0, dp(36), 1f)
+                        lp.setMargins(dp(2), 0, 0, 0)
+                        layoutParams = lp
+                        setOnClickListener {
+                            markSingleFaultResolved(rec.id)
+                            Toast.makeText(this@MainActivity, "✅ تم توثيق حل المشكلة [${rec.code}] بالوقت والتاريخ في البرنامج والسيرفر!", Toast.LENGTH_SHORT).show()
+                            renderCurrentScreen()
+                        }
+                    })
+
+                    faultBox.addView(ctrlRow)
+                    addView(faultBox)
+                }
+            }
+        }
+        container.addView(cardActiveFaults)
+
+        // 3. سجل تاريخ الأعطال والمشاكل المحفوظ بالبرنامج والسيرفر (وقت وتاريخ الظهور + وقت وتاريخ الحل)
+        val sectionHistory = collapsibleSection(
+            "سجل تاريخ الأعطال بالبرنامج والسيرفر (${historyList.size})",
+            "🗂️",
+            initiallyExpanded = resolvedRecords.isNotEmpty()
+        ) { sec ->
+            sec.addView(text(
+                "يحتفظ هذا السجل بجميع الأعطال التي ظهرت بالسيارة، وتفسيرها، ووقت وتاريخ ظهورها، ووقت وتاريخ حلها وإصلاحها:",
+                12, Color.rgb(167, 203, 226), false
+            ))
+
+            if (historyList.isEmpty()) {
+                sec.addView(text("لا توجد أعطال سابقة مسجلة لهذه السيارة حتى الآن.", 13, Color.rgb(180, 205, 225), false).apply {
+                    setPadding(0, dp(6), 0, dp(4))
+                })
+            } else {
+                historyList.forEach { rec ->
+                    val isResolved = (rec.status == "resolved")
+                    val itemBox = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setBackgroundColor(if (isResolved) Color.rgb(14, 36, 32) else Color.rgb(42, 20, 26))
+                        setPadding(dp(12), dp(10), dp(12), dp(10))
+                        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                        lp.topMargin = dp(6)
+                        layoutParams = lp
+                    }
+
+                    val statusBadge = if (isResolved) "🟢 تم حل المشكلة" else "🔴 عطل نشط"
+                    val badgeColor = if (isResolved) Color.rgb(126, 242, 154) else Color.rgb(255, 122, 122)
+                    itemBox.addView(text("$statusBadge | [${rec.code}] ${rec.titleAr}", 14, badgeColor, true))
+                    itemBox.addView(text("• النظام: ${rec.system} | الخطورة: ${rec.severity}", 12, Color.rgb(220, 235, 245), false))
+                    itemBox.addView(text("• 📅 وقت وتاريخ ظهور المشكلة: ${rec.detectedAtStr}", 12, Color.rgb(248, 199, 74), true))
+                    val resolvedLine = if (isResolved && rec.resolvedAtStr.isNotBlank()) {
+                        "• ✅ وقت وتاريخ حل المشكلة: ${rec.resolvedAtStr}"
+                    } else {
+                        "• ⏳ حالة الإصلاح: قيد المتابعة (لم تُحل بعد)"
+                    }
+                    itemBox.addView(text(resolvedLine, 12, if (isResolved) Color.rgb(126, 242, 154) else Color.rgb(255, 180, 120), true))
+                    itemBox.addView(text("• الأسباب المحتملة: ${rec.causesAr.replace("\n", " | ")}", 11, Color.rgb(185, 210, 230), false).apply {
+                        setPadding(0, dp(4), 0, 0)
+                    })
+                    itemBox.addView(text("• الإصلاح الموصى به: ${rec.solutionAr}", 11, Color.rgb(180, 235, 205), false))
+
+                    sec.addView(itemBox)
+                }
+            }
+        }
+        container.addView(sectionHistory)
+
+        // 4. قسم فرعي اختياري (مغلق افتراضياً): البحث اليدوي في قاموس الأعطال لأي كود خارجي
+        val sectionManualLookup = collapsibleSection(
+            "البحث اليدوي عن أي كود عطل خارجي (قاموس شامل)",
+            "🔍",
+            initiallyExpanded = false
+        ) { sec ->
+            sec.addView(text("في حال أردت الاستعلام يدوياً عن كود عطل خارجي (${activeBrand}):", 12, Color.rgb(167, 203, 226), false))
+            sec.addView(button("🔍 فتح نافذة البحث اليدوي عن كود عطل") {
+                showDtcLookupDialog()
+            }.apply {
+                setBackgroundColor(Color.rgb(36, 77, 111))
+                setTextColor(Color.WHITE)
+            })
+        }
+        container.addView(sectionManualLookup)
+
+        return container
     }
 
     private fun showDtcLookupDialog() {
