@@ -105,7 +105,7 @@ class MainActivity : Activity() {
         var shortTermFuelTrimPercent: Float = 0.0f,
         var batteryVoltage: Float = 0f,
         var vin: String = "",
-        var dtcCodes: MutableList<String> = mutableListOf(),
+        @Volatile var dtcCodes: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList(),
         var isConnected: Boolean = false,
         var statusMessage: String = "جاهز للاتصال",
         var actualTripFuelLiters: Float = 0.0f,
@@ -415,7 +415,7 @@ class MainActivity : Activity() {
         FuelProbe("7DF", "012F", "412F", "كمبيوتر المحرك القياسي العام (Standard OBD 7DF)", isCluster = false)
     )
 
-    // === Delta Odometer Architecture (قراءة عداد السيارة التراكمي وحساب الفروق من كمبيوتر السيارة ECU) ===
+    // === Delta Odometer Architecture (قراءة عداد السيارة التراكمي وحساب الفروق من الطابلوه وكمبيوتر السيارة ECU) ===
     private data class OdometerProbe(
         val header: String,
         val command: String,
@@ -423,31 +423,59 @@ class MainActivity : Activity() {
         val description: String,
         val isAbsoluteOdometer: Boolean = true, // true: عداد كلي بالكيلومتر، false: عداد هاردوير لكمبيوتر المكينة
         val byteLength: Int = 4,
-        val scalingDivisor: Float = 10.0f
+        val scalingDivisor: Float = 10.0f,
+        val byteOffset: Int = 0,
+        val isCluster: Boolean = false
     )
 
     private var activeOdometerProbe: OdometerProbe? = null
+    private var ecuSpeedDistanceBuffer: Double = 0.0
+    private var flushedEcuSpeedSinceLastTickKm: Double = 0.0
 
-    // Universal Standard Mode 01 PID 0131 is guaranteed on 100% of OBD2 cars worldwide since 1996
-    private val universalHardwareCounterProbe = OdometerProbe("7DF", "0131", "4131", "عداد مسافة كمبيوتر المحرك الفعلي الهاردوير (Universal ECU Distance 0131)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f)
+    // Universal Standard Mode 01 PID 0131 / 0121 hardware distance counters (fallback only if absolute odometer is unsupported)
+    private val universalHardwareCounterProbe = OdometerProbe("7DF", "0131", "4131", "عداد مسافة كمبيوتر المحرك منذ مسح الأعطال (PID 0131)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f)
 
     private val universalOdometerProbes = listOf(
-        // === الأساس الشامل المضمون 100% في كافة سيارات العالم فوراً وبدون أي تأخير ===
-        universalHardwareCounterProbe,
-        OdometerProbe("7DF", "0121", "4121", "عداد مسافة المحرك البديل (Universal PID 0121)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f),
-
-        // === معيار OBD2 القياسي العام SAE J1979 Mode 01 PID 01A6 (العداد الكلي المباشر) ===
+        // === الأولوية الأولى: معيار OBD2 القياسي العام SAE J1979 Mode 01 PID 01A6 (العداد الكلي المباشر) ===
         OdometerProbe("7DF", "01A6", "41A6", "عداد السيارة القياسي العام (Standard OBD PID 01A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
         OdometerProbe("7E0", "01A6", "41A6", "عداد كمبيوتر المحرك المباشر (Engine ECU PID 01A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
+        OdometerProbe("7E2", "01A6", "41A6", "عداد كمبيوتر الهيكل/القوة (ECU/BCM 7E2 PID 01A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
 
-        // === قراءة العداد من كمبيوتر المحرك 7E0 / UDS لمختلف الماركات العالمية ===
-        OdometerProbe("7E0", "22F40D", "62F40D", "عداد UDS العالمي لكمبيوتر المحرك (Standard UDS 22F40D)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
-        OdometerProbe("7E0", "220020", "620020", "كمبيوتر محرك شيفروليه / GM / أوبل / دايو (Aveo/Optra/Cruze)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        // === الأولوية الثانية: معيار UDS القياسي الموحد للعداد الكلي (Service 22 DID F4A6) ===
+        OdometerProbe("7E0", "22F4A6", "62F4A6", "عداد UDS القياسي لكمبيوتر المحرك (UDS 22F4A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
+        OdometerProbe("7DF", "22F4A6", "62F4A6", "عداد UDS القياسي العام (UDS 7DF 22F4A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f),
+        OdometerProbe("7C6", "22F4A6", "62F4A6", "لوحة عدادات الطابلوه UDS (Cluster 7C6 22F4A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f, isCluster = true),
+        OdometerProbe("7C0", "22F4A6", "62F4A6", "لوحة عدادات الطابلوه UDS (Cluster 7C0 22F4A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f, isCluster = true),
+        OdometerProbe("720", "22F4A6", "62F4A6", "لوحة عدادات الطابلوه UDS (Cluster 720 22F4A6)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 10.0f, isCluster = true),
+
+        // === الأولوية الثالثة: قراءة العداد مباشرة من لوحة عدادات الطابلوه (Instrument Cluster) وكمبيوتر المحرك لمختلف الماركات ===
+        // Hyundai / Kia
+        OdometerProbe("7C6", "22B002", "62B002", "لوحة عدادات هيونداي / كيا بالطابلوه (Cluster 7C6 22B002)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "22B002", "62B002", "كمبيوتر محرك هيونداي / كيا UDS (Engine 7E0 22B002)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        // Toyota / Lexus
+        OdometerProbe("7C0", "220201", "620201", "لوحة عدادات تويوتا / لكزس بالطابلوه (Cluster 7C0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "220201", "620201", "كمبيوتر محرك تويوتا / لكزس UDS (Engine 7E0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7E0", "22DD01", "62DD01", "كمبيوتر محرك فورد / مازدا UDS (Engine 7E0 22DD01)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7E0", "222203", "622203", "كمبيوتر محرك فولكس فاجن / سكودا / أودي (Engine 7E0 222203)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7E0", "2101", "6101", "كمبيوتر محرك نيسان / رينو / تويوتا (Mode 2101)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f)
+        // Chevrolet / GM / Opel / Daewoo (Aveo/Optra/Cruze)
+        OdometerProbe("7A4", "220020", "620020", "لوحة عدادات شيفروليه / GM بالطابلوه (Cluster 7A4 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("724", "220020", "620020", "وحدة الهيكل شيفروليه / GM (BCM 724 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("7A0", "220020", "620020", "لوحة عدادات شيفروليه البديلة (Cluster 7A0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("7E0", "220020", "620020", "كمبيوتر محرك شيفروليه / GM / أوبل / دايو (7E0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        // Ford / Mazda
+        OdometerProbe("720", "22DD01", "62DD01", "لوحة عدادات فورد / مازدا بالطابلوه (Cluster 720 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("7E0", "22DD01", "62DD01", "كمبيوتر محرك فورد / مازدا UDS (Engine 7E0 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f),
+        // VW / Skoda / Audi / Seat
+        OdometerProbe("714", "222203", "622203", "لوحة عدادات فولكس / سكودا / أودي بالطابلوه (Cluster 714 222203)", isAbsoluteOdometer = true, byteLength = 2, scalingDivisor = 0.1f, isCluster = true),
+        OdometerProbe("714", "22220D", "62220D", "لوحة عدادات فولكس / سكودا البديلة (Cluster 714 22220D)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("7E0", "222203", "622203", "كمبيوتر محرك فولكس / سكودا / أودي (7E0 222203)", isAbsoluteOdometer = true, byteLength = 2, scalingDivisor = 0.1f),
+        // Nissan / Infiniti
+        OdometerProbe("743", "220201", "620201", "لوحة عدادات نيسان / إنفينيتي بالطابلوه (Cluster 743 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        // Renault / Dacia / Stellantis / Fiat / Peugeot
+        OdometerProbe("760", "222001", "622001", "لوحة عدادات رينو / داسيا بالطابلوه (Cluster 760 222001)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+        OdometerProbe("710", "222001", "622001", "لوحة عدادات فيات / بيجو / ستيلانتس (Cluster 710 222001)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
+
+        // === البديل القياسي لحساب المسافة من كمبيوتر المحرك في حال عدم بث الطابلوه ===
+        universalHardwareCounterProbe,
+        OdometerProbe("7DF", "0121", "4121", "عداد مسافة المحرك مع لمبة الأعطال (PID 0121)", isAbsoluteOdometer = false, byteLength = 2, scalingDivisor = 1.0f)
     )
 
     private enum class FuelSensorMode {
@@ -1024,162 +1052,129 @@ class MainActivity : Activity() {
             }
             addView(btnBtBypass)
 
-            // Dynamic Sector Info
-            val sectorRow = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                rlp.bottomMargin = dp(4)
-                layoutParams = rlp
-
-                val infoText = text("🗺️ نطاق الاكتشاف النشط: 20 كم حول موقع السيارة", 12, Color.rgb(200, 225, 245), false).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                addView(infoText)
-
-                val btnRefresh = Button(this@MainActivity).apply {
-                    text = "🔄 تحديث النطاق"
-                    textSize = 11f
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.WHITE)
-                    setBackgroundColor(Color.rgb(24, 52, 75))
-                    val blp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36))
-                    layoutParams = blp
-                    setOnClickListener {
-                        currentGpsLocation?.let { loc ->
-                            speedBumpManager?.onLocationChanged(loc, maxOf(telemetry.speed.toDouble(), phoneGpsSpeedKmh.toDouble()))
-                            Toast.makeText(this@MainActivity, "جاري تحديث المطبات المكتشفة في نطاق 20 كم...", Toast.LENGTH_SHORT).show()
-                            renderCurrentScreen()
-                        } ?: run {
-                            Toast.makeText(this@MainActivity, "يرجى تفعيل GPS لتحديد الموقع الحالي", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-                addView(btnRefresh)
-            }
-            addView(sectorRow)
         }
         root.addView(hero)
 
-        // Operational Control Card (Direct Functions & Live Audio Test)
-        val controlCard = card().apply {
-            addView(text("🎮 تجربة الصوت وتسجيل مطب جديد", 14, Color.rgb(110, 231, 255), true))
+        // Independent Sound Selection & Preview Card for 100m & 20m (Zero bump coordinates or lists displayed)
+        fun showBumpSoundPickerDialog(categoryKey: String, distanceTitle: String, onPicked: () -> Unit) {
+            val options = alertSoundPlayer.getOptionsForCategory(categoryKey)
+            val currentId = alertSoundPlayer.getSelectedSoundId(categoryKey)
+            val checkedIdx = options.indexOfFirst { it.id == currentId }.let { if (it >= 0) it else 0 }
+            val labels = options.map { opt ->
+                val icon = if (opt.isVoice) "🎙️" else "🎵"
+                "$icon ${opt.title} (${opt.subtitle})"
+            }.toTypedArray()
 
-            val testRow = LinearLayout(this@MainActivity).apply {
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("🔊 اختيار صوت تحذير $distanceTitle")
+                .setSingleChoiceItems(labels, checkedIdx) { _, which ->
+                    val chosen = options[which]
+                    alertSoundPlayer.setSelectedSoundId(categoryKey, chosen.id)
+                    speedBumpManager?.alertSoundPlayer?.setSelectedSoundId(categoryKey, chosen.id)
+                    alertSoundPlayer.playRawSound(chosen.resId, alertSoundPlayer.getCategoryVolume(categoryKey).coerceAtLeast(0.75f))
+                }
+                .setPositiveButton("اعتماد وحفظ") { _, _ ->
+                    onPicked()
+                    Toast.makeText(this@MainActivity, "✅ تم حفظ صوت تحذير $distanceTitle", Toast.LENGTH_SHORT).show()
+                }
+                .setNegativeButton("إغلاق", null)
+                .show()
+        }
+
+        val soundCard = card().apply {
+            addView(text("🎵 تخصيص وتجربة أصوات التحذير عند الاقتراب", 14, Color.rgb(110, 231, 255), true))
+            addView(text("تحكم في تغيير صوت التنبيه أو تجربته لكل من مسافة 100 متر و 20 متر قبل المطب:", 12, Color.rgb(180, 210, 230), false).apply {
+                setPadding(0, dp(3), 0, dp(8))
+            })
+
+            val opts100 = alertSoundPlayer.getOptionsForCategory(AlertSoundPlayer.KEY_SOUND_BUMP_100M)
+            val sel100 = opts100.firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(AlertSoundPlayer.KEY_SOUND_BUMP_100M) } ?: opts100.firstOrNull()
+            val tvSound100 = text("• صوت مسافة 100 متر الحالي: ${sel100?.title ?: "افتراضي"}", 12, Color.WHITE, true)
+            addView(tvSound100)
+
+            val row100 = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                lp.topMargin = dp(6)
-                lp.bottomMargin = dp(6)
+                lp.topMargin = dp(4)
+                lp.bottomMargin = dp(10)
                 layoutParams = lp
             }
-
-            val btnTest100 = Button(this@MainActivity).apply {
-                text = "🔔 سماع تحذير 100م"
+            row100.addView(Button(this@MainActivity).apply {
+                text = "🎛️ تغيير صوت 100م"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(22, 95, 130))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1.2f)
+                lp.setMargins(0, 0, dp(4), 0)
+                layoutParams = lp
+                setOnClickListener {
+                    showBumpSoundPickerDialog(AlertSoundPlayer.KEY_SOUND_BUMP_100M, "مسافة 100 متر") {
+                        val updated = opts100.firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(AlertSoundPlayer.KEY_SOUND_BUMP_100M) }
+                        tvSound100.text = "• صوت مسافة 100 متر الحالي: ${updated?.title ?: "افتراضي"}"
+                    }
+                }
+            })
+            row100.addView(Button(this@MainActivity).apply {
+                text = "🔔 سماع 100م"
                 textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
                 setBackgroundColor(Color.rgb(22, 65, 95))
                 val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
-                lp.setMargins(0, 0, dp(4), 0)
+                lp.setMargins(dp(4), 0, 0, 0)
                 layoutParams = lp
                 setOnClickListener {
                     alertSoundPlayer.playBump100m()
-                    Toast.makeText(this@MainActivity, "🔊 تجربة الصوت: مطب بعد 100 متر", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "🔊 تجربة صوت مسافة 100 متر", Toast.LENGTH_SHORT).show()
                 }
-            }
+            })
+            addView(row100)
 
-            val btnTest25 = Button(this@MainActivity).apply {
-                text = "🛑 سماع تحذير 20م"
+            val opts20 = alertSoundPlayer.getOptionsForCategory(AlertSoundPlayer.KEY_SOUND_BUMP_25M)
+            val sel20 = opts20.firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(AlertSoundPlayer.KEY_SOUND_BUMP_25M) } ?: opts20.firstOrNull()
+            val tvSound20 = text("• صوت مسافة 20 متر الحالي: ${sel20?.title ?: "افتراضي"}", 12, Color.WHITE, true)
+            addView(tvSound20)
+
+            val row20 = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                lp.topMargin = dp(4)
+                layoutParams = lp
+            }
+            row20.addView(Button(this@MainActivity).apply {
+                text = "🎛️ تغيير صوت 20م"
                 textSize = 11.5f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
-                setBackgroundColor(Color.rgb(180, 35, 45))
+                setBackgroundColor(Color.rgb(175, 45, 55))
+                val lp = LinearLayout.LayoutParams(0, dp(42), 1.2f)
+                lp.setMargins(0, 0, dp(4), 0)
+                layoutParams = lp
+                setOnClickListener {
+                    showBumpSoundPickerDialog(AlertSoundPlayer.KEY_SOUND_BUMP_25M, "مسافة 20 متر") {
+                        val updated = opts20.firstOrNull { it.id == alertSoundPlayer.getSelectedSoundId(AlertSoundPlayer.KEY_SOUND_BUMP_25M) }
+                        tvSound20.text = "• صوت مسافة 20 متر الحالي: ${updated?.title ?: "افتراضي"}"
+                    }
+                }
+            })
+            row20.addView(Button(this@MainActivity).apply {
+                text = "🛑 سماع 20م"
+                textSize = 11.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.rgb(130, 30, 40))
                 val lp = LinearLayout.LayoutParams(0, dp(42), 1f)
                 lp.setMargins(dp(4), 0, 0, 0)
                 layoutParams = lp
                 setOnClickListener {
                     alertSoundPlayer.playBump25m()
-                    Toast.makeText(this@MainActivity, "🔊 تجربة الصوت: مطب الآن (20 متر)", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "🔊 تجربة صوت مسافة 20 متر", Toast.LENGTH_SHORT).show()
                 }
-            }
-
-            testRow.addView(btnTest100)
-            testRow.addView(btnTest25)
-            addView(testRow)
-
-            val btnAddBumpHere = Button(this@MainActivity).apply {
-                text = "➕ تسجيل واكتشاف مطب في موقعي الحالي الآن"
-                textSize = 12f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.rgb(8, 23, 32))
-                setBackgroundColor(Color.rgb(248, 199, 74))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(42))
-                lp.topMargin = dp(2)
-                layoutParams = lp
-                setOnClickListener {
-                    val lat = currentGpsLocation?.latitude ?: (tripStartLat + (Math.random() * 0.003))
-                    val lng = currentGpsLocation?.longitude ?: (tripStartLng + (Math.random() * 0.003))
-                    val dir = if (currentGpsLocation?.hasBearing() == true) currentGpsLocation!!.bearing.toDouble() else 0.0
-                    speedBumpManager?.registerManualOrSimulatedBump(lat, lng, dir, "مطب مسجل بموقع السيارة")
-                    alertSoundPlayer.playBump25m()
-                    Toast.makeText(this@MainActivity, "✅ تم تسجيل المطب وعرضه في قائمة المطبات المكتشفة!", Toast.LENGTH_SHORT).show()
-                    renderCurrentScreen()
-                }
-            }
-            addView(btnAddBumpHere)
+            })
+            addView(row20)
         }
-        root.addView(controlCard)
-
-        // Discovered Speed Bumps Display List Card
-        val discoveredCard = card().apply {
-            val hazards = speedBumpManager?.getDiscoveredHazardsSnapshot() ?: emptyList()
-            val activeHazards = hazards.filter { it.active }
-            addView(text("📋 المطبات المكتشفة والمعروضة في نطاقك (${activeHazards.size} مطب نشط)", 14, Color.rgb(126, 242, 154), true))
-
-            if (activeHazards.isEmpty()) {
-                addView(text("لا توجد مطبات مسجلة حالياً في هذا النطاق. يتم اكتشاف المطبات تلقائياً أثناء القيادة بسرعة ≤ 21 كم/س أو بالضغط على زر التسجيل أعلاه.", 12, Color.rgb(180, 205, 225), false).apply {
-                    setPadding(0, dp(6), 0, dp(4))
-                })
-            } else {
-                val curLat = currentGpsLocation?.latitude ?: tripStartLat
-                val curLng = currentGpsLocation?.longitude ?: tripStartLng
-                val sorted = activeHazards.map { h ->
-                    val d = speedBumpManager?.distanceMeters(curLat, curLng, h.lat, h.lng) ?: 0.0
-                    Pair(h, d)
-                }.sortedBy { it.second }
-
-                sorted.take(12).forEachIndexed { idx, (h, distM) ->
-                    val distStr = if (distM < 1000.0) "${distM.toInt()} متر" else String.format("%.2f كم", distM / 1000.0)
-                    val row = LinearLayout(this@MainActivity).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        setBackgroundColor(Color.rgb(14, 30, 46))
-                        setPadding(dp(10), dp(8), dp(10), dp(8))
-                        val rlp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                        rlp.topMargin = dp(5)
-                        layoutParams = rlp
-                    }
-                    val leftText = text(
-                        "🛑 مطب #${idx + 1} (${h.roadClass})\n📍 ${String.format("%.4f", h.lat)}, ${String.format("%.4f", h.lng)}",
-                        11,
-                        Color.WHITE,
-                        false
-                    ).apply {
-                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    }
-                    val rightBadge = text(
-                        "المسافة: $distStr",
-                        12,
-                        if (distM <= 120.0) Color.rgb(255, 180, 70) else Color.rgb(110, 231, 255),
-                        true
-                    )
-                    row.addView(leftText)
-                    row.addView(rightBadge)
-                    addView(row)
-                }
-            }
-        }
-        root.addView(discoveredCard)
+        root.addView(soundCard)
 
         return root
     }
@@ -1827,7 +1822,7 @@ class MainActivity : Activity() {
         isBumpAudioMuted = preferences.getBoolean("is_bump_audio_muted", false)
         isBump100mMuted = preferences.getBoolean("is_bump_100m_muted", false)
         isBump20mMuted = preferences.getBoolean("is_bump_20m_muted", false)
-        speedBumpManager = SpeedBumpManager(this) { getApiBaseUrl() }.apply {
+        speedBumpManager = SpeedBumpManager(this, { getApiBaseUrl() }, { getActiveVehicleScopeId() }).apply {
             isWarningEnabled = isBumpWarningEnabled
             isAudioMuted = isBumpAudioMuted
             isMuted100m = isBump100mMuted
@@ -1862,7 +1857,8 @@ class MainActivity : Activity() {
                                 updateGaugesTabUI()
                             }
                         }
-                        speedBumpManager?.onLocationChanged(location, maxOf(telemetry.speed.toDouble(), phoneGpsSpeedKmh.toDouble()))
+                        val obdSpd = if (telemetry.isConnected) telemetry.speed.toDouble() else null
+                        speedBumpManager?.onLocationChanged(location, obdSpd)
                     }
                     override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
                     override fun onProviderEnabled(provider: String) {}
@@ -9241,7 +9237,7 @@ class MainActivity : Activity() {
 
     private fun getEffectiveCarOdometerKm(): Float {
         val liveOdo = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
-        val subKm = if (activeOdometerProbe?.isAbsoluteOdometer == true) 0f else subKmEcuRollDistance.toFloat()
+        val subKm = if (activeOdometerProbe?.isAbsoluteOdometer == true) 0f else ecuSpeedDistanceBuffer.toFloat()
         return if (liveOdo > 0f) (liveOdo + subKm) else (telemetry.tripDistanceKm + subKm)
     }
 
@@ -9423,6 +9419,8 @@ class MainActivity : Activity() {
                 }
                 val prevAccumDep = preferences.getFloat("accumulated_added_dep_percent", 0f)
                 subKmEcuRollDistance = 0.0
+                ecuSpeedDistanceBuffer = 0.0
+                flushedEcuSpeedSinceLastTickKm = 0.0
                 telemetry.tripDistanceKm = 0.0f
                 telemetry.actualTripFuelLiters = 0.0f
                 telemetry.tripAverageFuelRate = preferences.getFloat("fuel_rate_baseline", 7.2f)
@@ -9476,6 +9474,8 @@ class MainActivity : Activity() {
                 .putLong("dep_tracking_start_timestamp", defaultStartTs)
                 .putFloat("dep_tracking_baseline_odo_km", currentCarOdo)
                 .apply()
+        } else if (preferences.getFloat("dep_tracking_baseline_odo_km", 0f) <= 0f && !preferences.getBoolean("dep_tracking_manual_date", false) && currentCarOdo > 10f) {
+            preferences.edit().putFloat("dep_tracking_baseline_odo_km", currentCarOdo).apply()
         }
         val depTrackingStartTs = preferences.getLong("dep_tracking_start_timestamp", defaultStartTs)
         val depBaselineOdoKm = preferences.getFloat("dep_tracking_baseline_odo_km", currentCarOdo)
@@ -9549,8 +9549,9 @@ class MainActivity : Activity() {
                     setOnClickListener { onClick() }
                 }
             }
-            btnRow.addView(quickActionBtn("🔍 فحص الكمبيوتر", Color.rgb(16, 185, 129)) { scanAllFuelComputers() })
-            btnRow.addView(quickActionBtn("🚗 ضبط عداد التابلوه", Color.rgb(36, 77, 111)) { showOdometerCalibrationDialog() })
+            btnRow.addView(quickActionBtn("🔍 فحص الوقود", Color.rgb(16, 185, 129)) { scanAllFuelComputers() })
+            btnRow.addView(quickActionBtn("🔎 فحص التابلوه", Color.rgb(14, 116, 144)) { scanAllOdometerComputers() })
+            btnRow.addView(quickActionBtn("🚗 ضبط العداد", Color.rgb(36, 77, 111)) { showOdometerCalibrationDialog() })
             btnRow.addView(quickActionBtn("⚙️ نوع الوقود", Color.rgb(24, 52, 78)) { showFuelTypeDialog() })
             sec.addView(btnRow)
         }
@@ -9948,6 +9949,7 @@ class MainActivity : Activity() {
                             preferences.edit()
                                 .putLong("dep_tracking_start_timestamp", newTs)
                                 .putFloat("dep_tracking_baseline_odo_km", estimatedBaseOdo)
+                                .putBoolean("dep_tracking_manual_date", true)
                                 .apply()
                             Toast.makeText(this@MainActivity, "تم اعتماد تاريخ البداية: ${formatDateOnlyArabic(newTs)}", Toast.LENGTH_SHORT).show()
                             switchTab("fuel")
@@ -10748,9 +10750,10 @@ class MainActivity : Activity() {
     private fun buildMaintenanceTabContent(): View {
         val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        val oilTargetKm = preferences.getFloat("oil_target_km", 5000.0f)
-        val oilCurrentKm = preferences.getFloat("oil_current_km", 1250.0f)
-        val remainingOilKm = (oilTargetKm - oilCurrentKm).coerceAtLeast(0f)
+        val unifiedMaintOil = getUnifiedEngineOilState()
+        val oilTargetKm = unifiedMaintOil.targetIntervalKm
+        val oilCurrentKm = unifiedMaintOil.drivenKm
+        val remainingOilKm = unifiedMaintOil.remainingKm
 
         val cardMaint = card().apply {
             addView(text("🔧 فحص الأعطال وجدول الصيانة الدورية", 18, Color.WHITE, true))
@@ -10806,18 +10809,23 @@ class MainActivity : Activity() {
             addView(text("جدول الصيانة الدورية وزيت المحرك:", 14, Color.rgb(110, 231, 255), true).apply {
                 setPadding(0, dp(12), 0, dp(4))
             })
-            tvMaintOilText = text("• زيت المحرك والفلتر: مقطوع ${oilCurrentKm.toInt()} كم | متبقي ${remainingOilKm.toInt()} كم حتى موعد الغيار", 13, Color.WHITE, false)
+            val maintOilInitText = if (unifiedMaintOil.isConfigured) {
+                "• زيت المحرك والفلتر: مقطوع ${oilCurrentKm.toInt()} كم | متبقي ${remainingOilKm.toInt()} كم حتى موعد الغيار"
+            } else {
+                "• زيت المحرك والفلتر: غير مدخل بعد (اضغط لتسجيل بيانات الزيت)"
+            }
+            tvMaintOilText = text(maintOilInitText, 13, Color.WHITE, false)
             addView(tvMaintOilText)
             addView(text("• فحص تيل الفرامل الأمامي: موعد الفحص ساري", 13, Color.WHITE, false))
             addView(text("• تنظيف البوجيهات وحساس الشكمان: موصى به من الورشة", 13, Color.rgb(248, 199, 74), false))
 
             addView(button("🔄 تصفير عداد الزيت من هنا") {
-                val currentCarOdo = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
-                preferences.edit()
-                    .putFloat("oil_current_km", 0.0f)
-                    .putFloat("oil_baseline_car_odometer", currentCarOdo)
-                    .apply()
-                switchTab("maint")
+                if (unifiedMaintOil.isConfigured) {
+                    resetUnifiedEngineOilCycle(newBaselineOdoKm = getEffectiveCarOdometerKm())
+                    switchTab("maint")
+                } else {
+                    showUnifiedEngineOilConfigDialog { switchTab("maint") }
+                }
             }.apply {
                 setBackgroundColor(Color.rgb(248, 199, 74))
                 setTextColor(Color.rgb(8, 23, 32))
@@ -11467,8 +11475,8 @@ class MainActivity : Activity() {
             }
             if (::tvCarOdometer.isInitialized) {
                 val odoVal = if (telemetry.carOdometerKm > 0f) telemetry.carOdometerKm else preferences.getFloat("car_cumulative_odometer_km", 0f)
-                val odoSourceBadge = if (telemetry.carOdometerKm > 0f) "🔌" else "🚗"
-                tvCarOdometer.text = if (odoVal > 0f) "${odoVal.toInt()} كم $odoSourceBadge" else "-- كم"
+                val odoSourceBadge = if (activeOdometerProbe?.isAbsoluteOdometer == true) "🔌" else if (odoVal > 0f) "🧮" else "🚗"
+                tvCarOdometer.text = if (odoVal > 0f) "${odoVal.toInt()} كم $odoSourceBadge" else "اضغط لضبط التابلوه"
             }
             if (::tvTripDistance.isInitialized) {
                 tvTripDistance.text = String.format("%.2f كم", telemetry.tripDistanceKm)
@@ -11500,7 +11508,7 @@ class MainActivity : Activity() {
             if (::tvThrottle.isInitialized) tvThrottle.text = "-- %"
             if (::tvCarOdometer.isInitialized) {
                 val odoVal = preferences.getFloat("car_cumulative_odometer_km", 0f)
-                tvCarOdometer.text = if (odoVal > 0f) "${odoVal.toInt()} كم (محفوظ)" else "-- كم"
+                tvCarOdometer.text = if (odoVal > 0f) "${odoVal.toInt()} كم (محفوظ)" else "اضغط لضبط التابلوه"
             }
             if (::tvTripDistance.isInitialized) {
                 tvTripDistance.text = String.format("%.2f كم", telemetry.tripDistanceKm)
@@ -12256,6 +12264,8 @@ class MainActivity : Activity() {
         runOnUiThread {
             obdReconnectAttempts = 0
             telemetry.isConnected = true
+            permanentlyDismissedAlerts.clear()
+            snoozedAlertsMap.clear()
             // Link is up: promote the process to a foreground service so the loop + alerts survive screen-off/Doze.
             ObdForegroundService.start(this@MainActivity, "متصل بـ $devName • المراقبة والإنذارات تعمل بالخلفية")
             statusText.text = "متصل بنجاح بـ $devName! جاري قراءة الحساسات الحية 🟢"
@@ -12266,8 +12276,9 @@ class MainActivity : Activity() {
             }
         }
 
-        // Read VIN with resilient multi-tier ECU engine
+        // Read VIN with resilient multi-tier ECU engine (also sends 0100 to lock vehicle protocol)
         val cleanVin = fetchVinFromEcu(outStream, inStream)
+        refreshDetectedProtocol(outStream, inStream)
         val effectiveVinToCheck = if (cleanVin.isNotBlank()) {
             cleanVin
         } else {
@@ -12358,9 +12369,10 @@ class MainActivity : Activity() {
 
         // قراءة وفحص أعطال كمبيوتر السيارة تلقائياً فور الاتصال (Mode 03 المؤكدة + Mode 07 المعلقة + Mode 0A الدائمة)
         try {
-            val initialDtcs = pollAllEcuDtcs(outStream, inStream)
-            telemetry.dtcCodes.clear()
-            telemetry.dtcCodes.addAll(initialDtcs)
+            val (initialDtcs, scanOk) = pollAllEcuDtcsWithStatus(outStream, inStream)
+            if (scanOk) {
+                replaceTelemetryDtcs(initialDtcs)
+            }
         } catch (_: Exception) {}
 
         runOnUiThread {
@@ -12381,6 +12393,11 @@ class MainActivity : Activity() {
             checkAndLogTelemetryDelta(force = true)
         }
 
+        // Do not let pre-connection mobile GPS speed leak into ECU OBD distance
+        telemetry.speed = 0
+        ecuSpeedDistanceBuffer = 0.0
+        flushedEcuSpeedSinceLastTickKm = 0.0
+        var hasValidObdSpeed = false
         var loopCount = 0
         var lastCalcTime = System.currentTimeMillis()
         var accumulatedFuelSlice = 0.0
@@ -12393,10 +12410,13 @@ class MainActivity : Activity() {
                 val rpm = parseRpm(rpmResp)
                 if (rpm >= 0) telemetry.rpm = rpm
 
-                // 2. Speed (PID 010D)
+                // 2. Speed (PID 010D) strictly from Car ECU
                 val speedResp = sendObdCommand(outStream, inStream, "010D", 500)
                 val speed = parseSpeed(speedResp)
-                if (speed >= 0) telemetry.speed = speed
+                if (speed >= 0) {
+                    telemetry.speed = speed
+                    hasValidObdSpeed = true
+                }
 
                 // 3. Engine Load (PID 0104) & Throttle TPS (PID 0111)
                 if (loopCount % 2 == 0) {
@@ -12529,32 +12549,50 @@ class MainActivity : Activity() {
                 val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f).coerceAtLeast(20.0f)
                 val baseRate100km = preferences.getFloat("fuel_rate_baseline", 8.5f).coerceAtLeast(3.0f)
 
-                val distanceSliceKm = (telemetry.speed.toDouble() * (dtSec / 3600.0))
+                val distanceSliceKm = if (hasValidObdSpeed && telemetry.speed > 0) {
+                    (telemetry.speed.toDouble() * (dtSec / 3600.0))
+                } else 0.0
                 val consumedSliceLiters = (instantLph * (dtSec / 3600.0))
 
-                if (telemetry.speed > 0 && distanceSliceKm in 0.00001..0.05) {
-                    subKmEcuRollDistance = (subKmEcuRollDistance + distanceSliceKm).coerceIn(0.0, 0.99)
+                if (distanceSliceKm in 0.000001..0.08) {
+                    ecuSpeedDistanceBuffer += distanceSliceKm
+                    subKmEcuRollDistance = ecuSpeedDistanceBuffer.coerceIn(0.0, 0.99)
                 }
 
-                // Periodic Delta Odometer Check from Vehicle ECU (حساب المسافة والرحلة كلياً من كمبيوتر السيارة)
-                if (loopCount % 3 == 0) {
-                    val odoProbe = activeOdometerProbe ?: discoverUniversalOdometerProbe(inStream, outStream)
-                    activeOdometerProbe = odoProbe
-                    val odoVal = readProbeOdometer(inStream, outStream, odoProbe)
-                    if (odoVal >= 0f) {
-                        applyCumulativeOdometerDelta(odoVal, odoProbe)
+                // Periodic Delta Odometer Check from Vehicle Cluster / ECU
+                val odoPollMod = if (activeOdometerProbe?.isCluster == true) 6 else 5
+                if (loopCount % odoPollMod == 0) {
+                    val odoProbe = activeOdometerProbe
+                    if (odoProbe != null) {
+                        val odoVal = readProbeOdometer(inStream, outStream, odoProbe)
+                        if (odoVal >= 0f) {
+                            applyCumulativeOdometerDelta(odoVal, odoProbe)
+                        }
+                    } else if (loopCount == 40 || loopCount == 80) {
+                        // Retry odometer discovery briefly if cluster woke up after ignition
+                        activeOdometerProbe = discoverUniversalOdometerProbe(inStream, outStream)
                     }
+                }
+
+                // If vehicle does NOT broadcast absolute odometer (uses 0131 integer ticks or 010D speed sensor),
+                // flush ECU speed-integrated distance every 50m so Trip, Oil & Depreciation NEVER stay at 0!
+                if (activeOdometerProbe?.isAbsoluteOdometer != true && ecuSpeedDistanceBuffer >= 0.05) {
+                    val chunk = ecuSpeedDistanceBuffer.toFloat()
+                    ecuSpeedDistanceBuffer = 0.0
+                    subKmEcuRollDistance = 0.0
+                    flushedEcuSpeedSinceLastTickKm += chunk
+                    applyDrivenDistanceDelta(chunk, "كمبيوتر السيارة — حساس السرعة (OBD PID 010D)")
                 }
 
                 if (consumedSliceLiters > 0) {
                     telemetry.actualTripFuelLiters += consumedSliceLiters.toFloat()
                 }
 
-                // 6. Update Trip Distance & Average Fuel Rate strictly from Car Computer Odometer Difference
+                // 6. Update Trip Distance & Average Fuel Rate strictly from Car ECU (Odometer / 010D)
                 val effectiveLiveTripKm = if (activeOdometerProbe?.isAbsoluteOdometer == true) {
                     telemetry.tripDistanceKm
                 } else {
-                    telemetry.tripDistanceKm + subKmEcuRollDistance.toFloat()
+                    telemetry.tripDistanceKm + ecuSpeedDistanceBuffer.toFloat()
                 }
 
                 if (effectiveLiveTripKm >= 0.05f && telemetry.actualTripFuelLiters > 0f) {
@@ -12624,9 +12662,10 @@ class MainActivity : Activity() {
 
                 // 9. Automatic DTC Trouble Codes Scan (Mode 03 Confirmed + Mode 07 Pending + Mode 0A Permanent)
                 if (loopCount == 1 || loopCount % 8 == 0) {
-                    val dtcs = pollAllEcuDtcs(outStream, inStream)
-                    telemetry.dtcCodes.clear()
-                    telemetry.dtcCodes.addAll(dtcs)
+                    val (dtcs, scanOk) = pollAllEcuDtcsWithStatus(outStream, inStream)
+                    if (scanOk) {
+                        replaceTelemetryDtcs(dtcs)
+                    }
                 }
 
                 runOnUiThread { updateLiveUI() }
@@ -12649,6 +12688,13 @@ class MainActivity : Activity() {
         } finally {
             // Only the current generation may reset shared state; a zombie loop must not kill the new one.
             if (myGen == obdLoopGeneration.get()) {
+                if (activeOdometerProbe?.isAbsoluteOdometer != true && ecuSpeedDistanceBuffer > 0.005) {
+                    val rem = ecuSpeedDistanceBuffer.toFloat()
+                    ecuSpeedDistanceBuffer = 0.0
+                    subKmEcuRollDistance = 0.0
+                    flushedEcuSpeedSinceLastTickKm += rem
+                    try { applyDrivenDistanceDelta(rem, "كمبيوتر السيارة — حساس السرعة (OBD PID 010D)") } catch (_: Exception) {}
+                }
                 activeObdOutStream = null
                 activeObdInStream = null
                 isTelemetryLoopRunning = false
@@ -12889,18 +12935,52 @@ class MainActivity : Activity() {
     }
 
     // =========================================================================
-    // DELTA ODOMETER ENGINE (تتبع عداد السيارة التراكمي وحساب فروق الزيت والرحلات كلياً من كمبيوتر المحرك)
+    // DELTA ODOMETER ENGINE (تتبع عداد السيارة التراكمي وحساب فروق الزيت والرحلات كلياً من الطابلوه وكمبيوتر السيارة)
     // =========================================================================
+    private fun cleanOdometerIsoTpHex(raw: String): String {
+        val upper = raw.uppercase()
+        if (upper.isBlank() ||
+            upper.contains("NO DATA") ||
+            upper.contains("UNABLE") ||
+            upper.contains("ERROR") ||
+            upper.contains("STOPPED") ||
+            upper.contains("?")
+        ) {
+            return ""
+        }
+        val sb = StringBuilder()
+        for (line in upper.split("\r", "\n")) {
+            var s = line.replace("SEARCHING...", "").replace(">", "").trim()
+            if (s.isEmpty()) continue
+            val colonIdx = s.indexOf(':')
+            if (colonIdx in 1..2 && s.substring(0, colonIdx).all { it.isDigit() || it in 'A'..'F' }) {
+                s = s.substring(colonIdx + 1)
+            }
+            for (ch in s) {
+                if (ch in '0'..'9' || ch in 'A'..'F') sb.append(ch)
+            }
+        }
+        return sb.toString()
+    }
+
     private fun parseProbeOdometer(raw: String, probe: OdometerProbe): Float {
-        val clean = cleanHex(raw)
+        val clean = cleanOdometerIsoTpHex(raw)
+        if (clean.isEmpty()) return -1f
+        // Reject negative UDS/OBD responses (7F <service> <NRC>)
+        val reqService = probe.command.take(2).uppercase()
+        if (clean.startsWith("7F$reqService")) return -1f
+
         val idx = clean.indexOf(probe.expectedPrefix)
-        val expectedNibbles = probe.expectedPrefix.length + (probe.byteLength * 2)
-        if (idx != -1 && clean.length >= idx + expectedNibbles) {
-            val hexData = clean.substring(idx + probe.expectedPrefix.length, idx + expectedNibbles)
+        val dataStart = idx + probe.expectedPrefix.length + (probe.byteOffset * 2)
+        val dataEnd = dataStart + (probe.byteLength * 2)
+        if (idx != -1 && clean.length >= dataEnd) {
+            val hexData = clean.substring(dataStart, dataEnd)
+            // Reject all-FF sentinel values (meaning parameter unavailable)
+            if (hexData.all { it == 'F' }) return -1f
             val rawVal = hexData.toLongOrNull(16) ?: return -1f
             val odoKm = (rawVal.toFloat() / probe.scalingDivisor)
             return if (probe.isAbsoluteOdometer) {
-                if (odoKm in 10.0f..3000000.0f) odoKm else -1f
+                if (odoKm in 10.0f..1500000.0f) odoKm else -1f
             } else {
                 // For ECU hardware distance counters (PID 0131 / 0121), range 0..65535 is 100% valid
                 if (odoKm in 0.0f..65535.0f) odoKm else -1f
@@ -12909,79 +12989,135 @@ class MainActivity : Activity() {
         return -1f
     }
 
-    private fun discoverUniversalOdometerProbe(inStream: InputStream, outStream: OutputStream): OdometerProbe {
+    private fun discoverUniversalOdometerProbe(inStream: InputStream, outStream: OutputStream): OdometerProbe? {
+        // 1. Only trust cached probe directly if it is an ABSOLUTE dashboard odometer probe
         val savedHeader = preferences.getString("active_odometer_probe_header", null)
         val savedCmd = preferences.getString("active_odometer_probe_cmd", null)
         if (savedHeader != null && savedCmd != null) {
             val cachedProbe = universalOdometerProbes.find { it.header == savedHeader && it.command == savedCmd }
-            if (cachedProbe != null) {
+            if (cachedProbe != null && cachedProbe.isAbsoluteOdometer) {
                 val odo = readProbeOdometer(inStream, outStream, cachedProbe)
-                if (odo >= 0f) {
+                if (odo > 10.0f) {
                     applyCumulativeOdometerDelta(odo, cachedProbe)
                     return cachedProbe
                 }
             }
         }
 
-        // Test universal hardware distance counter PID 0131 first (100% OBD2 standard, immediate 40ms reply)
-        val odo131 = readProbeOdometer(inStream, outStream, universalHardwareCounterProbe)
-        var confirmedProbe: OdometerProbe = universalHardwareCounterProbe
-        if (odo131 >= 0f) {
-            applyCumulativeOdometerDelta(odo131, universalHardwareCounterProbe)
-            confirmedProbe = universalHardwareCounterProbe
-        }
-
-        // Opportunistic targeted check for direct absolute odometer (Mode 01A6 or brand UDS DID)
+        // 2. Sweep ALL absolute odometer probes (Standard 01A6, UDS 22F4A6, and Instrument Clusters if CAN)
         val carMake = preferences.getString("vehicle_make", "") ?: ""
-        val candidateAbsoluteProbes = mutableListOf<OdometerProbe>()
-        universalOdometerProbes.find { it.command == "01A6" && it.header == "7DF" }?.let { candidateAbsoluteProbes.add(it) }
-        when {
-            carMake.contains("Hyundai", ignoreCase = true) || carMake.contains("Kia", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "22B002" }?.let { candidateAbsoluteProbes.add(it) }
-            carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "220201" }?.let { candidateAbsoluteProbes.add(it) }
-            carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) || carMake.contains("Opel", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "220020" }?.let { candidateAbsoluteProbes.add(it) }
-            carMake.contains("Ford", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "22DD01" }?.let { candidateAbsoluteProbes.add(it) }
-            carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) || carMake.contains("Audi", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "222203" }?.let { candidateAbsoluteProbes.add(it) }
-            carMake.contains("Nissan", ignoreCase = true) || carMake.contains("Renault", ignoreCase = true) ->
-                universalOdometerProbes.find { it.command == "2101" }?.let { candidateAbsoluteProbes.add(it) }
+        val standardProbes = universalOdometerProbes.filter {
+            it.isAbsoluteOdometer && (it.command == "01A6" || it.command == "22F4A6") && (!it.isCluster || isCurrentProtocolCan)
         }
-        universalOdometerProbes.find { it.command == "22F40D" }?.let { candidateAbsoluteProbes.add(it) }
+        val brandProbes = universalOdometerProbes.filter {
+            it.isAbsoluteOdometer && it.command != "01A6" && it.command != "22F4A6" && (isCurrentProtocolCan || it.header == "7DF")
+        }
 
-        for (probe in candidateAbsoluteProbes) {
+        val prioritizedBrandProbes = mutableListOf<OdometerProbe>()
+        val preferredCmd = when {
+            carMake.contains("Hyundai", ignoreCase = true) || carMake.contains("Kia", ignoreCase = true) ||
+                carMake.contains("هيونداي") || carMake.contains("كيا") -> "22B002"
+            carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ||
+                carMake.contains("تويوتا") -> "220201"
+            carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) ||
+                carMake.contains("Opel", ignoreCase = true) || carMake.contains("شيفروليه") || carMake.contains("دايو") -> "220020"
+            carMake.contains("Ford", ignoreCase = true) || carMake.contains("Mazda", ignoreCase = true) ||
+                carMake.contains("فورد") -> "22DD01"
+            carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) ||
+                carMake.contains("Audi", ignoreCase = true) || carMake.contains("سكودا") || carMake.contains("فولكس") -> "222203"
+            carMake.contains("Nissan", ignoreCase = true) || carMake.contains("نيسان") -> "220201"
+            carMake.contains("Renault", ignoreCase = true) || carMake.contains("Fiat", ignoreCase = true) ||
+                carMake.contains("رينو") || carMake.contains("فيات") -> "222001"
+            else -> null
+        }
+        if (preferredCmd != null) {
+            prioritizedBrandProbes.addAll(brandProbes.filter { it.command == preferredCmd })
+            prioritizedBrandProbes.addAll(brandProbes.filter { it.command != preferredCmd })
+        } else {
+            prioritizedBrandProbes.addAll(brandProbes)
+        }
+
+        for (probe in standardProbes + prioritizedBrandProbes) {
             try {
                 val odo = readProbeOdometer(inStream, outStream, probe)
                 if (odo > 10.0f) {
                     applyCumulativeOdometerDelta(odo, probe)
-                    confirmedProbe = probe
-                    break
+                    preferences.edit()
+                        .putString("active_odometer_probe_header", probe.header)
+                        .putString("active_odometer_probe_cmd", probe.command)
+                        .apply()
+                    return probe
                 }
             } catch (_: Exception) {}
         }
 
+        // 3. Fallback: Universal ECU hardware distance counters (PID 0131 / 0121) - only if ECU actually responds
+        for (hwProbe in universalOdometerProbes.filter { !it.isAbsoluteOdometer }) {
+            try {
+                val odoHw = readProbeOdometer(inStream, outStream, hwProbe)
+                if (odoHw >= 0f) {
+                    applyCumulativeOdometerDelta(odoHw, hwProbe)
+                    preferences.edit()
+                        .putString("active_odometer_probe_header", hwProbe.header)
+                        .putString("active_odometer_probe_cmd", hwProbe.command)
+                        .apply()
+                    return hwProbe
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 4. No odometer PID responded -> clear stale cached probe and fall back cleanly to ECU Speed 010D integration
         preferences.edit()
-            .putString("active_odometer_probe_header", confirmedProbe.header)
-            .putString("active_odometer_probe_cmd", confirmedProbe.command)
+            .remove("active_odometer_probe_header")
+            .remove("active_odometer_probe_cmd")
             .apply()
-        return confirmedProbe
+        return null
     }
 
     private fun readProbeOdometer(inStream: InputStream, outStream: OutputStream, probe: OdometerProbe): Float {
         return try {
             if (probe.header != "7DF") {
-                sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 400)
+                configureProbeCanHeader(outStream, inStream, probe.header)
             }
-            val resp = sendObdCommand(outStream, inStream, probe.command, 800)
-            if (probe.header != "7DF") {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 400)
-            }
+            val resp = sendObdCommand(outStream, inStream, probe.command, 550)
             parseProbeOdometer(resp, probe)
         } catch (_: Exception) {
             -1f
+        } finally {
+            if (probe.header != "7DF") {
+                try {
+                    sendObdCommand(outStream, inStream, "ATCRA", 200)
+                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                } catch (_: Exception) {}
+            }
         }
+    }
+
+    private fun applyDrivenDistanceDelta(deltaKm: Float, sourceDescription: String) {
+        if (deltaKm <= 0f || deltaKm > 15000.0f) return
+
+        // 1. Advance trip distance
+        telemetry.tripDistanceKm += deltaKm
+        preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
+
+        // 2. Advance cumulative car odometer ONLY if a valid baseline (> 0) already exists (from ECU or manual calibration)
+        val savedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
+        if (savedCarOdo > 0f) {
+            val updatedCarOdo = savedCarOdo + deltaKm
+            telemetry.carOdometerKm = updatedCarOdo
+            preferences.edit().putFloat("car_cumulative_odometer_km", updatedCarOdo).apply()
+            if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f) {
+                preferences.edit().putFloat("trip_start_car_odometer", (updatedCarOdo - telemetry.tripDistanceKm).coerceAtLeast(0f)).apply()
+            }
+        }
+
+        if (activeOdometerProbe?.isAbsoluteOdometer != true) {
+            telemetry.odometerSource = sourceDescription
+            preferences.edit().putString("car_odometer_source", sourceDescription).apply()
+        }
+
+        // 3. Advance Unified Engine Oil elapsed km (works even if car_cumulative_odometer_km is not yet calibrated!)
+        addUnifiedEngineOilDistanceDelta(deltaKm, getEffectiveCarOdometerKm())
     }
 
     private fun applyCumulativeOdometerDelta(probeValue: Float, probe: OdometerProbe) {
@@ -12990,10 +13126,10 @@ class MainActivity : Activity() {
         var deltaKm = 0f
 
         if (probe.isAbsoluteOdometer) {
-            // 1. Absolute Dashboard Odometer directly from ECU
+            // 1. Absolute Dashboard Odometer directly from Cluster / ECU (or manual calibration)
             val currentCarOdo = probeValue
             telemetry.carOdometerKm = currentCarOdo
-            telemetry.odometerSource = "كمبيوتر السيارة: ${probe.description}"
+            telemetry.odometerSource = "عداد التابلوه المباشر: ${probe.description}"
 
             val lastSavedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
             if (lastSavedCarOdo > 0f && currentCarOdo >= lastSavedCarOdo) {
@@ -13003,76 +13139,169 @@ class MainActivity : Activity() {
                 }
             }
             preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
-            subKmEcuRollDistance = 0.0
+            if (deltaKm > 0f) {
+                ecuSpeedDistanceBuffer = 0.0
+                subKmEcuRollDistance = 0.0
+                flushedEcuSpeedSinceLastTickKm = 0.0
+            }
+            if (preferences.getFloat("dep_tracking_baseline_odo_km", 0f) <= 0f && !preferences.getBoolean("dep_tracking_manual_date", false) && currentCarOdo > 10f) {
+                preferences.edit().putFloat("dep_tracking_baseline_odo_km", currentCarOdo).apply()
+            }
         } else {
-            // 2. Universal ECU Hardware Distance Counter (PID 0131 / 0121) - 100% of OBD2 cars!
+            // 2. Universal ECU Hardware Distance Counter (PID 0131 / 0121)
+            // Note: 0131 is "distance since DTCs cleared", NOT the car's total odometer!
+            // Never overwrite car_cumulative_odometer_km with 0131's raw value when uncalibrated.
             val rawCounter = probeValue.toInt()
             val lastSavedRaw = preferences.getInt("last_ecu_hardware_counter_raw", -1)
 
-            if (lastSavedRaw >= 0) {
-                val d = ((rawCounter - lastSavedRaw + 65536) % 65536).toFloat()
-                if (d in 0.001f..15000.0f) {
-                    deltaKm = d
+            if (lastSavedRaw >= 0 && rawCounter != lastSavedRaw) {
+                val rawDiff = ((rawCounter - lastSavedRaw + 65536) % 65536).toDouble()
+                if (rawDiff in 0.5..15000.0) {
+                    // Reconcile against sub-km 010D speed distance already flushed since last 0131 tick
+                    val reconciled = if (rawDiff > flushedEcuSpeedSinceLastTickKm + 1.5) {
+                        // Offline/previous-trip distance accumulated while app wasn't open
+                        rawDiff
+                    } else {
+                        (rawDiff - flushedEcuSpeedSinceLastTickKm).coerceAtLeast(0.0)
+                    }
+                    deltaKm = reconciled.toFloat()
+                    flushedEcuSpeedSinceLastTickKm = 0.0
+                    ecuSpeedDistanceBuffer = 0.0
+                    subKmEcuRollDistance = 0.0
                 }
             }
 
             preferences.edit().putInt("last_ecu_hardware_counter_raw", rawCounter).apply()
 
             var currentCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
-            if (currentCarOdo <= 0f) {
-                currentCarOdo = if (rawCounter > 0) rawCounter.toFloat() else 0f
+            if (currentCarOdo > 0f && deltaKm > 0f) {
+                currentCarOdo += deltaKm
+                preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
             }
-            currentCarOdo += deltaKm
             telemetry.carOdometerKm = currentCarOdo
-            telemetry.odometerSource = "كمبيوتر المحرك ECU (فرق العداد الفعلي ${probe.command})"
-            preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
-            if (deltaKm > 0f) {
-                subKmEcuRollDistance = 0.0
-            }
+            telemetry.odometerSource = "كمبيوتر المحرك ECU (${probe.command} + حساس السرعة 010D)"
         }
 
         preferences.edit().putString("car_odometer_source", telemetry.odometerSource).apply()
 
-        // 1. Calculate Real Trip Distance strictly from Car Computer Odometer Difference
+        // 1. Update Real Trip Distance
         val tripStartOdo = preferences.getFloat("trip_start_car_odometer", 0f)
-        if (tripStartOdo > 0f && telemetry.carOdometerKm >= tripStartOdo) {
+        if (probe.isAbsoluteOdometer && tripStartOdo > 0f && telemetry.carOdometerKm >= tripStartOdo) {
             telemetry.tripDistanceKm = telemetry.carOdometerKm - tripStartOdo
         } else if (deltaKm > 0f) {
             telemetry.tripDistanceKm += deltaKm
         }
         preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
 
-        // 2. Calculate Real Engine Oil Distance strictly from Car Computer Odometer Difference (Vehicle-Scoped + Global Sync)
+        // 2. Synchronize Unified Engine Oil using the SAME key ("oil_baseline_odo_$vehId") and helper
         val vehId = getActiveVehicleScopeId()
-        val oilBaselineKey = "oil_baseline_car_odometer_$vehId"
-        val oilCurrentKey = "oil_current_km_$vehId"
-        val oilBaseline = preferences.getFloat(oilBaselineKey, preferences.getFloat("oil_baseline_car_odometer", 0f))
-        if (oilBaseline > 0f && telemetry.carOdometerKm >= oilBaseline) {
-            val realOilKm = telemetry.carOdometerKm - oilBaseline
-            preferences.edit()
-                .putFloat(oilCurrentKey, realOilKm)
-                .putFloat("oil_current_km", realOilKm)
-                .apply()
-        } else if (deltaKm > 0f) {
-            val curOil = preferences.getFloat(oilCurrentKey, preferences.getFloat("oil_current_km", 0f))
-            preferences.edit()
-                .putFloat(oilCurrentKey, curOil + deltaKm)
-                .putFloat("oil_current_km", curOil + deltaKm)
-                .apply()
+        val oilState = getUnifiedEngineOilState(vehId)
+        if (oilState.isConfigured) {
+            if (telemetry.carOdometerKm > 0f && oilState.baselineOdoKm > 0f && telemetry.carOdometerKm >= oilState.baselineOdoKm) {
+                val realOilKm = telemetry.carOdometerKm - oilState.baselineOdoKm
+                preferences.edit()
+                    .putFloat("oil_current_km_$vehId", realOilKm)
+                    .putFloat("oil_current_km", realOilKm)
+                    .apply()
+                evaluateUnifiedEngineOilAlert(vehId, triggerSystemAlert = true)
+            } else if (deltaKm > 0f) {
+                addUnifiedEngineOilDistanceDelta(deltaKm, telemetry.carOdometerKm, vehId)
+            }
         }
 
-        // Initialize baseline references on first run
+        // Initialize baseline references on first confirmed odometer reading
         if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f && telemetry.carOdometerKm > 0f) {
             val curTrip = preferences.getFloat("saved_trip_distance_km", 0f)
             preferences.edit().putFloat("trip_start_car_odometer", (telemetry.carOdometerKm - curTrip).coerceAtLeast(0f)).apply()
         }
-        if (preferences.getFloat(oilBaselineKey, 0f) == 0f && telemetry.carOdometerKm > 0f) {
-            val curOil = preferences.getFloat(oilCurrentKey, preferences.getFloat("oil_current_km", 0f))
-            val baseVal = (telemetry.carOdometerKm - curOil).coerceAtLeast(0f)
+        if (oilState.isConfigured && oilState.baselineOdoKm <= 0f && telemetry.carOdometerKm > 0f) {
+            val baseVal = (telemetry.carOdometerKm - oilState.currentElapsedKm).coerceAtLeast(0f)
             preferences.edit()
-                .putFloat(oilBaselineKey, baseVal)
+                .putFloat("oil_baseline_odo_$vehId", baseVal)
                 .putFloat("oil_baseline_car_odometer", baseVal)
                 .apply()
+        }
+    }
+
+    private fun scanAllOdometerComputers() {
+        val outStream = activeObdOutStream
+        val inStream = activeObdInStream
+
+        if (outStream == null || inStream == null || !telemetry.isConnected) {
+            AlertDialog.Builder(this)
+                .setTitle("🔎 فحص قراءة عداد التابلوه (Odometer)")
+                .setMessage("⚠️ جهاز الـ OBD غير متصل بالسيارة حالياً.\n\nعند التوصيل بالسيارة، يفحص هذا الاختبار:\n• المعيار القياسي العام (PID 01A6 و UDS 22F4A6)\n• لوحات عدادات التابلوه لمختلف الماركات (7C6, 7C0, 7A4, 724, 720, 714, 743, 760, 710)\n• عداد المسافة بالمحرك (PID 0131 / 0121)\n\nوفي حال لم تبث السيارة العداد الكلي عبر فيشة الـ OBD، يعتمد البرنامج على حساس سرعة السيارة (PID 010D) لحساب الرحلة والزيت والإهلاك بدقة، ويمكنك إدخال رقم التابلوه يدوياً مرة واحدة ليكمل العد فوقه.")
+                .setPositiveButton("🚗 ضبط العداد يدوياً الآن") { _, _ -> showOdometerCalibrationDialog() }
+                .setNegativeButton("إغلاق", null)
+                .show()
+            return
+        }
+
+        val progress = AlertDialog.Builder(this)
+            .setTitle("🔎 جاري فحص كمبيوترات التابلوه...")
+            .setMessage("يتم الآن إرسال استعلامات العداد الكلي للوحة العدادات بالطابلوه وكمبيوتر المحرك...")
+            .setCancelable(false)
+            .create()
+        progress.show()
+
+        thread {
+            val results = mutableListOf<String>()
+            var bestAbsoluteProbe: OdometerProbe? = null
+            var bestAbsoluteOdo = -1f
+            var bestHwProbe: OdometerProbe? = null
+            var bestHwVal = -1f
+
+            synchronized(obdLock) {
+                for (probe in universalOdometerProbes) {
+                    if (probe.isCluster && !isCurrentProtocolCan) continue
+                    try {
+                        val valKm = readProbeOdometer(inStream, outStream, probe)
+                        if (probe.isAbsoluteOdometer && valKm > 10.0f) {
+                            results.add("🟢 ${probe.description}: ${valKm.toInt()} كم")
+                            if (bestAbsoluteProbe == null) {
+                                bestAbsoluteProbe = probe
+                                bestAbsoluteOdo = valKm
+                            }
+                        } else if (!probe.isAbsoluteOdometer && valKm >= 0f) {
+                            results.add("🟡 ${probe.description}: ${valKm.toInt()} كم (عداد منذ مسح الأعطال)")
+                            if (bestHwProbe == null) {
+                                bestHwProbe = probe
+                                bestHwVal = valKm
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+
+            runOnUiThread {
+                progress.dismiss()
+                if (bestAbsoluteProbe != null) {
+                    activeOdometerProbe = bestAbsoluteProbe
+                    applyCumulativeOdometerDelta(bestAbsoluteOdo, bestAbsoluteProbe!!)
+                    preferences.edit()
+                        .putString("active_odometer_probe_header", bestAbsoluteProbe!!.header)
+                        .putString("active_odometer_probe_cmd", bestAbsoluteProbe!!.command)
+                        .apply()
+                    updateLiveUI()
+                } else if (bestHwProbe != null) {
+                    activeOdometerProbe = bestHwProbe
+                    applyCumulativeOdometerDelta(bestHwVal, bestHwProbe!!)
+                    updateLiveUI()
+                }
+
+                val summary = if (results.isEmpty()) {
+                    "⚠️ لم ترد لوحة العدادات أو كمبيوتر المحرك على أوامر قراءة العداد الكلي (هذا طبيعي في كثير من السيارات قبل 2019 التي لا تبث عداد التابلوه عبر فيشة OBD).\n\n✅ سيعتمد البرنامج تلقائياً على حساس سرعة السيارة من الكمبيوتر (PID 010D) لحساب الرحلة، استهلاك الزيت، والإهلاك.\n💡 يمكنك الضغط على (ضبط العداد يدوياً) لإدخال رقم التابلوه الحالي مرة واحدة وسيواصل العداد الزيادة تلقائياً."
+                } else {
+                    "نتائج الفحص المباشر من السيارة:\n\n" + results.joinToString("\n")
+                }
+
+                AlertDialog.Builder(this)
+                    .setTitle(if (bestAbsoluteProbe != null) "✅ تم قراءة عداد التابلوه بنجاح!" else "📊 نتيجة فحص عداد التابلوه")
+                    .setMessage(summary)
+                    .setPositiveButton("تم", null)
+                    .setNeutralButton("🚗 ضبط العداد يدوياً") { _, _ -> showOdometerCalibrationDialog() }
+                    .show()
+            }
         }
     }
 
@@ -13615,31 +13844,68 @@ class MainActivity : Activity() {
         return DecodedVehicle(clean, make, year, displayName)
     }
 
-    private fun pollAllEcuDtcs(outStream: OutputStream, inStream: InputStream): List<String> {
-        val combined = mutableListOf<String>()
+    private fun refreshDetectedProtocol(outStream: OutputStream, inStream: InputStream) {
         try {
+            val dpResp = sendObdCommand(outStream, inStream, "ATDP", 500)
+            val dpnResp = sendObdCommand(outStream, inStream, "ATDPN", 400).uppercase()
+            val protoChar = dpnResp.trim().removePrefix("A").firstOrNull()
+            val isCanByNumber = protoChar in listOf('6', '7', '8', '9', 'A', 'B', 'C')
+            isCurrentProtocolCan = isCanByNumber ||
+                dpResp.contains("CAN", ignoreCase = true) ||
+                dpResp.contains("ISO 15765", ignoreCase = true)
+            if (dpResp.isNotBlank() && !dpResp.equals("AUTO", ignoreCase = true)) {
+                detectedProtocolName = dpResp
+                telemetry.obdProtocol = dpResp
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun replaceTelemetryDtcs(newCodes: List<String>) {
+        telemetry.dtcCodes = java.util.concurrent.CopyOnWriteArrayList(newCodes.distinct())
+    }
+
+    private fun isValidDtcPollResponse(resp: String, modePrefix: String): Boolean {
+        val upper = resp.uppercase()
+        return upper.contains(modePrefix) || upper.contains("NO DATA")
+    }
+
+    private fun pollAllEcuDtcsWithStatus(outStream: OutputStream, inStream: InputStream): Pair<List<String>, Boolean> {
+        val combined = mutableListOf<String>()
+        var anyValidReply = false
+        try {
+            // Ensure broadcast header & open RX filter so no cluster probe blocks DTC replies
+            sendObdCommand(outStream, inStream, "ATCRA", 200)
+            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+
             // 1. Mode 03: Confirmed / Stored DTCs (Response prefix 43)
             val resp03 = sendObdCommand(outStream, inStream, "03", 1200)
+            if (isValidDtcPollResponse(resp03, "43")) anyValidReply = true
             for (c in parseDtc(resp03, isCurrentProtocolCan, "43")) {
                 if (!combined.contains(c)) combined.add(c)
             }
             // 2. Mode 07: Pending / Sporadic DTCs detected in current drive cycle (Response prefix 47)
             val resp07 = sendObdCommand(outStream, inStream, "07", 1000)
+            if (isValidDtcPollResponse(resp07, "47")) anyValidReply = true
             for (c in parseDtc(resp07, isCurrentProtocolCan, "47")) {
                 if (!combined.contains(c)) combined.add(c)
             }
             // 3. Mode 0A: Permanent DTCs (Response prefix 4A)
             val resp0A = sendObdCommand(outStream, inStream, "0A", 900)
+            if (isValidDtcPollResponse(resp0A, "4A")) anyValidReply = true
             for (c in parseDtc(resp0A, isCurrentProtocolCan, "4A")) {
                 if (!combined.contains(c)) combined.add(c)
             }
         } catch (_: Exception) {}
-        return combined
+        return Pair(combined, anyValidReply)
+    }
+
+    private fun pollAllEcuDtcs(outStream: OutputStream, inStream: InputStream): List<String> {
+        return pollAllEcuDtcsWithStatus(outStream, inStream).first
     }
 
     private fun parseDtc(raw: String, isCan: Boolean = isCurrentProtocolCan, modePrefix: String = "43"): List<String> {
         val list = mutableListOf<String>()
-        if (raw.contains("NO DATA") || raw.contains("UNABLE") || raw.contains("ERROR")) return list
+        if (raw.isBlank()) return list
 
         fun decodeCandidate(hex4: String): String? {
             if (hex4.length < 4 || hex4 == "0000") return null
@@ -13658,16 +13924,22 @@ class MainActivity : Activity() {
             return if (code != "P0000") code else null
         }
 
-        // Group lines into separate ECU message blocks so a second ECU's '43 00' is never concatenated
-        // into the middle of the first ECU's payload as a fake 'C0300' code.
+        // Group lines into separate ECU message blocks; filter noise lines individually so one ECU's
+        // "NO DATA" or "SEARCHING..." never discards valid DTCs from another ECU.
         val lines = raw.split("\r", "\n")
         val ecuPayloads = mutableListOf<String>()
         var currentMultiFrame = java.lang.StringBuilder()
 
         for (line in lines) {
-            var trimmed = line.trim()
+            var trimmed = line.replace("SEARCHING...", "").trim()
             if (trimmed.isEmpty()) continue
-            if (trimmed.startsWith("7E") && trimmed.length > 4) {
+            val upperLine = trimmed.uppercase()
+            if (upperLine.contains("NO DATA") || upperLine.contains("UNABLE") ||
+                upperLine.contains("ERROR") || upperLine.contains("STOPPED") ||
+                upperLine.contains("BUS INIT") || upperLine == "?") {
+                continue
+            }
+            if (trimmed.startsWith("7E", ignoreCase = true) && trimmed.length > 4 && trimmed[3] == ' ') {
                 trimmed = trimmed.substring(4).trim()
             }
             val isMultiContinuation = trimmed.length > 2 && trimmed[1] == ':' && trimmed[0] != '0'
@@ -13680,6 +13952,7 @@ class MainActivity : Activity() {
             }
             val cleanLine = lineHex.toString()
             if (cleanLine.isEmpty()) continue
+            if (cleanLine.startsWith("7F")) continue
 
             if (isMultiContinuation && currentMultiFrame.isNotEmpty()) {
                 currentMultiFrame.append(cleanLine)
@@ -13714,10 +13987,10 @@ class MainActivity : Activity() {
                 i += 4
             }
 
-            // Candidate B: CAN Single-Frame / Multi-Frame where Byte 0 is the DTC count (01..0F)
+            // Candidate B: CAN Single-Frame / Multi-Frame where Byte 0 is the DTC count (01..1E)
             val dtcsWithCount = mutableListOf<String>()
             val firstByte = payload.substring(0, 2).toIntOrNull(16) ?: 0
-            if (firstByte in 1..15) {
+            if (firstByte in 1..30) {
                 var j = 2
                 while (j + 4 <= payload.length) {
                     val chunk = payload.substring(j, j + 4)
@@ -13730,10 +14003,16 @@ class MainActivity : Activity() {
                 }
             }
 
-            val finalCodes = if (!isCan) {
-                dtcsWithoutCount
+            val hasOddDtcBytes = (payload.length % 4 == 2)
+            val finalCodes = if (isCan) {
+                when {
+                    firstByte == 0 && (payload.length <= 4 || payload.drop(2).all { it == '0' }) -> emptyList()
+                    dtcsWithCount.isNotEmpty() && firstByte in 1..30 &&
+                        (dtcsWithCount.size == firstByte || hasOddDtcBytes || dtcsWithCount.size < firstByte) -> dtcsWithCount
+                    else -> dtcsWithoutCount
+                }
             } else {
-                if (dtcsWithCount.isNotEmpty() && dtcsWithCount.size == firstByte) {
+                if (hasOddDtcBytes && dtcsWithCount.isNotEmpty() && firstByte in 1..15 && dtcsWithCount.size == firstByte) {
                     dtcsWithCount
                 } else {
                     dtcsWithoutCount
@@ -14269,9 +14548,10 @@ class MainActivity : Activity() {
         if (out != null && `in` != null && telemetry.isConnected) {
             thread {
                 try {
-                    val codes = pollAllEcuDtcs(out, `in`)
-                    telemetry.dtcCodes.clear()
-                    telemetry.dtcCodes.addAll(codes)
+                    val (codes, scanOk) = pollAllEcuDtcsWithStatus(out, `in`)
+                    if (scanOk) {
+                        replaceTelemetryDtcs(codes)
+                    }
                     processAndSyncDetectedVehicleFaults(codes, isLiveEcuScan = true)
                     runOnUiThread {
                         updateLiveUI()

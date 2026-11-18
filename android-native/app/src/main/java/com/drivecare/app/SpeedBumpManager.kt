@@ -33,7 +33,8 @@ import kotlin.math.*
  */
 class SpeedBumpManager(
     private val context: Context,
-    private val apiBaseUrlProvider: () -> String
+    private val apiBaseUrlProvider: () -> String,
+    private val vehicleIdProvider: () -> String = { "" }
 ) : SensorEventListener {
 
     companion object {
@@ -41,10 +42,10 @@ class SpeedBumpManager(
         private const val EARTH_RADIUS_METERS = 6371000.0
         private const val CACHE_REFRESH_DISTANCE_METERS = 5000.0 // 5 km move triggers 20km sector refresh
         private const val SPEED_GATE_MAX_KMH = 21.0              // Hard limit: > 21 km/h never records a bump
-        private const val SPEED_GATE_MIN_KMH = 3.5               // Car must be moving
+        private const val SPEED_GATE_MIN_KMH = 1.5               // Allow slow crawl (2-3 km/h) over tall speed bumps
         private const val EARLY_WARNING_METERS = 100.0
         private const val FINAL_WARNING_METERS = 20.0
-        private const val PASS_CHECK_WINDOW_MS = 6000L
+        private const val PASS_CHECK_COOLDOWN_MS = 60000L        // Prevent GPS jitter from counting same pass twice
     }
 
     data class CachedHazard(
@@ -75,9 +76,13 @@ class SpeedBumpManager(
     var onWarningStateChanged: ((warningText: String?, stage: String?) -> Unit)? = null
     var onBumpDetectedNotice: ((message: String) -> Unit)? = null
 
-    // Cache & state
+    // Cache & state (20 km active sector + full 4,380 bundled offline seed database)
     private val cachedHazards = CopyOnWriteArrayList<CachedHazard>()
+    private val offlineSeedHazards = CopyOnWriteArrayList<CachedHazard>()
+    private val deactivatedSeedIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    @Volatile private var isSeedLoaded = false
     private var lastFetchLocation: Location? = null
+    private var lastSeedSectorLocation: Location? = null
     private val isFetching = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -86,26 +91,58 @@ class SpeedBumpManager(
     private var lastAlertStage: String? = null
     private var lastAlertTimeMs: Long = 0L
 
-    // Pass-check tracker: hazards currently within <= 25m
-    private val activePassHazards = mutableMapOf<String, Long>() // id -> entryTimeMs
+    private data class PassTrackingState(
+        val entryTimeMs: Long,
+        var feltBumpDuringPass: Boolean = false
+    )
 
-    // Kinematic detection window
+    private data class MotionSample(
+        val timestampMs: Long,
+        val verticalAccel: Float,
+        val horizontalMag: Float
+    )
+
+    private data class PendingBumpCandidate(
+        val lat: Double,
+        val lng: Double,
+        val bearing: Double,
+        val bidirectional: Boolean,
+        val minSpeedAtBump: Double,
+        val detectedAtMs: Long,
+        val peakToPeak: Float
+    )
+
+    // Pass-check tracker: hazards currently within <= 20m, latching bump detection reliably
+    private val activePassHazards = mutableMapOf<String, PassTrackingState>()
+    private val lastPassSentMs = mutableMapOf<String, Long>()
+
+    // 3D Gravity-aligned kinematic detection & rough-road chatter filter
     private var lastRecordedBumpTimeMs: Long = 0L
     private var positiveShockTimeMs: Long = 0L
     private var hasPositiveShock = false
     private var hasPitchRotation = false
     private var hasNegativeRebound = false
     private var lastBumpFeltTimeMs: Long = 0L
-    private var filteredGravity: Float = 9.81f
+    private var lastGyroRotationTimeMs: Long = 0L
+    private var lastHandHeldJitterMs: Long = 0L
+    private var hasGravityInit = false
+    private var gravityX: Float = 0f
+    private var gravityY: Float = 0f
+    private var gravityZ: Float = 9.81f
+    private var peakPositiveShockDelta: Float = 0f
+    private var minNegativeReboundDelta: Float = 0f
+    private var minSpeedInBumpWindow: Double = 999.0
+    private var pendingCandidate: PendingBumpCandidate? = null
+    private val recentMotionSamples = ArrayDeque<MotionSample>()
 
     // Current vehicle telemetry
     private var latestGpsLocation: Location? = null
     private var latestGpsSpeedKmh: Double = 0.0
     private var latestObdSpeedKmh: Double? = null
+    private var lastObdSpeedUpdateMs: Long = 0L
     private var lastValidBearingDegrees: Double = 0.0
     private var hasValidBearing: Boolean = false
     private var hasGyroSensor: Boolean = false
-    private var peakPositiveShockDelta: Float = 0f
     private val recentSpeedSamples = ArrayDeque<Pair<Long, Double>>() // (timestampMs, speedKmh)
 
     // Audio & Sensors
@@ -124,6 +161,10 @@ class SpeedBumpManager(
     private fun loadPersistedLocalHazards() {
         try {
             val prefs = context.getSharedPreferences("drivecare_prefs", Context.MODE_PRIVATE)
+            val savedDeactivated = prefs.getStringSet("deactivated_seed_bump_ids", null)
+            if (!savedDeactivated.isNullOrEmpty()) {
+                deactivatedSeedIds.addAll(savedDeactivated)
+            }
             val raw = prefs.getString("persisted_speed_bumps_json", null)
             if (!raw.isNullOrBlank()) {
                 val arr = JSONArray(raw)
@@ -161,7 +202,11 @@ class SpeedBumpManager(
     private fun savePersistedLocalHazards() {
         try {
             val arr = JSONArray()
-            for (h in cachedHazards.take(250)) {
+            // Persist user-discovered/modified bumps cleanly without bloating prefs with all 4,380 bundled seeds
+            val toPersist = cachedHazards.filter { h ->
+                !h.id.all { it.isDigit() } || !h.active || h.consecutiveNegativePasses > 0 || h.needsMapMatch
+            }
+            for (h in toPersist.take(350)) {
                 val obj = JSONObject().apply {
                     put("id", h.id)
                     put("lat", h.lat)
@@ -176,7 +221,10 @@ class SpeedBumpManager(
                 arr.put(obj)
             }
             val prefs = context.getSharedPreferences("drivecare_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("persisted_speed_bumps_json", arr.toString()).apply()
+            prefs.edit()
+                .putString("persisted_speed_bumps_json", arr.toString())
+                .putStringSet("deactivated_seed_bump_ids", HashSet(deactivatedSeedIds))
+                .apply()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to save persisted hazards: ${e.message}")
         }
@@ -184,6 +232,92 @@ class SpeedBumpManager(
 
     fun getDiscoveredHazardsSnapshot(): List<CachedHazard> {
         return cachedHazards.toList()
+    }
+
+    fun getTotalBundledSeedCount(): Int {
+        return offlineSeedHazards.size
+    }
+
+    fun ensureSectorLoadedAround(lat: Double, lng: Double, radiusKm: Double = 20.0) {
+        if (!isSeedLoaded) {
+            loadOfflineSeedHazardsSync()
+        }
+        populateSectorFromOfflineSeed(lat, lng, radiusKm)
+    }
+
+    private fun loadOfflineSeedHazardsSync() {
+        if (isSeedLoaded) return
+        try {
+            val raw = context.assets.open("trusted_seed_hazards_v1.json").bufferedReader().use { it.readText() }
+            val json = JSONObject(raw)
+            val rows = json.optJSONArray("rows") ?: JSONArray()
+            val parsed = ArrayList<CachedHazard>(rows.length())
+            for (i in 0 until rows.length()) {
+                val r = rows.getJSONObject(i)
+                val sid = r.optString("sourceId", "${i + 1}")
+                val isActive = !deactivatedSeedIds.contains(sid)
+                val roadLabel = if (r.optString("type") == "UNKNOWN_ROAD_ANOMALY") "مطب مسجل" else "مطب معتمد"
+                parsed.add(
+                    CachedHazard(
+                        id = sid,
+                        lat = r.optDouble("latitudeDegrees", 0.0),
+                        lng = r.optDouble("longitudeDegrees", 0.0),
+                        directionDegrees = r.optDouble("directionDegrees", 0.0),
+                        bidirectional = r.optBoolean("bidirectional", false),
+                        roadClass = roadLabel,
+                        active = isActive,
+                        consecutiveNegativePasses = 0,
+                        needsMapMatch = false
+                    )
+                )
+            }
+            offlineSeedHazards.clear()
+            offlineSeedHazards.addAll(parsed)
+            isSeedLoaded = true
+            Log.i(TAG, "Loaded ${offlineSeedHazards.size} bundled offline speed bumps from assets")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load bundled seed bumps: ${e.message}")
+        }
+    }
+
+    private fun loadOfflineSeedHazardsAsync() {
+        if (isSeedLoaded) return
+        thread(name = "LoadSeedHazardsThread") {
+            loadOfflineSeedHazardsSync()
+            latestGpsLocation?.let { loc ->
+                populateSectorFromOfflineSeed(loc.latitude, loc.longitude, 20.0)
+            }
+        }
+    }
+
+    private fun populateSectorFromOfflineSeed(lat: Double, lng: Double, radiusKm: Double = 20.0) {
+        if (!isSeedLoaded || offlineSeedHazards.isEmpty()) return
+        val lastSeed = lastSeedSectorLocation
+        if (lastSeed != null && distanceMeters(lat, lng, lastSeed.latitude, lastSeed.longitude) < CACHE_REFRESH_DISTANCE_METERS && cachedHazards.isNotEmpty()) {
+            return
+        }
+        val radiusMeters = radiusKm * 1000.0
+        val existingById = HashMap<String, CachedHazard>(cachedHazards.size + 16)
+        for (h in cachedHazards) {
+            existingById[h.id] = h
+        }
+        val toAdd = ArrayList<CachedHazard>()
+        for (seed in offlineSeedHazards) {
+            if (deactivatedSeedIds.contains(seed.id)) continue
+            if (existingById.containsKey(seed.id)) continue
+            val d = distanceMeters(lat, lng, seed.lat, seed.lng)
+            if (d <= radiusMeters) {
+                toAdd.add(seed)
+            }
+        }
+        if (toAdd.isNotEmpty()) {
+            cachedHazards.addAll(toAdd)
+        }
+        lastSeedSectorLocation = Location("").apply {
+            latitude = lat
+            longitude = lng
+        }
+        Log.i(TAG, "Offline 20km sector populated: ${cachedHazards.size} active/local hazards around ($lat, $lng)")
     }
 
     fun registerManualOrSimulatedBump(lat: Double, lng: Double, bearing: Double = 0.0, roadLabel: String = "مطب مرصود"): CachedHazard {
@@ -225,6 +359,7 @@ class SpeedBumpManager(
                     hasGyroSensor = false
                 }
             }
+            loadOfflineSeedHazardsAsync()
             triggerDailyMapReconciliationIfNeeded()
             Log.i(TAG, "SpeedBumpManager started with sensor listeners")
         } catch (e: Exception) {
@@ -260,24 +395,34 @@ class SpeedBumpManager(
      * Evaluates 20km sector refresh, proximity warnings, and pass-checks.
      */
     fun onLocationChanged(location: Location, obdSpeedKmh: Double? = null) {
+        val now = System.currentTimeMillis()
         latestGpsLocation = location
         latestGpsSpeedKmh = if (location.hasSpeed()) location.speed * 3.6 else 0.0
-        latestObdSpeedKmh = obdSpeedKmh
-        if (location.hasBearing() && (latestGpsSpeedKmh > 2.5 || (obdSpeedKmh ?: 0.0) > 2.5)) {
+        if (obdSpeedKmh != null) {
+            latestObdSpeedKmh = obdSpeedKmh
+            lastObdSpeedUpdateMs = now
+        }
+        val effectiveBearingSpeed = max(latestGpsSpeedKmh, obdSpeedKmh ?: 0.0)
+        if (location.hasBearing() && effectiveBearingSpeed > 8.0) {
             lastValidBearingDegrees = location.bearing.toDouble()
             hasValidBearing = true
         }
 
         val carSpeed = getEffectiveSpeedKmh()
-        val now = System.currentTimeMillis()
         synchronized(recentSpeedSamples) {
             recentSpeedSamples.addLast(Pair(now, carSpeed))
-            while (recentSpeedSamples.isNotEmpty() && now - recentSpeedSamples.first().first > 8000L) {
+            while (recentSpeedSamples.isNotEmpty() && now - recentSpeedSamples.first().first > 10000L) {
                 recentSpeedSamples.removeFirst()
             }
         }
 
-        // 1. Dynamic 20km City Cache refresh check
+        // Evaluate pending bump candidate re-acceleration confirmation
+        evaluatePendingBumpCandidate(now, carSpeed)
+
+        // 1. Dynamic 20km City Cache refresh check (offline bundled 4,380 seeds + online server sync)
+        if (isSeedLoaded) {
+            populateSectorFromOfflineSeed(location.latitude, location.longitude, 20.0)
+        }
         val lastLoc = lastFetchLocation
         if (lastLoc == null || distanceMeters(location.latitude, location.longitude, lastLoc.latitude, lastLoc.longitude) >= CACHE_REFRESH_DISTANCE_METERS) {
             fetchNearbyHazards(location.latitude, location.longitude, 20.0)
@@ -294,12 +439,16 @@ class SpeedBumpManager(
     }
 
     /**
-     * Returns effective speed: takes the higher of ECU OBD wheel speed or GPS speed
-     * so a 0 OBD reading (when disconnected or between polls) never masks real GPS movement.
+     * Returns effective vehicle speed: prefers real-time ECU OBD wheel speed when connected & active
+     * (no 1-2s GPS deceleration lag), falling back to GPS speed when OBD is disconnected.
      */
     fun getEffectiveSpeedKmh(): Double {
-        val obd = latestObdSpeedKmh ?: 0.0
-        return max(obd, latestGpsSpeedKmh)
+        val obd = latestObdSpeedKmh
+        val obdFresh = (System.currentTimeMillis() - lastObdSpeedUpdateMs) <= 6000L
+        if (obd != null && obdFresh && (obd > 0.0 || latestGpsSpeedKmh <= 3.5)) {
+            return obd
+        }
+        return latestGpsSpeedKmh
     }
 
     /**
@@ -403,44 +552,62 @@ class SpeedBumpManager(
         val hasBearingNow = currentLoc.hasBearing() || hasValidBearing
         val carBearing = if (currentLoc.hasBearing()) currentLoc.bearing.toDouble() else lastValidBearingDegrees
 
-        // 1. Detect entering <= 25m in the SAME direction of travel
+        // 1. Detect entering <= 22m in the SAME direction of travel & latch if bump was already felt on entry
         for (hazard in cachedHazards) {
             if (!hazard.active) continue
             if (!hazard.bidirectional && hasBearingNow && angularDifference(carBearing, hazard.directionDegrees) > 55.0) {
-                // Opposite lane traffic: do NOT count as passing over this lane's bump
                 continue
             }
             val dist = distanceMeters(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
-            if (dist <= FINAL_WARNING_METERS) {
-                if (!activePassHazards.containsKey(hazard.id)) {
-                    activePassHazards[hazard.id] = now
+            if (dist <= 22.0) {
+                val state = activePassHazards.getOrPut(hazard.id) {
+                    val recentlyFelt = (now - lastBumpFeltTimeMs <= 5000L)
+                    PassTrackingState(entryTimeMs = now, feltBumpDuringPass = recentlyFelt)
+                }
+                if (now - lastBumpFeltTimeMs <= 4000L) {
+                    state.feltBumpDuringPass = true
                 }
             }
         }
 
-        // 2. Detect exiting > 35m after entering
+        // 2. Detect exiting > 35m after entering (works accurately even at 5-15 km/h slow crossing)
         val iterator = activePassHazards.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val hId = entry.key
+            val state = entry.value
             val hazard = cachedHazards.firstOrNull { it.id == hId }
             if (hazard != null) {
                 val dist = distanceMeters(currentLoc.latitude, currentLoc.longitude, hazard.lat, hazard.lng)
                 if (dist > 35.0) {
-                    // Car passed the bump! Check if the known bump pattern (<21 km/h + vibration + rebound) occurred:
-                    val feltBump = (now - lastBumpFeltTimeMs <= PASS_CHECK_WINDOW_MS)
+                    val lastSent = lastPassSentMs[hId] ?: 0L
+                    if (now - lastSent < PASS_CHECK_COOLDOWN_MS) {
+                        iterator.remove()
+                        continue
+                    }
+
+                    val feltBump = state.feltBumpDuringPass || (lastBumpFeltTimeMs >= state.entryTimeMs - 3000L)
+                    val isValidNegativeTransit = !feltBump && speedKmh >= 6.0 && (now - state.entryTimeMs in 1500L..45000L)
+
                     if (feltBump) {
                         hazard.consecutiveNegativePasses = 0
                         hazard.active = true
-                    } else {
+                        lastPassSentMs[hId] = now
+                        savePersistedLocalHazards()
+                        sendPassCheckAsync(hId, true, speedKmh)
+                    } else if (isValidNegativeTransit) {
                         hazard.consecutiveNegativePasses += 1
+                        lastPassSentMs[hId] = now
                         if (hazard.consecutiveNegativePasses >= 3) {
                             hazard.active = false
+                            if (hazard.id.all { it.isDigit() }) {
+                                deactivatedSeedIds.add(hazard.id)
+                            }
                             Log.i(TAG, "Hazard ${hazard.id} deactivated locally after 3 passes without bump pattern")
                         }
+                        savePersistedLocalHazards()
+                        sendPassCheckAsync(hId, false, speedKmh)
                     }
-                    savePersistedLocalHazards()
-                    sendPassCheckAsync(hId, feltBump, speedKmh)
                     iterator.remove()
                 }
             } else {
@@ -449,25 +616,75 @@ class SpeedBumpManager(
         }
     }
 
-    /**
-     * Sensor Event Listener: Kinematic Speed Bump Detection
-     * Strict Speed Gate: Speed MUST be <= 21 km/h ($5.83 m/s) with deceleration/low-speed + vertical shock + rebound.
-     */
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event == null) return
+    private fun resetShockWindow() {
+        hasPositiveShock = false
+        hasPitchRotation = false
+        hasNegativeRebound = false
+        peakPositiveShockDelta = 0f
+        minNegativeReboundDelta = 0f
+        minSpeedInBumpWindow = 999.0
+    }
 
-        val speed = getEffectiveSpeedKmh()
+    private fun isRoughRoadChatterWindow(beforeMs: Long): Boolean {
+        val samples = synchronized(recentMotionSamples) {
+            recentMotionSamples.filter { it.timestampMs in (beforeMs - 1500L)..(beforeMs - 100L) }
+        }
+        if (samples.size < 8) return false
 
-        // Strict User Rule: If vehicle speed > 21 km/h, NEVER record a bump!
-        if (speed > SPEED_GATE_MAX_KMH || speed < SPEED_GATE_MIN_KMH) {
-            hasPositiveShock = false
-            hasPitchRotation = false
-            hasNegativeRebound = false
-            peakPositiveShockDelta = 0f
+        var peakFlips = 0
+        var lastSign = 0
+        var sumAbsHoriz = 0f
+        for (s in samples) {
+            sumAbsHoriz += s.horizontalMag
+            if (abs(s.verticalAccel) > 1.25f) {
+                val sign = if (s.verticalAccel > 0f) 1 else -1
+                if (lastSign != 0 && sign != lastSign) {
+                    peakFlips++
+                }
+                lastSign = sign
+            }
+        }
+        val meanHoriz = sumAbsHoriz / samples.size
+        // Continuous rough asphalt / cobblestone produces rapid alternating chatter + lateral shake
+        return peakFlips >= 5 || (peakFlips >= 4 && meanHoriz > 1.75f)
+    }
+
+    private fun evaluatePendingBumpCandidate(now: Long, currentSpeed: Double) {
+        val cand = pendingCandidate ?: return
+        val elapsed = now - cand.detectedAtMs
+
+        // Phase 5: Confirm on re-acceleration ("ثم تسارع مرة أخرى")
+        val reAccelerated = (currentSpeed >= cand.minSpeedAtBump + 2.2) || (currentSpeed > SPEED_GATE_MAX_KMH)
+        if (elapsed >= 450L && reAccelerated) {
+            pendingCandidate = null
+            commitDetectedBump(cand)
             return
         }
 
+        // Timeout fallback: in slow bumper-to-bumper traffic after an unmistakable bump (>= 5.5 m/s^2 p2p)
+        if (elapsed > 5500L) {
+            pendingCandidate = null
+            if (cand.peakToPeak >= 5.5f && !isRoughRoadChatterWindow(now)) {
+                commitDetectedBump(cand)
+            }
+        }
+    }
+
+    private fun commitDetectedBump(cand: PendingBumpCandidate) {
         val now = System.currentTimeMillis()
+        if (now - lastRecordedBumpTimeMs <= 7000L) return
+        lastRecordedBumpTimeMs = now
+        reportNewBumpAsync(cand.lat, cand.lng, cand.bearing, cand.bidirectional)
+    }
+
+    /**
+     * Sensor Event Listener: 5-Phase Gravity-Aligned Kinematic Speed Bump Detection
+     * Pattern: Deceleration (<= 21 km/h) -> +Vertical Climb -> Gyro Pitch Rotation -> -Vertical Drop -> Re-acceleration
+     */
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        val now = System.currentTimeMillis()
+        val speed = getEffectiveSpeedKmh()
 
         when (event.sensor.type) {
             Sensor.TYPE_ACCELEROMETER -> {
@@ -475,66 +692,137 @@ class SpeedBumpManager(
                 val ay = event.values[1]
                 val az = event.values[2]
                 val totalMag = sqrt((ax * ax + ay * ay + az * az).toDouble()).toFloat()
-                filteredGravity = (0.95f * filteredGravity) + (0.05f * totalMag.coerceIn(8.5f, 11.5f))
-                val dynamicShock = totalMag - filteredGravity
 
-                // 1. Positive upward shock (+Shock > 2.6 m/s^2)
-                if (dynamicShock > 2.6f) {
+                // Slow 3D gravity vector estimation (updates only when near 1G so shocks don't skew vertical axis)
+                if (!hasGravityInit) {
+                    gravityX = ax
+                    gravityY = ay
+                    gravityZ = az
+                    hasGravityInit = true
+                } else if (abs(totalMag - 9.81f) < 1.5f) {
+                    gravityX = 0.96f * gravityX + 0.04f * ax
+                    gravityY = 0.96f * gravityY + 0.04f * ay
+                    gravityZ = 0.96f * gravityZ + 0.04f * az
+                }
+
+                val gNorm = sqrt((gravityX * gravityX + gravityY * gravityY + gravityZ * gravityZ).toDouble()).toFloat().coerceAtLeast(1.0f)
+                val ux = gravityX / gNorm
+                val uy = gravityY / gNorm
+                val uz = gravityZ / gNorm
+
+                // True Earth-vertical linear acceleration regardless of phone mount tilt
+                val verticalAccel = (ax * ux + ay * uy + az * uz) - gNorm
+                val dx = ax - gravityX
+                val dy = ay - gravityY
+                val dz = az - gravityZ
+                val horizSq = (dx * dx + dy * dy + dz * dz) - (verticalAccel * verticalAccel)
+                val horizontalMag = sqrt(horizSq.coerceAtLeast(0f).toDouble()).toFloat()
+
+                synchronized(recentMotionSamples) {
+                    recentMotionSamples.addLast(MotionSample(now, verticalAccel, horizontalMag))
+                    while (recentMotionSamples.isNotEmpty() && now - recentMotionSamples.first().timestampMs > 2200L) {
+                        recentMotionSamples.removeFirst()
+                    }
+                }
+
+                // Always evaluate pending re-acceleration even if car just accelerated above 21 km/h!
+                evaluatePendingBumpCandidate(now, speed)
+
+                // Check recent minimum speed (tolerates brief 1-2s GPS lag during rapid braking into bump)
+                val recentMinSpeed = synchronized(recentSpeedSamples) {
+                    recentSpeedSamples.filter { now - it.first <= 1800L }.minOfOrNull { it.second } ?: speed
+                }
+                val effectiveWindowSpeed = min(speed, recentMinSpeed)
+
+                if (effectiveWindowSpeed > SPEED_GATE_MAX_KMH || speed < SPEED_GATE_MIN_KMH) {
+                    if (!hasPositiveShock || speed > SPEED_GATE_MAX_KMH + 4.0 || speed < SPEED_GATE_MIN_KMH) {
+                        resetShockWindow()
+                    }
+                    return
+                }
+
+                // 1. Climb Phase (+Vertical Shock >= 2.35 m/s^2)
+                if (verticalAccel >= 2.35f) {
                     if (!hasPositiveShock) {
                         hasPositiveShock = true
                         positiveShockTimeMs = now
-                        peakPositiveShockDelta = dynamicShock
-                    } else if (dynamicShock > peakPositiveShockDelta) {
-                        peakPositiveShockDelta = dynamicShock
-                    }
-                }
-
-                // 2. Downward suspension rebound (-Shock < -1.5 m/s^2) following positive shock
-                if (hasPositiveShock && (now - positiveShockTimeMs in 80L..1400L)) {
-                    if (dynamicShock < -1.5f) {
-                        hasNegativeRebound = true
-                    }
-                }
-
-                // 3. Check full sequence completion (deceleration/low speed <= 21 km/h + shock + rebound + gyro pitch if available)
-                val gyroMatched = !hasGyroSensor || hasPitchRotation || peakPositiveShockDelta >= 3.4f
-                val speedPatternMatched = synchronized(recentSpeedSamples) {
-                    val maxRecentSpeed = recentSpeedSamples.maxOfOrNull { it.second } ?: speed
-                    // Either driver decelerated toward the bump or was already traversing cautiously <= 21 km/h
-                    speed <= SPEED_GATE_MAX_KMH && (maxRecentSpeed >= speed || speed <= 18.0)
-                }
-
-                if (hasPositiveShock && hasNegativeRebound && gyroMatched && speedPatternMatched) {
-                    // Kinematic bump pattern confirmed!
-                    lastBumpFeltTimeMs = now
-                    hasPositiveShock = false
-                    hasNegativeRebound = false
-                    hasPitchRotation = false
-                    peakPositiveShockDelta = 0f
-
-                    // If not reported recently (8 sec cooldown), report/confirm or re-activate bump
-                    if (now - lastRecordedBumpTimeMs > 8000L) {
-                        lastRecordedBumpTimeMs = now
-                        latestGpsLocation?.let { loc ->
-                            val dir = if (loc.hasBearing()) loc.bearing.toDouble() else lastValidBearingDegrees
-                            reportNewBumpAsync(loc.latitude, loc.longitude, dir)
+                        peakPositiveShockDelta = verticalAccel
+                        minNegativeReboundDelta = 0f
+                        minSpeedInBumpWindow = effectiveWindowSpeed
+                        if (now - lastGyroRotationTimeMs <= 220L) {
+                            hasPitchRotation = true
                         }
+                    } else {
+                        if (verticalAccel > peakPositiveShockDelta) peakPositiveShockDelta = verticalAccel
+                        if (effectiveWindowSpeed < minSpeedInBumpWindow) minSpeedInBumpWindow = effectiveWindowSpeed
+                    }
+                }
+
+                // 2. Drop / Rebound Phase (-Vertical Shock <= -1.6 m/s^2) within 80..1400ms
+                if (hasPositiveShock && (now - positiveShockTimeMs in 80L..1400L)) {
+                    if (effectiveWindowSpeed < minSpeedInBumpWindow) {
+                        minSpeedInBumpWindow = effectiveWindowSpeed
+                    }
+                    if (verticalAccel <= -1.6f) {
+                        hasNegativeRebound = true
+                        if (verticalAccel < minNegativeReboundDelta) {
+                            minNegativeReboundDelta = verticalAccel
+                        }
+                    }
+                }
+
+                // 3. Evaluate Climb + Pitch + Drop sequence completion
+                if (hasPositiveShock && hasNegativeRebound && (now - positiveShockTimeMs >= 160L)) {
+                    val peakToPeak = peakPositiveShockDelta - minNegativeReboundDelta
+                    val notHandHeld = (now - lastHandHeldJitterMs > 1800L)
+                    val gyroMatched = !hasGyroSensor || hasPitchRotation || peakToPeak >= 6.4f
+                    val roughChatter = isRoughRoadChatterWindow(positiveShockTimeMs)
+                    val speedDecelContext = synchronized(recentSpeedSamples) {
+                        val maxRecent = recentSpeedSamples.maxOfOrNull { it.second } ?: minSpeedInBumpWindow
+                        minSpeedInBumpWindow <= SPEED_GATE_MAX_KMH &&
+                            (maxRecent >= minSpeedInBumpWindow + 1.5 || minSpeedInBumpWindow <= 18.5)
+                    }
+
+                    if (peakToPeak >= 4.4f && notHandHeld && gyroMatched && !roughChatter && speedDecelContext) {
+                        lastBumpFeltTimeMs = now
+                        // Latch immediately onto any hazard pass currently active
+                        for (state in activePassHazards.values) {
+                            state.feltBumpDuringPass = true
+                        }
+
+                        latestGpsLocation?.let { loc ->
+                            val lowSpeedBearing = minSpeedInBumpWindow <= 12.0 || !hasValidBearing
+                            val dir = if (loc.hasBearing() && !lowSpeedBearing) loc.bearing.toDouble() else lastValidBearingDegrees
+                            pendingCandidate = PendingBumpCandidate(
+                                lat = loc.latitude,
+                                lng = loc.longitude,
+                                bearing = dir,
+                                bidirectional = lowSpeedBearing,
+                                minSpeedAtBump = minSpeedInBumpWindow,
+                                detectedAtMs = now,
+                                peakToPeak = peakToPeak
+                            )
+                        }
+                        resetShockWindow()
                     }
                 }
 
                 // Window expiry
                 if (hasPositiveShock && (now - positiveShockTimeMs > 1500L)) {
-                    hasPositiveShock = false
-                    hasNegativeRebound = false
-                    hasPitchRotation = false
-                    peakPositiveShockDelta = 0f
+                    resetShockWindow()
                 }
             }
 
             Sensor.TYPE_GYROSCOPE -> {
-                val rotRate = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1]).toDouble()).toFloat()
-                if (hasPositiveShock && rotRate > 0.22f) {
-                    hasPitchRotation = true
+                val rotRate = sqrt((event.values[0] * event.values[0] + event.values[1] * event.values[1] + event.values[2] * event.values[2]).toDouble()).toFloat()
+                if (rotRate > 2.4f) {
+                    // Rapid hand-held phone twisting/pickup: suppress false bump recording
+                    lastHandHeldJitterMs = now
+                } else if (rotRate >= 0.28f) {
+                    lastGyroRotationTimeMs = now
+                    if (hasPositiveShock) {
+                        hasPitchRotation = true
+                    }
                 }
             }
         }
@@ -586,7 +874,7 @@ class SpeedBumpManager(
                     cachedHazards.clear()
                     cachedHazards.addAll(newHazards)
                     for (lp in localPending) {
-                        if (cachedHazards.none { distanceMeters(it.lat, it.lng, lp.lat, lp.lng) <= 22.0 }) {
+                        if (lp.active && cachedHazards.none { distanceMeters(it.lat, it.lng, lp.lat, lp.lng) <= 22.0 }) {
                             cachedHazards.add(lp)
                         }
                     }
@@ -610,11 +898,12 @@ class SpeedBumpManager(
      * If a bump at this location was previously deactivated after 3 passes without vibration,
      * experiencing the bump pattern again re-activates it immediately!
      */
-    private fun reportNewBumpAsync(lat: Double, lng: Double, bearing: Double) {
+    private fun reportNewBumpAsync(lat: Double, lng: Double, bearing: Double, forceBidirectional: Boolean = !hasValidBearing) {
+        val isBidirectional = forceBidirectional || !hasValidBearing
         // 1. Check local cache first (including deactivated bumps!)
         val existingLocal = cachedHazards.firstOrNull { h ->
             distanceMeters(lat, lng, h.lat, h.lng) <= 22.0 &&
-                (h.bidirectional || angularDifference(bearing, h.directionDegrees) <= 55.0)
+                (h.bidirectional || isBidirectional || angularDifference(bearing, h.directionDegrees) <= 55.0)
         }
         var wasReactivated = false
         val targetHazard: CachedHazard
@@ -622,7 +911,10 @@ class SpeedBumpManager(
             wasReactivated = !existingLocal.active
             existingLocal.active = true
             existingLocal.consecutiveNegativePasses = 0
+            deactivatedSeedIds.remove(existingLocal.id)
+            if (isBidirectional) existingLocal.bidirectional = true
             targetHazard = existingLocal
+            lastPassSentMs[existingLocal.id] = System.currentTimeMillis()
             savePersistedLocalHazards()
         } else {
             val created = CachedHazard(
@@ -630,7 +922,7 @@ class SpeedBumpManager(
                 lat = lat,
                 lng = lng,
                 directionDegrees = bearing,
-                bidirectional = !hasValidBearing,
+                bidirectional = isBidirectional,
                 roadClass = "مطب مرصود",
                 active = true,
                 consecutiveNegativePasses = 0,
@@ -638,10 +930,11 @@ class SpeedBumpManager(
             )
             cachedHazards.add(0, created)
             targetHazard = created
+            lastPassSentMs[created.id] = System.currentTimeMillis()
             savePersistedLocalHazards()
         }
 
-        // Notify UI & play confirmation immediately (even when offline!)
+        // Silent background save (no disruptive ACK beep while driving)
         mainHandler.post {
             val notice = if (wasReactivated) {
                 "تم إعادة تفعيل المطب بعد عودة نمط الاهتزاز وتهدئة السرعة ✅"
@@ -649,11 +942,6 @@ class SpeedBumpManager(
                 "تم اكتشاف وتوثيق مطب جديد (سرعة ≤ 21 كم/س) ✅"
             }
             onBumpDetectedNotice?.invoke(notice)
-            if (!isMuted && isWarningEnabled) {
-                try {
-                    toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 300)
-                } catch (_: Exception) {}
-            }
         }
 
         thread(name = "ReportBumpThread") {
@@ -667,11 +955,13 @@ class SpeedBumpManager(
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
 
+                val vehId = try { vehicleIdProvider() } catch (_: Exception) { "" }
                 val payload = JSONObject().apply {
                     put("latitude", lat)
                     put("longitude", lng)
                     put("direction_degrees", bearing)
-                    put("bidirectional", !hasValidBearing)
+                    put("bidirectional", isBidirectional)
+                    if (vehId.isNotBlank()) put("vehicle_id", vehId)
                 }
 
                 OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }
@@ -709,10 +999,12 @@ class SpeedBumpManager(
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
 
+                val vehId = try { vehicleIdProvider() } catch (_: Exception) { "" }
                 val payload = JSONObject().apply {
                     put("hazard_id", hazardId)
                     put("felt_bump", feltBump)
                     put("speed_kmh", speedKmh)
+                    if (vehId.isNotBlank()) put("vehicle_id", vehId)
                 }
 
                 OutputStreamWriter(conn.outputStream, "UTF-8").use { it.write(payload.toString()) }

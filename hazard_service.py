@@ -53,9 +53,16 @@ def init_hazard_tables(conn, seed_json_path=None, seed_tsv_path=None):
             needs_map_match INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             last_verified_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            negative_pass_vehicles TEXT DEFAULT '[]',
             notes TEXT
         );
     ''')
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(speed_bumps)").fetchall()]
+        if 'negative_pass_vehicles' not in cols:
+            conn.execute("ALTER TABLE speed_bumps ADD COLUMN negative_pass_vehicles TEXT DEFAULT '[]'")
+    except Exception:
+        pass
     conn.execute('''
         CREATE INDEX IF NOT EXISTS speed_bumps_spatial_idx
         ON speed_bumps (status, latitude, longitude);
@@ -234,6 +241,7 @@ def report_new_hazard(conn, lat, lng, direction_degrees=0.0, bidirectional=False
                     SET status = 'ACTIVE',
                         verified_count = verified_count + 1,
                         consecutive_negative_passes = 0,
+                        negative_pass_vehicles = '[]',
                         last_verified_at = ?
                     WHERE id = ?
                 ''', (now_str, b_id))
@@ -275,14 +283,15 @@ def report_new_hazard(conn, lat, lng, direction_degrees=0.0, bidirectional=False
 
 def record_hazard_pass_check(conn, hazard_id, felt_bump=True, speed_kmh=0.0, vehicle_id=None):
     """
-    Adaptive verification pass check:
-    - If felt_bump == True: resets negative counter, increments verified_count.
-    - If felt_bump == False: increments consecutive_negative_passes.
-      If >= 3 consecutive passes without a bump, deactivates the bump!
+    Adaptive community verification pass check:
+    - If felt_bump == True: resets negative counters, keeps ACTIVE, increments verified_count.
+    - If felt_bump == False: tracks consecutive passes without bump pattern across distinct cars
+      (or pass checks when anonymous). When 3 consecutive passes/cars record no pattern, deactivates
+      the bump until another vehicle detects the bump pattern again.
     """
     now_str = datetime.now(timezone.utc).isoformat()
     cursor = conn.execute('''
-        SELECT id, consecutive_negative_passes, verified_count, status
+        SELECT id, consecutive_negative_passes, verified_count, status, negative_pass_vehicles
         FROM speed_bumps
         WHERE id = ?
     ''', (hazard_id,))
@@ -292,11 +301,20 @@ def record_hazard_pass_check(conn, hazard_id, felt_bump=True, speed_kmh=0.0, veh
 
     curr_neg = row['consecutive_negative_passes'] if isinstance(row, sqlite3.Row) else row[1]
     curr_ver = row['verified_count'] if isinstance(row, sqlite3.Row) else row[2]
+    raw_neg_vehs = row['negative_pass_vehicles'] if isinstance(row, sqlite3.Row) else row[4]
+    try:
+        neg_vehicles = json.loads(raw_neg_vehs or '[]')
+        if not isinstance(neg_vehicles, list):
+            neg_vehicles = []
+    except Exception:
+        neg_vehicles = []
 
     if felt_bump:
         conn.execute('''
             UPDATE speed_bumps
-            SET consecutive_negative_passes = 0,
+            SET status = 'ACTIVE',
+                consecutive_negative_passes = 0,
+                negative_pass_vehicles = '[]',
                 verified_count = verified_count + 1,
                 last_verified_at = ?
             WHERE id = ?
@@ -309,21 +327,29 @@ def record_hazard_pass_check(conn, hazard_id, felt_bump=True, speed_kmh=0.0, veh
             'verified_count': curr_ver + 1
         }
     else:
-        new_neg = curr_neg + 1
+        clean_veh = str(vehicle_id).strip() if vehicle_id else ''
+        if clean_veh:
+            if clean_veh not in neg_vehicles:
+                neg_vehicles.append(clean_veh)
+            new_neg = len(neg_vehicles)
+        else:
+            new_neg = curr_neg + 1
         new_status = 'DEACTIVATED' if new_neg >= 3 else 'ACTIVE'
         conn.execute('''
             UPDATE speed_bumps
             SET consecutive_negative_passes = ?,
+                negative_pass_vehicles = ?,
                 status = ?,
                 last_verified_at = ?
             WHERE id = ?
-        ''', (new_neg, new_status, now_str, hazard_id))
+        ''', (new_neg, json.dumps(neg_vehicles), new_status, now_str, hazard_id))
         conn.commit()
         return {
             'status': new_status,
             'hazard_id': hazard_id,
             'action': 'bump_removed' if new_status == 'DEACTIVATED' else 'negative_pass_recorded',
-            'consecutive_negative_passes': new_neg
+            'consecutive_negative_passes': new_neg,
+            'negative_vehicles_count': len(neg_vehicles)
         }
 
 
