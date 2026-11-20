@@ -455,13 +455,17 @@ class MainActivity : Activity() {
         // Toyota / Lexus
         OdometerProbe("7C0", "220201", "620201", "لوحة عدادات تويوتا / لكزس بالطابلوه (Cluster 7C0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "220201", "620201", "كمبيوتر محرك تويوتا / لكزس UDS (Engine 7E0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        // Chevrolet / GM / Opel / Daewoo (Aveo/Optra/Cruze/Malibu)
+        // Chevrolet / GM / Opel / Daewoo (Aveo/Optra/Cruze/Malibu/Sonic 2011-2024 GMLAN & Global-A)
+        OdometerProbe("7E0", "222889", "622889", "كمبيوتر محرك شيفروليه / GM الأصلي (ECM 7E0 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f),
+        OdometerProbe("241", "222889", "622889", "وحدة هيكل شيفروليه BCM بالطابلوه (GMLAN 241 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
+        OdometerProbe("24C", "222889", "622889", "لوحة عدادات تابلوه شيفروليه (GMLAN IPC 24C 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
+        OdometerProbe("241", "222504", "622504", "عداد تابلوه شيفروليه BCM (GMLAN 241 222504)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
+        OdometerProbe("24C", "222504", "622504", "عداد تابلوه شيفروليه IPC (GMLAN 24C 222504)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
+        OdometerProbe("724", "222889", "622889", "وحدة الهيكل شيفروليه / GM Global-A (BCM 724 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
         OdometerProbe("7A4", "220020", "620020", "لوحة عدادات شيفروليه / GM بالطابلوه (Cluster 7A4 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("724", "220020", "620020", "وحدة الهيكل شيفروليه / GM (BCM 724 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7A0", "220020", "620020", "لوحة عدادات شيفروليه البديلة (Cluster 7A0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "220020", "620020", "كمبيوتر محرك شيفروليه / GM / أوبل / دايو (7E0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        OdometerProbe("7E0", "222889", "622889", "كمبيوتر محرك شيفروليه / GM Global-A (7E0 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f),
-        OdometerProbe("724", "222889", "622889", "وحدة الهيكل شيفروليه / GM Global-A (BCM 724 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
         // Ford / Mazda
         OdometerProbe("720", "22DD01", "62DD01", "لوحة عدادات فورد / مازدا بالطابلوه (Cluster 720 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "22DD01", "62DD01", "كمبيوتر محرك فورد / مازدا UDS (Engine 7E0 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f),
@@ -9129,16 +9133,6 @@ class MainActivity : Activity() {
             addView(button("🔄 إعادة تهيئة البلوتوث وإلغاء أي تعليق") {
                 disconnectObd()
                 try {
-                    bluetoothAdapter?.let { adapter ->
-                        if (adapter.isDiscovering) adapter.cancelDiscovery()
-                        adapter.bluetoothLeScanner?.stopScan(bleCallback)
-                    }
-                } catch (_: SecurityException) {}
-                addBondedDevices()
-                renderCandidates()
-                statusText.text = "تم تنظيف قنوات الاتصال وإعادة تهيئة البلوتوث بنجاح."
-                Toast.makeText(this@MainActivity, "تمت إعادة تهيئة البلوتوث بنجاح 🟢", Toast.LENGTH_SHORT).show()
-            }.apply {
                 setBackgroundColor(Color.rgb(24, 55, 80))
                 setTextColor(Color.rgb(110, 231, 255))
             })
@@ -11140,6 +11134,8 @@ class MainActivity : Activity() {
 
     private fun getExpectedCanRxAddress(header: String): String {
         return when (header.uppercase()) {
+            "241" -> "641" // Chevrolet / GM GMLAN Body Control Module BCM (+0x400)
+            "24C" -> "64C" // Chevrolet / GM GMLAN Instrument Panel Cluster IPC (+0x400)
             "743" -> "763" // Nissan / Infiniti Combination Meter (+0x20)
             "714" -> "77E" // VW / Skoda / Audi / Seat Kombiinstrument (+0x6A)
             else -> {
@@ -13101,12 +13097,13 @@ class MainActivity : Activity() {
         }
 
         // Capture Universal Mode 01 Hardware Distance Counter (0131 / 0121) immediately while ELM327 is in clean Mode 01 broadcast!
+        // Note: PID 0121 is "Distance with MIL ON", which stays frozen at 0 when Check Engine Light is OFF — so only accept 0121 if > 0!
         var capturedHwProbe: OdometerProbe? = null
         var capturedHwVal = -1f
         for (hwProbe in universalOdometerProbes.filter { !it.isAbsoluteOdometer }) {
             try {
                 val odoHw = readProbeOdometer(inStream, outStream, hwProbe)
-                if (odoHw >= 0f) {
+                if (odoHw > 0f || (hwProbe.command == "0131" && odoHw >= 0f)) {
                     capturedHwProbe = hwProbe
                     capturedHwVal = odoHw
                     break
@@ -13130,7 +13127,7 @@ class MainActivity : Activity() {
                 carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ||
                     carMake.contains("تويوتا") -> listOf("220201")
                 carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) ||
-                    carMake.contains("Opel", ignoreCase = true) || carMake.contains("شيفروليه") || carMake.contains("دايو") -> listOf("220020", "222889")
+                    carMake.contains("Opel", ignoreCase = true) || carMake.contains("شيفروليه") || carMake.contains("دايو") -> listOf("222889", "222504", "220020")
                 carMake.contains("Ford", ignoreCase = true) || carMake.contains("Mazda", ignoreCase = true) ||
                     carMake.contains("فورد") -> listOf("22DD01")
                 carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) ||
@@ -13280,9 +13277,14 @@ class MainActivity : Activity() {
             // Persists across app shutdowns inside the car's Engine ECU!
             val rawCounter = probeValue.toInt()
             val lastSavedRaw = preferences.getInt("last_ecu_hardware_counter_raw", -1)
+            val lastSavedCmd = preferences.getString("last_ecu_hardware_counter_cmd", "") ?: ""
             val persistedFlushedSubKm = preferences.getFloat("flushed_sub_km_since_ecu_tick", 0f).coerceIn(0f, 0.95f)
+            val savedCarOdoBefore = preferences.getFloat("car_cumulative_odometer_km", 0f)
 
-            if (lastSavedRaw >= 0 && rawCounter != lastSavedRaw) {
+            val isSameCounterSource = (lastSavedCmd == probe.command) ||
+                (lastSavedCmd.isEmpty() && lastSavedRaw > 0 && savedCarOdoBefore > 0f)
+
+            if (isSameCounterSource && lastSavedRaw >= 0 && rawCounter != lastSavedRaw) {
                 val rawDiff = ((rawCounter - lastSavedRaw + 65536) % 65536).toFloat()
                 if (rawDiff in 1.0f..25000.0f) {
                     // Subtract only the persisted sub-km fraction (< 0.95 km) already flushed since the last 0131 integer tick.
@@ -13293,11 +13295,14 @@ class MainActivity : Activity() {
                     ecuSpeedDistanceBuffer = 0.0
                     subKmEcuRollDistance = 0.0
                 }
-            } else if (lastSavedRaw < 0) {
+            } else if (!isSameCounterSource || lastSavedRaw < 0) {
                 preferences.edit().putFloat("flushed_sub_km_since_ecu_tick", 0f).apply()
             }
 
-            preferences.edit().putInt("last_ecu_hardware_counter_raw", rawCounter).apply()
+            preferences.edit()
+                .putInt("last_ecu_hardware_counter_raw", rawCounter)
+                .putString("last_ecu_hardware_counter_cmd", probe.command)
+                .apply()
 
             var currentCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
             if (currentCarOdo <= 0f && rawCounter > 0) {
@@ -15127,16 +15132,17 @@ class MainActivity : Activity() {
     private fun restoreSelectedDevice() {
         val id = preferences.getString("device_id", null)
         val name = preferences.getString("device_name", null)
-        val addr = preferences.getString("device_address", null) ?: id
+        val rawAddr = preferences.getString("device_address", null) ?: id
+        val cleanAddr = rawAddr?.removePrefix("bt:")?.removePrefix("ble:")?.removePrefix("wifi:")?.trim()
         val trans = preferences.getString("device_transport", null)
         if (name != null && trans != null && ::selectedText.isInitialized) {
             selectedText.text = "الجهاز المختار سابقاً: $name ($trans)"
-            if (!telemetry.isConnected && !isTelemetryLoopRunning && !addr.isNullOrBlank() && hasPermissions()) {
+            if (!telemetry.isConnected && !isTelemetryLoopRunning && !cleanAddr.isNullOrBlank() && hasPermissions()) {
                 val cand = DeviceCandidate(
-                    id = id ?: addr,
+                    id = id ?: "bt:$cleanAddr",
                     title = name,
                     transport = trans,
-                    address = addr,
+                    address = cleanAddr,
                     detail = "اتصال تلقائي بالجهاز المحفوظ"
                 )
                 obdReconnectAttempts = 0
