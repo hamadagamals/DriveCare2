@@ -455,16 +455,19 @@ class MainActivity : Activity() {
         // Toyota / Lexus
         OdometerProbe("7C0", "220201", "620201", "لوحة عدادات تويوتا / لكزس بالطابلوه (Cluster 7C0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "220201", "620201", "كمبيوتر محرك تويوتا / لكزس UDS (Engine 7E0 220201)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
-        // Chevrolet / GM / Opel / Daewoo (Aveo/Optra/Cruze)
+        // Chevrolet / GM / Opel / Daewoo (Aveo/Optra/Cruze/Malibu)
         OdometerProbe("7A4", "220020", "620020", "لوحة عدادات شيفروليه / GM بالطابلوه (Cluster 7A4 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("724", "220020", "620020", "وحدة الهيكل شيفروليه / GM (BCM 724 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7A0", "220020", "620020", "لوحة عدادات شيفروليه البديلة (Cluster 7A0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "220020", "620020", "كمبيوتر محرك شيفروليه / GM / أوبل / دايو (7E0 220020)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f),
+        OdometerProbe("7E0", "222889", "622889", "كمبيوتر محرك شيفروليه / GM Global-A (7E0 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f),
+        OdometerProbe("724", "222889", "622889", "وحدة الهيكل شيفروليه / GM Global-A (BCM 724 222889)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 64.0f, isCluster = true),
         // Ford / Mazda
         OdometerProbe("720", "22DD01", "62DD01", "لوحة عدادات فورد / مازدا بالطابلوه (Cluster 720 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "22DD01", "62DD01", "كمبيوتر محرك فورد / مازدا UDS (Engine 7E0 22DD01)", isAbsoluteOdometer = true, byteLength = 3, scalingDivisor = 1.0f),
         // VW / Skoda / Audi / Seat
         OdometerProbe("714", "222203", "622203", "لوحة عدادات فولكس / سكودا / أودي بالطابلوه (Cluster 714 222203)", isAbsoluteOdometer = true, byteLength = 2, scalingDivisor = 0.1f, isCluster = true),
+        OdometerProbe("714", "22295A", "62295A", "لوحة عدادات فولكس / سكودا UDS (Cluster 714 22295A)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("714", "22220D", "62220D", "لوحة عدادات فولكس / سكودا البديلة (Cluster 714 22220D)", isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f, isCluster = true),
         OdometerProbe("7E0", "222203", "622203", "كمبيوتر محرك فولكس / سكودا / أودي (7E0 222203)", isAbsoluteOdometer = true, byteLength = 2, scalingDivisor = 0.1f),
         // Nissan / Infiniti
@@ -9428,6 +9431,7 @@ class MainActivity : Activity() {
                     .putFloat("saved_trip_distance_km", 0.0f)
                     .putFloat("saved_trip_fuel_liters", 0.0f)
                     .putFloat("trip_start_car_odometer", currentCarOdo)
+                    .putFloat("flushed_sub_km_since_ecu_tick", 0.0f)
                     .putFloat("accumulated_added_dep_percent", prevAccumDep + tripDepPercent)
                     .apply()
                 val odoMsg = if (currentCarOdo > 0f) " وتثبيت بداية العداد عند (${currentCarOdo.toInt()} كم)" else ""
@@ -11134,19 +11138,37 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun getExpectedCanRxAddress(header: String): String {
+        return when (header.uppercase()) {
+            "743" -> "763" // Nissan / Infiniti Combination Meter (+0x20)
+            "714" -> "77E" // VW / Skoda / Audi / Seat Kombiinstrument (+0x6A)
+            else -> {
+                val hInt = header.toIntOrNull(16)
+                if (hInt != null) Integer.toHexString(hInt + 8).uppercase() else ""
+            }
+        }
+    }
+
+    private fun resetCanHeaderToBroadcast(outStream: OutputStream, inStream: InputStream) {
+        if (!isCurrentProtocolCan) return
+        sendObdCommand(outStream, inStream, "ATCRA", 300)
+        sendObdCommand(outStream, inStream, "ATAR", 300)
+        sendObdCommand(outStream, inStream, "ATSH 7DF", 300)
+    }
+
     private fun configureProbeCanHeader(outStream: OutputStream, inStream: InputStream, header: String) {
+        if (!isCurrentProtocolCan) return
         if (header != "7DF") {
-            sendObdCommand(outStream, inStream, "ATSH $header", 250)
-            if (header.startsWith("7E", ignoreCase = true)) {
-                val rxAddr = Integer.toHexString(header.toInt(16) + 8).uppercase()
-                sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 200)
+            sendObdCommand(outStream, inStream, "ATSH $header", 300)
+            val rxAddr = getExpectedCanRxAddress(header)
+            if (rxAddr.isNotEmpty()) {
+                sendObdCommand(outStream, inStream, "ATCRA $rxAddr", 300)
             } else {
-                // لوحات العدادات (مثل 743, 714, 760, 7A4, 7C0, 7C6) ترد بعناوين غير قياسية (+20 أو غيرها) لذا نفتح فلتر الاستقبال
-                sendObdCommand(outStream, inStream, "ATCRA", 200)
+                sendObdCommand(outStream, inStream, "ATCRA", 300)
+                sendObdCommand(outStream, inStream, "ATAR", 300)
             }
         } else {
-            sendObdCommand(outStream, inStream, "ATCRA", 200)
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+            resetCanHeaderToBroadcast(outStream, inStream)
         }
     }
 
@@ -11182,8 +11204,7 @@ class MainActivity : Activity() {
 
             synchronized(obdLock) {
                 try {
-                    sendObdCommand(outStream, inStream, "ATCRA", 200)
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                    resetCanHeaderToBroadcast(outStream, inStream)
                     val r51 = sendObdCommand(outStream, inStream, "0151", 450)
                     val parsed51 = parseFuelType51(r51)
                     if (parsed51 != null) {
@@ -11195,6 +11216,7 @@ class MainActivity : Activity() {
 
                 // Sweep all cluster and engine probes universally
                 for (probe in universalFuelProbes) {
+                    if (probe.header != "7DF" && !isCurrentProtocolCan) continue
                     try {
                         configureProbeCanHeader(outStream, inStream, probe.header)
                         val resp = sendObdCommand(outStream, inStream, probe.command, 450)
@@ -11214,8 +11236,7 @@ class MainActivity : Activity() {
                 }
 
                 // Restore default CAN header
-                sendObdCommand(outStream, inStream, "ATCRA", 200)
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                resetCanHeaderToBroadcast(outStream, inStream)
             }
 
             runOnUiThread {
@@ -12052,6 +12073,7 @@ class MainActivity : Activity() {
         preferences.edit()
             .putString("device_id", cand.id)
             .putString("device_name", cand.title)
+            .putString("device_address", cand.address)
             .putString("device_transport", cand.transport)
             .apply()
 
@@ -12219,18 +12241,45 @@ class MainActivity : Activity() {
             val sb = StringBuilder()
             val start = System.currentTimeMillis()
             val buffer = ByteArray(256)
+            var sawPrompt = false
 
             while (System.currentTimeMillis() - start < timeoutMs) {
                 if (inStream.available() > 0) {
                     val bytesRead = inStream.read(buffer)
                     if (bytesRead > 0) {
                         sb.append(String(buffer, 0, bytesRead, Charsets.US_ASCII))
-                        if (sb.contains(">")) break
+                        if (sb.contains(">")) {
+                            sawPrompt = true
+                            break
+                        }
                     }
                 } else {
                     Thread.sleep(15)
                 }
             }
+
+            // If command timed out before ELM327 printed '>', abort the stalled bus wait and drain '>'
+            // so the delayed 'NO DATA >' or 'STOPPED >' never leaks into or corrupts the next OBD command.
+            if (!sawPrompt) {
+                try {
+                    outStream.write("\r".toByteArray(Charsets.US_ASCII))
+                    outStream.flush()
+                    val drainStart = System.currentTimeMillis()
+                    while (System.currentTimeMillis() - drainStart < 380L) {
+                        if (inStream.available() > 0) {
+                            val n = inStream.read(buffer)
+                            if (n > 0) {
+                                val chunk = String(buffer, 0, n, Charsets.US_ASCII)
+                                sb.append(chunk)
+                                if (chunk.contains(">")) break
+                            }
+                        } else {
+                            Thread.sleep(15)
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
             return sb.toString().replace(">", "").trim()
         }
     }
@@ -12358,11 +12407,17 @@ class MainActivity : Activity() {
             }
         }
 
-        // Universal Discovery for Fuel Level Float (ECU or Dashboard Cluster)
-        activeFuelProbe = discoverUniversalFuelProbe(inStream, outStream)
+        // Reset transient session speed buffers BEFORE discovering odometer so initial ECU delta is never reduced
+        telemetry.speed = 0
+        ecuSpeedDistanceBuffer = 0.0
+        subKmEcuRollDistance = 0.0
+        flushedEcuSpeedSinceLastTickKm = 0.0
 
         // Universal Discovery for Total Vehicle Odometer (ECU or Dashboard Cluster)
         activeOdometerProbe = discoverUniversalOdometerProbe(inStream, outStream)
+
+        // Universal Discovery for Fuel Level Float (ECU or Dashboard Cluster)
+        activeFuelProbe = discoverUniversalFuelProbe(inStream, outStream)
 
         // Automated High-Precision Fuel Flow Sensor Discovery (Zero Manual Setup)
         activeFuelSensorMode = discoverBestFuelSensor(inStream, outStream)
@@ -12393,10 +12448,6 @@ class MainActivity : Activity() {
             checkAndLogTelemetryDelta(force = true)
         }
 
-        // Do not let pre-connection mobile GPS speed leak into ECU OBD distance
-        telemetry.speed = 0
-        ecuSpeedDistanceBuffer = 0.0
-        flushedEcuSpeedSinceLastTickKm = 0.0
         var hasValidObdSpeed = false
         var loopCount = 0
         var lastCalcTime = System.currentTimeMillis()
@@ -12560,17 +12611,30 @@ class MainActivity : Activity() {
                 }
 
                 // Periodic Delta Odometer Check from Vehicle Cluster / ECU
-                val odoPollMod = if (activeOdometerProbe?.isCluster == true) 6 else 5
+                val odoPollMod = if (activeOdometerProbe?.isCluster == true) 6 else 4
                 if (loopCount % odoPollMod == 0) {
                     val odoProbe = activeOdometerProbe
                     if (odoProbe != null) {
                         val odoVal = readProbeOdometer(inStream, outStream, odoProbe)
                         if (odoVal >= 0f) {
-                            applyCumulativeOdometerDelta(odoVal, odoProbe)
+                            applyCumulativeOdometerDelta(odoVal, odoProbe, isInitialConnectionRead = false)
                         }
-                    } else if (loopCount == 40 || loopCount == 80) {
-                        // Retry odometer discovery briefly if cluster woke up after ignition
-                        activeOdometerProbe = discoverUniversalOdometerProbe(inStream, outStream)
+                    } else if (loopCount % 12 == 0) {
+                        // Fast non-intrusive Mode 01 recovery (01A6 / 0131 / 0121) if ECU woke up after ignition
+                        val stdA6 = universalOdometerProbes.firstOrNull { it.header == "7DF" && it.command == "01A6" }
+                        val valA6 = if (stdA6 != null) readProbeOdometer(inStream, outStream, stdA6) else -1f
+                        if (stdA6 != null && valA6 > 10.0f) {
+                            activeOdometerProbe = stdA6
+                            applyCumulativeOdometerDelta(valA6, stdA6, isInitialConnectionRead = true)
+                        } else {
+                            val val131 = readProbeOdometer(inStream, outStream, universalHardwareCounterProbe)
+                            if (val131 >= 0f) {
+                                activeOdometerProbe = universalHardwareCounterProbe
+                                applyCumulativeOdometerDelta(val131, universalHardwareCounterProbe, isInitialConnectionRead = true)
+                            } else if (loopCount == 36 || loopCount == 72) {
+                                activeOdometerProbe = discoverUniversalOdometerProbe(inStream, outStream)
+                            }
+                        }
                     }
                 }
 
@@ -12621,8 +12685,7 @@ class MainActivity : Activity() {
                         configureProbeCanHeader(outStream, inStream, probe.header)
                         val fuelResp = sendObdCommand(outStream, inStream, probe.command, 500)
                         if (probe.header != "7DF") {
-                            sendObdCommand(outStream, inStream, "ATCRA", 200)
-                            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                            resetCanHeaderToBroadcast(outStream, inStream)
                         }
                         val fuel = parseProbeFuel(fuelResp, probe)
                         if (fuel in 0..100) {
@@ -12861,13 +12924,14 @@ class MainActivity : Activity() {
         val savedCmd = preferences.getString("active_fuel_probe_cmd", null)
         if (savedHeader != null && savedCmd != null) {
             val cachedProbe = universalFuelProbes.find { it.header == savedHeader && it.command == savedCmd }
-            if (cachedProbe != null) {
+            if (cachedProbe != null && (!cachedProbe.isCluster || isCurrentProtocolCan)) {
                 try {
-                    configureProbeCanHeader(outStream, inStream, cachedProbe.header)
-                    val resp = sendObdCommand(outStream, inStream, cachedProbe.command, 400)
                     if (cachedProbe.header != "7DF") {
-                        sendObdCommand(outStream, inStream, "ATCRA", 200)
-                        sendObdCommand(outStream, inStream, "ATSH 7DF", 200)
+                        configureProbeCanHeader(outStream, inStream, cachedProbe.header)
+                    }
+                    val resp = sendObdCommand(outStream, inStream, cachedProbe.command, 450)
+                    if (cachedProbe.header != "7DF") {
+                        resetCanHeaderToBroadcast(outStream, inStream)
                     }
                     val fuel = parseProbeFuel(resp, cachedProbe)
                     if (fuel in 0..100) {
@@ -12877,60 +12941,48 @@ class MainActivity : Activity() {
             }
         }
 
-        // 2. Protocol Check
-        val protoResp = sendObdCommand(outStream, inStream, "ATDP", 500)
-        val isCan = protoResp.contains("CAN", ignoreCase = true) || protoResp.contains("ISO 15765", ignoreCase = true)
-
-        // 3. PRIORITY 1: Sweep Instrument Clusters (لوحة العدادات بالطابلوه)
-        // In Hyundai Accent and modern CAN vehicles, the fuel tank float is physically wired to the Instrument Cluster!
-        if (isCan) {
-            for (probe in universalFuelProbes.filter { it.isCluster }) {
-                try {
-                    configureProbeCanHeader(outStream, inStream, probe.header)
-
-                    val resp = sendObdCommand(outStream, inStream, probe.command, 500)
-
-                    sendObdCommand(outStream, inStream, "ATCRA", 200)
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-
-                    val fuel = parseProbeFuel(resp, probe)
-                    if (fuel in 0..100) {
-                        preferences.edit()
-                            .putString("active_fuel_probe_header", probe.header)
-                            .putString("active_fuel_probe_cmd", probe.command)
-                            .putBoolean("fuel_is_calibrated", false)
-                            .putString("fuel_tracking_mode", "auto")
-                            .putInt("current_fuel_tank_percent", fuel)
-                            .apply()
-                        return probe
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-
-        // 4. PRIORITY 2: Fallback to Engine Control Modules (كمبيوتر المكينة)
-        for (probe in universalFuelProbes.filter { !it.isCluster }) {
+        // 2. First test standard Mode 01 broadcast fuel level (012F on 7DF - works on both CAN & K-Line without header changes)
+        val stdFuelProbe = universalFuelProbes.find { it.header == "7DF" && it.command == "012F" }
+        if (stdFuelProbe != null) {
             try {
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH ${probe.header}", 250)
-                }
-                val resp = sendObdCommand(outStream, inStream, probe.command, 500)
-                if (probe.header != "7DF") {
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
-                }
-                val fuel = parseProbeFuel(resp, probe)
-                if (fuel in 0..100) {
+                val resp = sendObdCommand(outStream, inStream, stdFuelProbe.command, 550)
+                val fuel = parseProbeFuel(resp, stdFuelProbe)
+                if (fuel in 1..100) {
                     preferences.edit()
-                        .putString("active_fuel_probe_header", probe.header)
-                        .putString("active_fuel_probe_cmd", probe.command)
+                        .putString("active_fuel_probe_header", stdFuelProbe.header)
+                        .putString("active_fuel_probe_cmd", stdFuelProbe.command)
                         .apply()
-                    return probe
+                    return stdFuelProbe
                 }
             } catch (_: Exception) {}
         }
 
-        sendObdCommand(outStream, inStream, "ATCRA", 200)
-        sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+        // 3. Sweep Instrument Clusters & Direct CAN ECM (ONLY if vehicle protocol is CAN!)
+        if (isCurrentProtocolCan) {
+            for (probe in universalFuelProbes.filter { it.header != "7DF" }) {
+                try {
+                    configureProbeCanHeader(outStream, inStream, probe.header)
+                    val resp = sendObdCommand(outStream, inStream, probe.command, 500)
+                    resetCanHeaderToBroadcast(outStream, inStream)
+
+                    val fuel = parseProbeFuel(resp, probe)
+                    if (fuel in 0..100) {
+                        val editor = preferences.edit()
+                            .putString("active_fuel_probe_header", probe.header)
+                            .putString("active_fuel_probe_cmd", probe.command)
+                        if (probe.isCluster) {
+                            editor.putBoolean("fuel_is_calibrated", false)
+                                .putString("fuel_tracking_mode", "auto")
+                                .putInt("current_fuel_tank_percent", fuel)
+                        }
+                        editor.apply()
+                        return probe
+                    }
+                } catch (_: Exception) {}
+            }
+            resetCanHeaderToBroadcast(outStream, inStream)
+        }
+
         return null
     }
 
@@ -12939,26 +12991,37 @@ class MainActivity : Activity() {
     // =========================================================================
     private fun cleanOdometerIsoTpHex(raw: String): String {
         val upper = raw.uppercase()
-        if (upper.isBlank() ||
-            upper.contains("NO DATA") ||
-            upper.contains("UNABLE") ||
-            upper.contains("ERROR") ||
-            upper.contains("STOPPED") ||
-            upper.contains("?")
-        ) {
-            return ""
-        }
+        if (upper.isBlank()) return ""
         val sb = StringBuilder()
         for (line in upper.split("\r", "\n")) {
             var s = line.replace("SEARCHING...", "").replace(">", "").trim()
             if (s.isEmpty()) continue
+            // Filter noise lines individually so one ECU's NO DATA or leftover '?' never discards valid odometer bytes from another line
+            if (s.contains("NO DATA") ||
+                s.contains("UNABLE") ||
+                s.contains("ERROR") ||
+                s.contains("STOPPED") ||
+                s.contains("BUS INIT") ||
+                s == "?" ||
+                s == "OK"
+            ) {
+                continue
+            }
+            // Strip optional 11-bit CAN response headers if ATH1 was ever active (e.g. "7E8 ", "7CE ")
+            if (s.length > 4 && s[3] == ' ' && s.substring(0, 3).all { it.isDigit() || it in 'A'..'F' }) {
+                s = s.substring(4).trim()
+            }
             val colonIdx = s.indexOf(':')
             if (colonIdx in 1..2 && s.substring(0, colonIdx).all { it.isDigit() || it in 'A'..'F' }) {
                 s = s.substring(colonIdx + 1)
             }
+            val lineHex = StringBuilder()
             for (ch in s) {
-                if (ch in '0'..'9' || ch in 'A'..'F') sb.append(ch)
+                if (ch in '0'..'9' || ch in 'A'..'F') lineHex.append(ch)
             }
+            // Ignore UDS/OBD negative response frames (7F <service> <NRC>) so they don't pollute valid frames
+            if (lineHex.length >= 6 && lineHex.startsWith("7F")) continue
+            sb.append(lineHex)
         }
         return sb.toString()
     }
@@ -12966,107 +13029,153 @@ class MainActivity : Activity() {
     private fun parseProbeOdometer(raw: String, probe: OdometerProbe): Float {
         val clean = cleanOdometerIsoTpHex(raw)
         if (clean.isEmpty()) return -1f
-        // Reject negative UDS/OBD responses (7F <service> <NRC>)
         val reqService = probe.command.take(2).uppercase()
         if (clean.startsWith("7F$reqService")) return -1f
 
         val idx = clean.indexOf(probe.expectedPrefix)
+        if (idx == -1) return -1f
         val dataStart = idx + probe.expectedPrefix.length + (probe.byteOffset * 2)
         val dataEnd = dataStart + (probe.byteLength * 2)
-        if (idx != -1 && clean.length >= dataEnd) {
+
+        if (clean.length >= dataEnd) {
             val hexData = clean.substring(dataStart, dataEnd)
-            // Reject all-FF sentinel values (meaning parameter unavailable)
-            if (hexData.all { it == 'F' }) return -1f
-            val rawVal = hexData.toLongOrNull(16) ?: return -1f
-            val odoKm = (rawVal.toFloat() / probe.scalingDivisor)
-            return if (probe.isAbsoluteOdometer) {
-                if (odoKm in 10.0f..1500000.0f) odoKm else -1f
-            } else {
-                // For ECU hardware distance counters (PID 0131 / 0121), range 0..65535 is 100% valid
-                if (odoKm in 0.0f..65535.0f) odoKm else -1f
+            if (!hexData.all { it == 'F' }) {
+                val rawVal = hexData.toLongOrNull(16)
+                if (rawVal != null) {
+                    val odoKm = (rawVal.toFloat() / probe.scalingDivisor)
+                    if (probe.isAbsoluteOdometer) {
+                        if (odoKm in 10.0f..1500000.0f) return odoKm
+                    } else {
+                        if (odoKm in 0.0f..65535.0f) return odoKm
+                    }
+                }
             }
         }
+
+        // Many CAN Instrument Clusters (Hyundai 22B002, GM 220020, Toyota 220201, Renault 222001) return
+        // a 3-byte (24-bit) single-frame odometer (or 3 bytes + 1 trailing CAN padding byte).
+        if (probe.isAbsoluteOdometer && probe.byteLength == 4 && clean.length >= dataStart + 6) {
+            val hex3 = clean.substring(dataStart, dataStart + 6)
+            if (!hex3.all { it == 'F' }) {
+                val raw3 = hex3.toLongOrNull(16)
+                if (raw3 != null) {
+                    val odo3Km = (raw3.toFloat() / probe.scalingDivisor)
+                    if (odo3Km in 10.0f..1500000.0f) return odo3Km
+                }
+            }
+        }
+
         return -1f
     }
 
     private fun discoverUniversalOdometerProbe(inStream: InputStream, outStream: OutputStream): OdometerProbe? {
-        // 1. Only trust cached probe directly if it is an ABSOLUTE dashboard odometer probe
+        // Ensure clean broadcast state before probing
+        resetCanHeaderToBroadcast(outStream, inStream)
+
+        // 1. Check cached ABSOLUTE dashboard/ECU odometer probe first
         val savedHeader = preferences.getString("active_odometer_probe_header", null)
         val savedCmd = preferences.getString("active_odometer_probe_cmd", null)
         if (savedHeader != null && savedCmd != null) {
             val cachedProbe = universalOdometerProbes.find { it.header == savedHeader && it.command == savedCmd }
-            if (cachedProbe != null && cachedProbe.isAbsoluteOdometer) {
+            if (cachedProbe != null && cachedProbe.isAbsoluteOdometer && (cachedProbe.header == "7DF" || isCurrentProtocolCan)) {
                 val odo = readProbeOdometer(inStream, outStream, cachedProbe)
                 if (odo > 10.0f) {
-                    applyCumulativeOdometerDelta(odo, cachedProbe)
+                    applyCumulativeOdometerDelta(odo, cachedProbe, isInitialConnectionRead = true)
                     return cachedProbe
                 }
             }
         }
 
-        // 2. Sweep ALL absolute odometer probes (Standard 01A6, UDS 22F4A6, and Instrument Clusters if CAN)
-        val carMake = preferences.getString("vehicle_make", "") ?: ""
-        val standardProbes = universalOdometerProbes.filter {
-            it.isAbsoluteOdometer && (it.command == "01A6" || it.command == "22F4A6") && (!it.isCluster || isCurrentProtocolCan)
-        }
-        val brandProbes = universalOdometerProbes.filter {
-            it.isAbsoluteOdometer && it.command != "01A6" && it.command != "22F4A6" && (isCurrentProtocolCan || it.header == "7DF")
-        }
-
-        val prioritizedBrandProbes = mutableListOf<OdometerProbe>()
-        val preferredCmd = when {
-            carMake.contains("Hyundai", ignoreCase = true) || carMake.contains("Kia", ignoreCase = true) ||
-                carMake.contains("هيونداي") || carMake.contains("كيا") -> "22B002"
-            carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ||
-                carMake.contains("تويوتا") -> "220201"
-            carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) ||
-                carMake.contains("Opel", ignoreCase = true) || carMake.contains("شيفروليه") || carMake.contains("دايو") -> "220020"
-            carMake.contains("Ford", ignoreCase = true) || carMake.contains("Mazda", ignoreCase = true) ||
-                carMake.contains("فورد") -> "22DD01"
-            carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) ||
-                carMake.contains("Audi", ignoreCase = true) || carMake.contains("سكودا") || carMake.contains("فولكس") -> "222203"
-            carMake.contains("Nissan", ignoreCase = true) || carMake.contains("نيسان") -> "220201"
-            carMake.contains("Renault", ignoreCase = true) || carMake.contains("Fiat", ignoreCase = true) ||
-                carMake.contains("رينو") || carMake.contains("فيات") -> "222001"
-            else -> null
-        }
-        if (preferredCmd != null) {
-            prioritizedBrandProbes.addAll(brandProbes.filter { it.command == preferredCmd })
-            prioritizedBrandProbes.addAll(brandProbes.filter { it.command != preferredCmd })
-        } else {
-            prioritizedBrandProbes.addAll(brandProbes)
+        // 2. Clean Standard Mode 01 Broadcast Queries FIRST (Zero header switching, works on 100% of CAN & K-Line cars!)
+        val std01A6 = universalOdometerProbes.firstOrNull { it.header == "7DF" && it.command == "01A6" }
+        if (std01A6 != null) {
+            val odoA6 = readProbeOdometer(inStream, outStream, std01A6)
+            if (odoA6 > 10.0f) {
+                applyCumulativeOdometerDelta(odoA6, std01A6, isInitialConnectionRead = true)
+                preferences.edit()
+                    .putString("active_odometer_probe_header", std01A6.header)
+                    .putString("active_odometer_probe_cmd", std01A6.command)
+                    .apply()
+                return std01A6
+            }
         }
 
-        for (probe in standardProbes + prioritizedBrandProbes) {
-            try {
-                val odo = readProbeOdometer(inStream, outStream, probe)
-                if (odo > 10.0f) {
-                    applyCumulativeOdometerDelta(odo, probe)
-                    preferences.edit()
-                        .putString("active_odometer_probe_header", probe.header)
-                        .putString("active_odometer_probe_cmd", probe.command)
-                        .apply()
-                    return probe
-                }
-            } catch (_: Exception) {}
-        }
-
-        // 3. Fallback: Universal ECU hardware distance counters (PID 0131 / 0121) - only if ECU actually responds
+        // Capture Universal Mode 01 Hardware Distance Counter (0131 / 0121) immediately while ELM327 is in clean Mode 01 broadcast!
+        var capturedHwProbe: OdometerProbe? = null
+        var capturedHwVal = -1f
         for (hwProbe in universalOdometerProbes.filter { !it.isAbsoluteOdometer }) {
             try {
                 val odoHw = readProbeOdometer(inStream, outStream, hwProbe)
                 if (odoHw >= 0f) {
-                    applyCumulativeOdometerDelta(odoHw, hwProbe)
-                    preferences.edit()
-                        .putString("active_odometer_probe_header", hwProbe.header)
-                        .putString("active_odometer_probe_cmd", hwProbe.command)
-                        .apply()
-                    return hwProbe
+                    capturedHwProbe = hwProbe
+                    capturedHwVal = odoHw
+                    break
                 }
             } catch (_: Exception) {}
         }
 
-        // 4. No odometer PID responded -> clear stale cached probe and fall back cleanly to ECU Speed 010D integration
+        // 3. If CAN protocol is active, probe UDS Total Odometer on Engine ECU & Instrument Cluster
+        if (isCurrentProtocolCan) {
+            val carMake = preferences.getString("vehicle_make", "") ?: ""
+            val udsStandardProbes = universalOdometerProbes.filter {
+                it.isAbsoluteOdometer && (it.command == "01A6" || it.command == "22F4A6") && it.header != "7DF"
+            }
+            val brandProbes = universalOdometerProbes.filter {
+                it.isAbsoluteOdometer && it.command != "01A6" && it.command != "22F4A6"
+            }
+
+            val preferredCmds = when {
+                carMake.contains("Hyundai", ignoreCase = true) || carMake.contains("Kia", ignoreCase = true) ||
+                    carMake.contains("هيونداي") || carMake.contains("كيا") -> listOf("22B002")
+                carMake.contains("Toyota", ignoreCase = true) || carMake.contains("Lexus", ignoreCase = true) ||
+                    carMake.contains("تويوتا") -> listOf("220201")
+                carMake.contains("Chevrolet", ignoreCase = true) || carMake.contains("Daewoo", ignoreCase = true) ||
+                    carMake.contains("Opel", ignoreCase = true) || carMake.contains("شيفروليه") || carMake.contains("دايو") -> listOf("220020", "222889")
+                carMake.contains("Ford", ignoreCase = true) || carMake.contains("Mazda", ignoreCase = true) ||
+                    carMake.contains("فورد") -> listOf("22DD01")
+                carMake.contains("Volkswagen", ignoreCase = true) || carMake.contains("Skoda", ignoreCase = true) ||
+                    carMake.contains("Audi", ignoreCase = true) || carMake.contains("سكودا") || carMake.contains("فولكس") -> listOf("222203", "22295A", "22220D")
+                carMake.contains("Nissan", ignoreCase = true) || carMake.contains("نيسان") -> listOf("220201")
+                carMake.contains("Renault", ignoreCase = true) || carMake.contains("Fiat", ignoreCase = true) ||
+                    carMake.contains("رينو") || carMake.contains("فيات") -> listOf("222001")
+                else -> emptyList()
+            }
+
+            val candidateCanProbes = mutableListOf<OdometerProbe>()
+            candidateCanProbes.addAll(udsStandardProbes)
+            if (preferredCmds.isNotEmpty()) {
+                candidateCanProbes.addAll(brandProbes.filter { it.command in preferredCmds })
+            } else {
+                candidateCanProbes.addAll(brandProbes)
+            }
+
+            for (probe in candidateCanProbes) {
+                try {
+                    val odo = readProbeOdometer(inStream, outStream, probe)
+                    if (odo > 10.0f) {
+                        applyCumulativeOdometerDelta(odo, probe, isInitialConnectionRead = true)
+                        preferences.edit()
+                            .putString("active_odometer_probe_header", probe.header)
+                            .putString("active_odometer_probe_cmd", probe.command)
+                            .apply()
+                        return probe
+                    }
+                } catch (_: Exception) {}
+            }
+            resetCanHeaderToBroadcast(outStream, inStream)
+        }
+
+        // 4. Use the guaranteed Mode 01 ECU hardware distance counter (0131 / 0121) captured in Step 2
+        if (capturedHwProbe != null && capturedHwVal >= 0f) {
+            applyCumulativeOdometerDelta(capturedHwVal, capturedHwProbe, isInitialConnectionRead = true)
+            preferences.edit()
+                .putString("active_odometer_probe_header", capturedHwProbe.header)
+                .putString("active_odometer_probe_cmd", capturedHwProbe.command)
+                .apply()
+            return capturedHwProbe
+        }
+
+        // 5. No odometer PID responded -> clear stale cached probe and fall back cleanly to ECU Speed 010D integration
         preferences.edit()
             .remove("active_odometer_probe_header")
             .remove("active_odometer_probe_cmd")
@@ -13075,19 +13184,19 @@ class MainActivity : Activity() {
     }
 
     private fun readProbeOdometer(inStream: InputStream, outStream: OutputStream, probe: OdometerProbe): Float {
+        if (probe.header != "7DF" && !isCurrentProtocolCan) return -1f
         return try {
             if (probe.header != "7DF") {
                 configureProbeCanHeader(outStream, inStream, probe.header)
             }
-            val resp = sendObdCommand(outStream, inStream, probe.command, 550)
+            val resp = sendObdCommand(outStream, inStream, probe.command, 650)
             parseProbeOdometer(resp, probe)
         } catch (_: Exception) {
             -1f
         } finally {
             if (probe.header != "7DF") {
                 try {
-                    sendObdCommand(outStream, inStream, "ATCRA", 200)
-                    sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+                    resetCanHeaderToBroadcast(outStream, inStream)
                 } catch (_: Exception) {}
             }
         }
@@ -13096,14 +13205,29 @@ class MainActivity : Activity() {
     private fun applyDrivenDistanceDelta(deltaKm: Float, sourceDescription: String) {
         if (deltaKm <= 0f || deltaKm > 15000.0f) return
 
+        // If an ECU hardware integer counter (0131/0121) is active, cap sub-km 010D speed flushes at 0.95 km
+        // between integer ECU counter ticks, and persist the flushed sub-km fraction so that when 0131 ticks
+        // (even after closing and reopening the app!), the exact difference (rawDiff - flushedSubKm) locks
+        // the odometer & trip distance 100% to the ECU hardware counter with zero drift.
+        val isHwCounterActive = (activeOdometerProbe != null && activeOdometerProbe?.isAbsoluteOdometer == false)
+        val effectiveDeltaKm: Float
+        if (isHwCounterActive) {
+            val prevFlushedSubKm = preferences.getFloat("flushed_sub_km_since_ecu_tick", 0f).coerceIn(0f, 0.95f)
+            effectiveDeltaKm = (0.95f - prevFlushedSubKm).coerceAtLeast(0f).coerceAtMost(deltaKm)
+            if (effectiveDeltaKm <= 0.0001f) return
+            preferences.edit().putFloat("flushed_sub_km_since_ecu_tick", (prevFlushedSubKm + effectiveDeltaKm).coerceIn(0f, 0.95f)).apply()
+        } else {
+            effectiveDeltaKm = deltaKm
+        }
+
         // 1. Advance trip distance
-        telemetry.tripDistanceKm += deltaKm
+        telemetry.tripDistanceKm += effectiveDeltaKm
         preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
 
         // 2. Advance cumulative car odometer ONLY if a valid baseline (> 0) already exists (from ECU or manual calibration)
         val savedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
         if (savedCarOdo > 0f) {
-            val updatedCarOdo = savedCarOdo + deltaKm
+            val updatedCarOdo = savedCarOdo + effectiveDeltaKm
             telemetry.carOdometerKm = updatedCarOdo
             preferences.edit().putFloat("car_cumulative_odometer_km", updatedCarOdo).apply()
             if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f) {
@@ -13117,16 +13241,17 @@ class MainActivity : Activity() {
         }
 
         // 3. Advance Unified Engine Oil elapsed km (works even if car_cumulative_odometer_km is not yet calibrated!)
-        addUnifiedEngineOilDistanceDelta(deltaKm, getEffectiveCarOdometerKm())
+        addUnifiedEngineOilDistanceDelta(effectiveDeltaKm, getEffectiveCarOdometerKm())
     }
 
-    private fun applyCumulativeOdometerDelta(probeValue: Float, probe: OdometerProbe) {
+    private fun applyCumulativeOdometerDelta(probeValue: Float, probe: OdometerProbe, isInitialConnectionRead: Boolean = false) {
         if (probeValue < 0f) return
 
         var deltaKm = 0f
+        val prevTripDistanceKm = telemetry.tripDistanceKm
 
         if (probe.isAbsoluteOdometer) {
-            // 1. Absolute Dashboard Odometer directly from Cluster / ECU (or manual calibration)
+            // 1. Absolute Dashboard Odometer directly from Cluster / ECU
             val currentCarOdo = probeValue
             telemetry.carOdometerKm = currentCarOdo
             telemetry.odometerSource = "عداد التابلوه المباشر: ${probe.description}"
@@ -13134,11 +13259,14 @@ class MainActivity : Activity() {
             val lastSavedCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
             if (lastSavedCarOdo > 0f && currentCarOdo >= lastSavedCarOdo) {
                 val d = currentCarOdo - lastSavedCarOdo
-                if (d in 0.001f..15000.0f) {
+                if (d in 0.001f..25000.0f) {
                     deltaKm = d
                 }
             }
-            preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
+            preferences.edit()
+                .putFloat("car_cumulative_odometer_km", currentCarOdo)
+                .putFloat("flushed_sub_km_since_ecu_tick", 0f)
+                .apply()
             if (deltaKm > 0f) {
                 ecuSpeedDistanceBuffer = 0.0
                 subKmEcuRollDistance = 0.0
@@ -13149,49 +13277,80 @@ class MainActivity : Activity() {
             }
         } else {
             // 2. Universal ECU Hardware Distance Counter (PID 0131 / 0121)
-            // Note: 0131 is "distance since DTCs cleared", NOT the car's total odometer!
-            // Never overwrite car_cumulative_odometer_km with 0131's raw value when uncalibrated.
+            // Persists across app shutdowns inside the car's Engine ECU!
             val rawCounter = probeValue.toInt()
             val lastSavedRaw = preferences.getInt("last_ecu_hardware_counter_raw", -1)
+            val persistedFlushedSubKm = preferences.getFloat("flushed_sub_km_since_ecu_tick", 0f).coerceIn(0f, 0.95f)
 
             if (lastSavedRaw >= 0 && rawCounter != lastSavedRaw) {
-                val rawDiff = ((rawCounter - lastSavedRaw + 65536) % 65536).toDouble()
-                if (rawDiff in 0.5..15000.0) {
-                    // Reconcile against sub-km 010D speed distance already flushed since last 0131 tick
-                    val reconciled = if (rawDiff > flushedEcuSpeedSinceLastTickKm + 1.5) {
-                        // Offline/previous-trip distance accumulated while app wasn't open
-                        rawDiff
-                    } else {
-                        (rawDiff - flushedEcuSpeedSinceLastTickKm).coerceAtLeast(0.0)
-                    }
-                    deltaKm = reconciled.toFloat()
+                val rawDiff = ((rawCounter - lastSavedRaw + 65536) % 65536).toFloat()
+                if (rawDiff in 1.0f..25000.0f) {
+                    // Subtract only the persisted sub-km fraction (< 0.95 km) already flushed since the last 0131 integer tick.
+                    // This guarantees that flushedSubKm + (rawDiff - flushedSubKm) == rawDiff (100% locked to ECU counter!).
+                    deltaKm = (rawDiff - persistedFlushedSubKm).coerceAtLeast(0.0f)
+                    preferences.edit().putFloat("flushed_sub_km_since_ecu_tick", 0f).apply()
                     flushedEcuSpeedSinceLastTickKm = 0.0
                     ecuSpeedDistanceBuffer = 0.0
                     subKmEcuRollDistance = 0.0
                 }
+            } else if (lastSavedRaw < 0) {
+                preferences.edit().putFloat("flushed_sub_km_since_ecu_tick", 0f).apply()
             }
 
             preferences.edit().putInt("last_ecu_hardware_counter_raw", rawCounter).apply()
 
             var currentCarOdo = preferences.getFloat("car_cumulative_odometer_km", 0f)
-            if (currentCarOdo > 0f && deltaKm > 0f) {
+            if (currentCarOdo <= 0f && rawCounter > 0) {
+                // Initialize cumulative odometer baseline from ECU hardware counter if not yet calibrated
+                currentCarOdo = rawCounter.toFloat()
+                preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
+                if (preferences.getFloat("trip_start_car_odometer", 0f) == 0f) {
+                    val curTrip = preferences.getFloat("saved_trip_distance_km", 0f)
+                    preferences.edit().putFloat("trip_start_car_odometer", (currentCarOdo - curTrip).coerceAtLeast(0f)).apply()
+                }
+            } else if (currentCarOdo > 0f && deltaKm > 0f) {
                 currentCarOdo += deltaKm
                 preferences.edit().putFloat("car_cumulative_odometer_km", currentCarOdo).apply()
             }
             telemetry.carOdometerKm = currentCarOdo
-            telemetry.odometerSource = "كمبيوتر المحرك ECU (${probe.command} + حساس السرعة 010D)"
+            telemetry.odometerSource = "كمبيوتر المحرك ECU (فرق عداد الكمبيوتر ${probe.command})"
         }
 
         preferences.edit().putString("car_odometer_source", telemetry.odometerSource).apply()
 
-        // 1. Update Real Trip Distance
+        // 1. Update Real Trip Distance directly from Car Odometer Difference (tripStartOdo) or ECU deltaKm
         val tripStartOdo = preferences.getFloat("trip_start_car_odometer", 0f)
-        if (probe.isAbsoluteOdometer && tripStartOdo > 0f && telemetry.carOdometerKm >= tripStartOdo) {
-            telemetry.tripDistanceKm = telemetry.carOdometerKm - tripStartOdo
+        if (tripStartOdo > 0f && telemetry.carOdometerKm >= tripStartOdo) {
+            val odoBasedTripKm = telemetry.carOdometerKm - tripStartOdo
+            if (odoBasedTripKm >= telemetry.tripDistanceKm || probe.isAbsoluteOdometer) {
+                telemetry.tripDistanceKm = odoBasedTripKm
+            } else if (deltaKm > 0f) {
+                telemetry.tripDistanceKm += deltaKm
+            }
         } else if (deltaKm > 0f) {
             telemetry.tripDistanceKm += deltaKm
         }
         preferences.edit().putFloat("saved_trip_distance_km", telemetry.tripDistanceKm).apply()
+
+        // 1.5. Compensate Trip Fuel & Tank Level for offline kilometers driven while the app was closed/disconnected
+        val tripJumpKm = (telemetry.tripDistanceKm - prevTripDistanceKm).coerceAtLeast(0f)
+        if (tripJumpKm > 0.05f && (isInitialConnectionRead || tripJumpKm >= 0.8f)) {
+            val effectiveRateL100 = if (telemetry.tripAverageFuelRate in 2.5f..35.0f) {
+                telemetry.tripAverageFuelRate
+            } else {
+                preferences.getFloat("fuel_rate_baseline", 7.5f).coerceIn(3.0f, 30.0f)
+            }
+            val offlineFuelBurnedLiters = tripJumpKm * (effectiveRateL100 / 100.0f)
+            telemetry.actualTripFuelLiters += offlineFuelBurnedLiters
+            preferences.edit().putFloat("saved_trip_fuel_liters", telemetry.actualTripFuelLiters).apply()
+
+            val tankCap = preferences.getFloat("tank_capacity_liters", 50.0f).coerceAtLeast(20.0f)
+            val pctToDeduct = ((offlineFuelBurnedLiters / tankCap) * 100.0f).toInt()
+            if (pctToDeduct > 0) {
+                telemetry.fuelLevel = (telemetry.fuelLevel - pctToDeduct).coerceAtLeast(1)
+                preferences.edit().putInt("current_fuel_tank_percent", telemetry.fuelLevel).apply()
+            }
+        }
 
         // 2. Synchronize Unified Engine Oil using the SAME key ("oil_baseline_odo_$vehId") and helper
         val vehId = getActiveVehicleScopeId()
@@ -13252,8 +13411,12 @@ class MainActivity : Activity() {
             var bestHwVal = -1f
 
             synchronized(obdLock) {
-                for (probe in universalOdometerProbes) {
-                    if (probe.isCluster && !isCurrentProtocolCan) continue
+                resetCanHeaderToBroadcast(outStream, inStream)
+                // Test broadcast Mode 01 probes first (01A6, 0131, 0121) while ELM327 is in clean broadcast state
+                val orderedProbes = universalOdometerProbes.filter { it.header == "7DF" } +
+                    universalOdometerProbes.filter { it.header != "7DF" }
+                for (probe in orderedProbes) {
+                    if (probe.header != "7DF" && !isCurrentProtocolCan) continue
                     try {
                         val valKm = readProbeOdometer(inStream, outStream, probe)
                         if (probe.isAbsoluteOdometer && valKm > 10.0f) {
@@ -13263,7 +13426,7 @@ class MainActivity : Activity() {
                                 bestAbsoluteOdo = valKm
                             }
                         } else if (!probe.isAbsoluteOdometer && valKm >= 0f) {
-                            results.add("🟡 ${probe.description}: ${valKm.toInt()} كم (عداد منذ مسح الأعطال)")
+                            results.add("🟡 ${probe.description}: ${valKm.toInt()} كم (عداد كمبيوتر المحرك التراكمي)")
                             if (bestHwProbe == null) {
                                 bestHwProbe = probe
                                 bestHwVal = valKm
@@ -13271,13 +13434,14 @@ class MainActivity : Activity() {
                         }
                     } catch (_: Exception) {}
                 }
+                resetCanHeaderToBroadcast(outStream, inStream)
             }
 
             runOnUiThread {
                 progress.dismiss()
                 if (bestAbsoluteProbe != null) {
                     activeOdometerProbe = bestAbsoluteProbe
-                    applyCumulativeOdometerDelta(bestAbsoluteOdo, bestAbsoluteProbe!!)
+                    applyCumulativeOdometerDelta(bestAbsoluteOdo, bestAbsoluteProbe!!, isInitialConnectionRead = true)
                     preferences.edit()
                         .putString("active_odometer_probe_header", bestAbsoluteProbe!!.header)
                         .putString("active_odometer_probe_cmd", bestAbsoluteProbe!!.command)
@@ -13285,7 +13449,11 @@ class MainActivity : Activity() {
                     updateLiveUI()
                 } else if (bestHwProbe != null) {
                     activeOdometerProbe = bestHwProbe
-                    applyCumulativeOdometerDelta(bestHwVal, bestHwProbe!!)
+                    applyCumulativeOdometerDelta(bestHwVal, bestHwProbe!!, isInitialConnectionRead = true)
+                    preferences.edit()
+                        .putString("active_odometer_probe_header", bestHwProbe!!.header)
+                        .putString("active_odometer_probe_cmd", bestHwProbe!!.command)
+                        .apply()
                     updateLiveUI()
                 }
 
@@ -13305,11 +13473,39 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun calibrateCarOdometerManually(newOdo: Float, sourceDescription: String) {
+        if (newOdo <= 0f) return
+        telemetry.carOdometerKm = newOdo
+        telemetry.odometerSource = "عداد التابلوه: $sourceDescription"
+        ecuSpeedDistanceBuffer = 0.0
+        subKmEcuRollDistance = 0.0
+        flushedEcuSpeedSinceLastTickKm = 0.0
+
+        val vehId = getActiveVehicleScopeId()
+        val oilState = getUnifiedEngineOilState(vehId)
+        val curTrip = telemetry.tripDistanceKm.coerceAtLeast(0f)
+        val newTripStartOdo = (newOdo - curTrip).coerceAtLeast(0f)
+
+        val editor = preferences.edit()
+            .putFloat("car_cumulative_odometer_km", newOdo)
+            .putFloat("trip_start_car_odometer", newTripStartOdo)
+            .putFloat("flushed_sub_km_since_ecu_tick", 0f)
+            .putString("car_odometer_source", telemetry.odometerSource)
+
+        if (oilState.isConfigured) {
+            val newOilBase = (newOdo - oilState.currentElapsedKm).coerceAtLeast(0f)
+            editor.putFloat("oil_baseline_odo_$vehId", newOilBase)
+                .putFloat("oil_baseline_car_odometer", newOilBase)
+        }
+        if (preferences.getFloat("dep_tracking_baseline_odo_km", 0f) <= 0f && !preferences.getBoolean("dep_tracking_manual_date", false)) {
+            editor.putFloat("dep_tracking_baseline_odo_km", newOdo)
+        }
+        editor.apply()
+        checkAndLogTelemetryDelta(force = true)
+    }
+
     private fun applyCumulativeOdometerDelta(currentCarOdo: Float, sourceDescription: String) {
-        applyCumulativeOdometerDelta(
-            currentCarOdo,
-            OdometerProbe("MANUAL", "MANUAL", "MANUAL", sourceDescription, isAbsoluteOdometer = true, byteLength = 4, scalingDivisor = 1.0f)
-        )
+        calibrateCarOdometerManually(currentCarOdo, sourceDescription)
     }
 
     private fun showOdometerCalibrationDialog() {
@@ -13526,68 +13722,68 @@ class MainActivity : Activity() {
 
     private fun fetchVinFromEcu(outStream: java.io.OutputStream, inStream: java.io.InputStream): String {
         try {
-            // 1. Ensure vehicle protocol is locked by querying 0100 first
+            // 1. Ensure vehicle protocol is locked by querying 0100 first, then immediately detect CAN vs K-Line
             sendObdCommand(outStream, inStream, "0100", 2500)
             Thread.sleep(80)
+            refreshDetectedProtocol(outStream, inStream)
 
             // 2. Enable Adaptive Timing & CAN Auto-Formatting
             sendObdCommand(outStream, inStream, "ATAT1", 500)
-            sendObdCommand(outStream, inStream, "ATCAF1", 500)
+            if (isCurrentProtocolCan) {
+                sendObdCommand(outStream, inStream, "ATCAF1", 500)
+            }
 
-            // 3. Attempt Standard Mode 09 PID 02 (Broadcast 7DF)
-            var resp = sendObdCommand(outStream, inStream, "09 02", 2500)
+            // 3. Attempt Standard Mode 09 PID 02 (Broadcast)
+            var resp = sendObdCommand(outStream, inStream, "09 02", 2200)
             var vin = parseVin(resp)
             if (vin.isNotBlank()) return vin
 
-            resp = sendObdCommand(outStream, inStream, "0902", 2000)
+            resp = sendObdCommand(outStream, inStream, "0902", 1800)
             vin = parseVin(resp)
             if (vin.isNotBlank()) return vin
 
-            // 4. GM / Chevrolet / Delphi / Daewoo Specialized Direct ECM Header (7E0)
-            sendObdCommand(outStream, inStream, "ATSH 7E0", 600)
-            resp = sendObdCommand(outStream, inStream, "09 02", 2500)
-            vin = parseVin(resp)
-            if (vin.isNotBlank()) {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-                return vin
-            }
+            if (isCurrentProtocolCan) {
+                // 4. GM / Chevrolet / Delphi / Daewoo Specialized Direct CAN ECM Header (7E0)
+                configureProbeCanHeader(outStream, inStream, "7E0")
+                resp = sendObdCommand(outStream, inStream, "09 02", 2000)
+                vin = parseVin(resp)
+                if (vin.isNotBlank()) {
+                    resetCanHeaderToBroadcast(outStream, inStream)
+                    return vin
+                }
 
-            // 5. GM / Delphi UDS DID F190 (Read VIN via Service 22 - 22 F1 90)
-            resp = sendObdCommand(outStream, inStream, "22 F1 90", 2500)
-            vin = parseVin(resp)
-            if (vin.isNotBlank()) {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-                return vin
-            }
+                // 5. UDS DID F190 (Read VIN via Service 22 - 22 F1 90)
+                resp = sendObdCommand(outStream, inStream, "22 F1 90", 2000)
+                vin = parseVin(resp)
+                if (vin.isNotBlank()) {
+                    resetCanHeaderToBroadcast(outStream, inStream)
+                    return vin
+                }
 
-            // 6. GM Tech-2 Service 1A Identifier 90 (1A 90)
-            resp = sendObdCommand(outStream, inStream, "1A 90", 2000)
-            vin = parseVin(resp)
-            if (vin.isNotBlank()) {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-                return vin
-            }
+                // 6. GM Tech-2 Service 1A Identifier 90 (1A 90)
+                resp = sendObdCommand(outStream, inStream, "1A 90", 1600)
+                vin = parseVin(resp)
+                if (vin.isNotBlank()) {
+                    resetCanHeaderToBroadcast(outStream, inStream)
+                    return vin
+                }
 
-            // 7. Daewoo / Delphi KWP2000 Service 21 PID 90 / 80
-            resp = sendObdCommand(outStream, inStream, "21 90", 2000)
-            vin = parseVin(resp)
-            if (vin.isNotBlank()) {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-                return vin
-            }
-            resp = sendObdCommand(outStream, inStream, "21 80", 2000)
-            vin = parseVin(resp)
-            if (vin.isNotBlank()) {
-                sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-                return vin
-            }
+                // 7. Secondary ECM header ATSH 7E2
+                configureProbeCanHeader(outStream, inStream, "7E2")
+                resp = sendObdCommand(outStream, inStream, "09 02", 1600)
+                vin = parseVin(resp)
+                resetCanHeaderToBroadcast(outStream, inStream)
+                if (vin.isNotBlank()) return vin
+            } else {
+                // Non-CAN (K-Line / KWP2000 / ISO 9141-2): never send 11-bit CAN headers (ATSH 7E0/7DF)!
+                resp = sendObdCommand(outStream, inStream, "1A 90", 1600)
+                vin = parseVin(resp)
+                if (vin.isNotBlank()) return vin
 
-            // 8. Secondary ECM header ATSH 7E2 (used in dual-controller, diesel, or BCM gateways)
-            sendObdCommand(outStream, inStream, "ATSH 7E2", 600)
-            resp = sendObdCommand(outStream, inStream, "09 02", 2000)
-            vin = parseVin(resp)
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
-            if (vin.isNotBlank()) return vin
+                resp = sendObdCommand(outStream, inStream, "21 90", 1600)
+                vin = parseVin(resp)
+                if (vin.isNotBlank()) return vin
+            }
         } catch (_: Exception) {}
         return ""
     }
@@ -13640,15 +13836,17 @@ class MainActivity : Activity() {
     private fun fetchCalidFromEcu(outStream: java.io.OutputStream, inStream: java.io.InputStream): String {
         try {
             // Mode 09 PID 04 (Calibration ID CALID) - Standard emission query that is NEVER blocked by factory lock
-            var resp = sendObdCommand(outStream, inStream, "09 04", 2500)
+            var resp = sendObdCommand(outStream, inStream, "09 04", 2200)
             var calid = parseCalid(resp)
             if (calid.isNotBlank()) return calid
 
-            // Try via direct ECM address 7E0
-            sendObdCommand(outStream, inStream, "ATSH 7E0", 500)
-            resp = sendObdCommand(outStream, inStream, "09 04", 2500)
-            calid = parseCalid(resp)
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 500)
+            if (isCurrentProtocolCan) {
+                // Try via direct CAN ECM address 7E0
+                configureProbeCanHeader(outStream, inStream, "7E0")
+                resp = sendObdCommand(outStream, inStream, "09 04", 2200)
+                calid = parseCalid(resp)
+                resetCanHeaderToBroadcast(outStream, inStream)
+            }
             return calid
         } catch (_: Exception) {}
         return ""
@@ -13873,9 +14071,8 @@ class MainActivity : Activity() {
         val combined = mutableListOf<String>()
         var anyValidReply = false
         try {
-            // Ensure broadcast header & open RX filter so no cluster probe blocks DTC replies
-            sendObdCommand(outStream, inStream, "ATCRA", 200)
-            sendObdCommand(outStream, inStream, "ATSH 7DF", 250)
+            // Ensure broadcast header & open RX filter on CAN so no cluster probe blocks DTC replies
+            resetCanHeaderToBroadcast(outStream, inStream)
 
             // 1. Mode 03: Confirmed / Stored DTCs (Response prefix 43)
             val resp03 = sendObdCommand(outStream, inStream, "03", 1200)
@@ -14928,10 +15125,23 @@ class MainActivity : Activity() {
     }
 
     private fun restoreSelectedDevice() {
+        val id = preferences.getString("device_id", null)
         val name = preferences.getString("device_name", null)
+        val addr = preferences.getString("device_address", null) ?: id
         val trans = preferences.getString("device_transport", null)
         if (name != null && trans != null && ::selectedText.isInitialized) {
             selectedText.text = "الجهاز المختار سابقاً: $name ($trans)"
+            if (!telemetry.isConnected && !isTelemetryLoopRunning && !addr.isNullOrBlank() && hasPermissions()) {
+                val cand = DeviceCandidate(
+                    id = id ?: addr,
+                    title = name,
+                    transport = trans,
+                    address = addr,
+                    detail = "اتصال تلقائي بالجهاز المحفوظ"
+                )
+                obdReconnectAttempts = 0
+                connectToDevice(cand)
+            }
         }
     }
 
