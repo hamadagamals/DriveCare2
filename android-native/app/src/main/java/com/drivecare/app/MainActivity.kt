@@ -9133,6 +9133,16 @@ class MainActivity : Activity() {
             addView(button("🔄 إعادة تهيئة البلوتوث وإلغاء أي تعليق") {
                 disconnectObd()
                 try {
+                    bluetoothAdapter?.let { adapter ->
+                        if (adapter.isDiscovering) adapter.cancelDiscovery()
+                        adapter.bluetoothLeScanner?.stopScan(bleCallback)
+                    }
+                } catch (_: SecurityException) {}
+                addBondedDevices()
+                renderCandidates()
+                statusText.text = "تم تنظيف قنوات الاتصال وإعادة تهيئة البلوتوث بنجاح."
+                Toast.makeText(this@MainActivity, "تمت إعادة تهيئة البلوتوث بنجاح 🟢", Toast.LENGTH_SHORT).show()
+            }.apply {
                 setBackgroundColor(Color.rgb(24, 55, 80))
                 setTextColor(Color.rgb(110, 231, 255))
             })

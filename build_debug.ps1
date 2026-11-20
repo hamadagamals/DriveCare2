@@ -8,6 +8,7 @@ $env:ANDROID_HOME = "D:\Developer\Android\Sdk"
 $gradleBat = "C:\Users\Eng Hamada\.gradle\wrapper\dists\gradle-8.14-all\c2qonpi39x1mddn7hk5gh9iqj\gradle-8.14\bin\gradle.bat"
 $projDir = "F:\projects\DriveCare\android-native"
 & $gradleBat -p $projDir :app:assembleDebug --no-daemon --console=plain
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $apkOut = "$projDir\app\build\outputs\apk\debug\app-debug.apk"
 if (Test-Path $apkOut) {
     Copy-Item $apkOut "F:\projects\DriveCare\DriveCare_Live_OBD.apk" -Force
